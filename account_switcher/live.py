@@ -133,6 +133,11 @@ def level_color(left):
     return "good" if left > 30 else "warn" if left > 10 else "bad"
 
 
+def report_key(windows):
+    """Usage numbers [(window minutes, used %, reset)] in a form two reports of the same numbers share."""
+    return tuple(sorted((minutes, round(used), round(reset / 60) if reset else None) for minutes, used, reset in windows))
+
+
 class StatusLine(str):
     """The line for Claude Code's status line, as plain text, with its coloured pieces in `parts`:
     [{"t": text, "c": colour name or None}] (dim, label, good, warn, bad)."""
@@ -175,6 +180,7 @@ class LiveAccounts:
         self.afk_continues = []  # every session's continues (times): a cap that no session id can dodge
         self.session_reports = {}  # Claude session -> its last status line numbers
         self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
+        self.stale_reports = set()  # numbers from before the last Claude login change (see _login_changed)
         self.mod_sessions = {}   # Claude session -> when its limit-status mod last reported
         self.compactions = {}    # Claude session -> its Jev compaction before a swap (see claude_limit)
         self.signatures = {}
@@ -231,7 +237,7 @@ class LiveAccounts:
                 account_id = self.adopt(name, login)
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
                 if previous != account_id:
-                    self.live_since[name] = time.time()
+                    self._login_changed(name, previous)
                     if previous is not None:  # a switch by the app itself sets live_ids directly
                         logging.getLogger("account_switcher").warning(
                             "%s's login changed to %s outside LimitSwitcher", name.title(), login.email or "?")
@@ -504,8 +510,9 @@ class LiveAccounts:
                             provider.write_live(before.secret)  # put things back exactly as they were
                         raise RuntimeError("Switch could not be verified; your previous login was restored")
                     self.signatures[name] = provider.signature()
+                    previous = self.live_ids.get(name)
                     self.live_ids[name] = account_id
-                    self.live_since[name] = time.time()
+                    self._login_changed(name, previous)
             self.active[name] = account_id
             if name in self.routed:
                 self.meta["selected"][name] = account_id
@@ -685,6 +692,23 @@ class LiveAccounts:
             self.notify("accounts", None)
         return changed
 
+    def _login_changed(self, name, previous):
+        """The account in a client's login file changed (under the lock). Claude Code sessions keep
+        showing the numbers of their last reply until they get a new one, so every report they made
+        so far, and the outgoing account's own numbers, are the old account's: a report still
+        carrying them never counts for the new one (a newly added account showed the old one's
+        0% left until it was used)."""
+        self.live_since[name] = time.time()
+        if name != "claude":
+            return
+        stale = set(self.session_reports.values())
+        outgoing = self.meta["accounts"].get(previous) if previous else None
+        if outgoing:
+            minutes = {"five_hour": 300, "weekly": 10080}
+            stale.add(report_key((minutes[w["key"]], w.get("used", 0.0), w.get("resetsAt"))
+                                 for w in outgoing.get("usage") or [] if w.get("key") in minutes))
+        self.stale_reports = stale
+
     def statusline(self, limits, session=None, model=None, effort=None):
         """Live usage from a Claude Code status line (rate_limits), for the account signed in to
         Claude Code. Returns the compact status line text.
@@ -713,18 +737,18 @@ class LiveAccounts:
             # Claude Code repeats its last numbers with every reply, also after a limit when it gets
             # no new ones. Only a report that changes something counts as live; otherwise the API
             # goes back to its normal pace and catches what the status line misses.
-            fresh = True
+            key = report_key(windows)
+            fresh = key not in self.stale_reports  # the previous account's numbers (see _login_changed)
             if session is not None:
-                key = tuple(windows)
                 with self.lock:
                     previous = self.session_reports.get(session)
                     self.session_reports[session] = key
                     if len(self.session_reports) > 200:  # sessions come and go
                         self.session_reports.pop(next(iter(self.session_reports)))
                     if previous is None:  # a session's first report: fine unless another one is busy now
-                        fresh = now - self.session_moved_at >= LIVE_FRESH
+                        fresh = fresh and now - self.session_moved_at >= LIVE_FRESH
                     else:
-                        fresh = previous != key
+                        fresh = fresh and previous != key
                     if fresh and previous is not None:
                         self.session_moved_at = now
             if windows and fresh and self.observe(account_id, windows, add=True):

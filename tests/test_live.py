@@ -524,6 +524,35 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(used(), 55.0)
         self.assertIn(a.id, m.meta["accounts"])
 
+    def test_the_old_accounts_numbers_never_land_on_the_new_one(self):
+        """After a switch, Claude Code sessions keep the last reply's numbers (the old account's,
+        at its limit) until they get a new one. Those must not show as the new account's usage,
+        also from a session that reports for the first time after the switch."""
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        m.swap(self.by_email(m, "a@example.com").id)  # a in use, b just added
+        m.refresh(force=True)
+        a, b = self.by_email(m, "a@example.com"), self.by_email(m, "b@example.com")
+        m.live_since["claude"] = 0
+        reset = time.time() + 3600
+        old = {"five_hour": {"used_percentage": 100, "resets_at": reset},
+               "seven_day": {"used_percentage": 40, "resets_at": reset + 86400}}
+        m.statusline(old, "s1")
+        before = self.by_email(m, "b@example.com").windows()
+        m.swap(b.id, reason="limit")
+        m.live_since["claude"] = 0  # long settled: the numbers are still the old ones
+        m.session_moved_at = 0.0
+        for session in ("s1", "s2", None):  # the session at the limit, a new one, and an anonymous one
+            m.statusline(old, session)
+            self.assertEqual(self.by_email(m, "b@example.com").windows(), before)
+        fresh = {"five_hour": {"used_percentage": 2, "resets_at": reset + 4 * 3600}}
+        m.statusline(fresh, "s1")  # a real reply on the new account
+        five = next(w for w in self.by_email(m, "b@example.com").windows() if w["key"] == "five_hour")
+        self.assertEqual(five["used"], 2.0)
+        self.assertIn(a.id, m.meta["accounts"])
+
     def test_mac_sign_in_opens_in_terminal(self):
         m = self.manager()
         started = []
