@@ -15,7 +15,7 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
-from account_switcher import afk_hook, claude_hooks, codex_config
+from account_switcher import afk_hook, claude_hooks, codex_config, mod
 from account_switcher.codex_proxy import CodexProxy, ThreadState
 from account_switcher.integrations import Integrations, RoutedAccounts
 from account_switcher.live import LiveAccounts, LiveGateway
@@ -686,6 +686,47 @@ class ClaudeFullUseTests(AfkTests):
         self.assertEqual(self.claude.read_live().email, "a@example.com")
 
 
+class JevKeyFileTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.state_file = Path(self.dir.name) / "afk-hook.json"
+        self.root = Path(self.dir.name) / "claude"
+        env = mock.patch.dict(os.environ)
+        env.start()
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        self.addCleanup(env.stop)
+
+    def source(self):
+        return mod.jev_key_source(self.state_file, self.root)
+
+    def test_saved_replaced_and_removed_keeping_other_lines(self):
+        env = mod.env_file(self.state_file)
+        env.write_text("OTHER=1\nOPENROUTER_API_KEY=old\n", encoding="utf-8")
+        mod.set_jev_key(self.state_file, " 'sk-or-new' ")
+        self.assertEqual(env.read_text(encoding="utf-8"), "OTHER=1\nOPENROUTER_API_KEY=sk-or-new\n")
+        self.assertEqual(self.source(), "file")
+        if sys.platform != "win32":
+            self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+        mod.set_jev_key(self.state_file, None)
+        self.assertEqual(env.read_text(encoding="utf-8"), "OTHER=1\n")
+        self.assertIsNone(self.source())
+        env.write_text("OPENROUTER_API_KEY=x\n", encoding="utf-8")
+        mod.set_jev_key(self.state_file, None)
+        self.assertFalse(env.exists())
+
+    def test_nonsense_is_refused(self):
+        for bad in ("", "two words", "a" * 400):
+            with self.assertRaises(ValueError):
+                mod.set_jev_key(self.state_file, bad)
+        self.assertIsNone(self.source())
+
+    def test_the_environment_wins_like_the_mod_does(self):
+        mod.set_jev_key(self.state_file, "from-file")
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "from-env"}):
+            self.assertEqual(self.source(), "env")
+
+
 class JevCompactionTests(unittest.TestCase):
     """After a limit the account is swapped at once; with Jev compaction on, the session goes on
     only once its mod has compacted it (or given up), so the new account loads less."""
@@ -1055,8 +1096,8 @@ class StatusLineMarkerTests(unittest.TestCase):
         self.assertIn("\x1b[94m5h\x1b[0m", painted)             # the label, blue
         self.assertIn("\x1b[93m12%\x1b[0m\x1b[90m left\x1b[0m", painted)  # a little left: yellow number, grey word
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
-        self.assertEqual(painted, "\x1b[91mctx 900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
-        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "ctx 1.2M")
+        self.assertEqual(painted, "\x1b[90mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
+        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[90mctx \x1b[0m1.2M")
 
     def test_the_last_line_stands_in_while_the_app_is_busy(self):
         from account_switcher import statusline

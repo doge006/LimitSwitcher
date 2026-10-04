@@ -108,6 +108,9 @@ class Motion:
         return bool(self.runs)
 
 
+JEV_KEY = "jevkey"  # the editing id of the OpenRouter key field in Settings (its text is never drawn)
+
+
 class UI:
     """What the drawing needs to know beyond the app state."""
 
@@ -116,7 +119,7 @@ class UI:
         self.hover_card = None     # account whose card the pointer is over
         self.pending = None        # account being switched to
         self.confirm = None        # account asking "Remove?"
-        self.editing = None        # (account id, text, caret, all selected)
+        self.editing = None        # (account id or JEV_KEY, text, caret, all selected)
         self.revealed = set()      # accounts whose email is shown in name mode
         self.menu = None           # "settings" | "add"
         self.editor = None         # the renewal date editor's state
@@ -165,7 +168,9 @@ class FullView:
         ids = {a["id"] for a in state["accounts"]}
         if ui.confirm not in ids:
             ui.confirm = None
-        if ui.editing and ui.editing[0] not in ids:
+        if ui.editing and ui.editing[0] not in ids and ui.editing[0] != JEV_KEY:
+            ui.editing = None
+        if ui.editing and ui.editing[0] == JEV_KEY and not (ui.menu == "settings" and state.get("jevCompact")):
             ui.editing = None
         if self.prefs and not state.get("busy"):
             self.prefs = {k: v for k, v in self.prefs.items() if bool(state.get(k)) != v}
@@ -647,6 +652,8 @@ class FullView:
             if not ui.editing or ui.editing[0] != arg:
                 label = (self.account(arg) or {}).get("label") or ""
                 ui.editing = (arg, label, len(label), bool(label))
+        elif kind == "jevkey-clear":  # Settings: remove the saved OpenRouter key
+            self.act("jevKey", {"key": None})
         elif kind == "renew":
             self.open_editor(arg)
         elif kind.startswith("ed-"):
@@ -701,7 +708,10 @@ class FullView:
     # ---------- keyboard (the account name in name mode) ----------
     def commit_name(self):
         editing, self.ui.editing = self.ui.editing, None
-        if editing:
+        if editing and editing[0] == JEV_KEY:  # an empty field changes nothing: Remove clears the key
+            if editing[1].strip():
+                self.act("jevKey", {"key": editing[1]})
+        elif editing:
             account = self.account(editing[0])
             name = " ".join(editing[1].split())
             if account is not None and name != (account.get("label") or ""):
@@ -748,10 +758,12 @@ class FullView:
         if not ui.editing or not value:
             return
         value = "".join(ch for ch in value if ch.isprintable()).replace("\n", " ")
+        if ui.editing[0] == JEV_KEY:
+            value = "".join(value.split())  # a key has no spaces: pasted with a stray newline or space
         aid, text, caret, everything = ui.editing
         if everything:
             text, caret = "", 0
-        text = (text[:caret] + value + text[caret:])[:40]
+        text = (text[:caret] + value + text[caret:])[:300 if aid == JEV_KEY else 40]
         ui.editing = (aid, text, min(len(text), caret + len(value)), False)
         self.host.invalidate()
 

@@ -907,6 +907,41 @@ def mod_row(state):
     return lines, color, 42 + 16 * len(lines)
 
 
+KEY_ROW_H = 40
+
+
+def jev_key_field(c, ui, state, x, y, w, hits):
+    """The OpenRouter key's field under Jev compaction. What's typed (or saved) is only ever drawn as
+    dots; a saved key can be removed, and one set in the environment or Claude Code's settings is
+    named but left to whoever set it."""
+    editing = ui.editing if ui.editing and ui.editing[0] == "jevkey" else None
+    source = state.get("jevKey")
+    mid = y + 14
+    if source in ("env", "settings") and not editing:
+        c.text(x, mid, "Key set in " + ("the environment" if source == "env" else "Claude Code's settings"), 12, MUTED, anchor="lm")
+        return
+    remove_w = text_w("Remove", 12) + 4 if source == "file" and not editing else 0
+    box_w = w - (remove_w + 8 if remove_w else 0)
+    hot = ui.hover == "name:jevkey"
+    c.rect(x, y, box_w, 28, 7, SURFACE_2 + (255,))
+    c.outline(x, y, box_w, 28, 7, FOCUS + (255,) if editing else LINE_STRONG)
+    dots = len(editing[1]) if editing else 12 if source == "file" else 0
+    dots = min(dots, int((box_w - 24) // 8))  # a long key shows as a full row of dots
+    for i in range(dots):
+        c.dot(x + 12 + 8 * i, mid, 2.4, TEXT if editing else MUTED)
+    if editing:
+        caret = min(editing[2], dots)
+        c.rect(x + 10 + 8 * caret, mid - 8, 1.2, 16, 0, TEXT + (255,))
+    elif not dots:
+        c.text(x + 10, mid, "OpenRouter key", 12, MUTED if hot else FAINT, anchor="lm", bg=SURFACE_2)
+    hits.append(((x, y, box_w, 28), "name:jevkey", "text"))
+    if remove_w:
+        rx = x + w - remove_w
+        on = ui.hover == "jevkey-clear:"
+        c.text(rx, mid, "Remove", 12, BAD if on else MUTED, anchor="lm")
+        hits.append(((rx - 4, y, remove_w + 8, 28), "jevkey-clear:", "hand"))
+
+
 def settings_menu(image, scale, state, ui, x, y, prefs):
     w = 320
     rows = list(SETTINGS)
@@ -920,7 +955,8 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     chooser = taskbar and state.get("taskbar") and bool(displays)
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
+    key_h = KEY_ROW_H if live_mod and state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
+    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + key_h + (13 if taskbar else 0) \
         + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
@@ -940,6 +976,9 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
         ry += row_h
+        if key == "jevCompact" and key_h:
+            jev_key_field(c, ui, state, x + 66, ry - 2, w - 66 - 14, hits)
+            ry += key_h
     if chooser:  # per display, what its taskbar shows: two slots (left, right); a click cycles each
         from . import taskbar_layout
         layout = taskbar_layout.layout(state)

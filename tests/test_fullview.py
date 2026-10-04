@@ -101,6 +101,37 @@ class FullViewTests(unittest.TestCase):
         self.click("set:nameMode")
         self.assertIn(("names", {"on": True}), self.controller.calls)
 
+    def test_jev_key_field_is_masked_and_saved_on_enter(self):
+        self.view.set_state(state(jevCompact=True, jevKey=None))
+        self.click("settings")
+        self.click("name:jevkey")
+        self.assertEqual(self.view.ui.editing[0], "jevkey")
+        self.host.paste = "sk-or-v1-abc\n"
+        self.view.key("v", ctrl=True)
+        self.assertEqual(self.view.ui.editing[1], "sk-or-v1-abc")  # the stray newline is gone
+        self.view.frame()
+        self.view.key("enter")
+        self.assertIn(("jevKey", {"key": "sk-or-v1-abc"}), self.controller.calls)
+        self.assertIsNone(self.view.ui.editing)
+
+    def test_jev_key_field_empty_changes_nothing_and_remove_clears(self):
+        self.view.set_state(state(jevCompact=True, jevKey="file"))
+        self.click("settings")
+        self.click("name:jevkey")
+        self.view.key("enter")
+        self.view.frame()
+        self.assertFalse(any(c[0] == "jevKey" for c in self.controller.calls))
+        self.click("jevkey-clear:")
+        self.assertIn(("jevKey", {"key": None}), self.controller.calls)
+
+    def test_jev_key_field_only_shows_with_jev_compaction_on(self):
+        self.view.set_state(state(jevCompact=False))
+        self.click("settings")
+        self.assertFalse(any(a == "name:jevkey" for _, hits in self.view.overlay_hits for _, a, _ in hits))
+        self.view.set_state(state(jevCompact=True, jevKey="env"))
+        self.view.frame()
+        self.assertFalse(any(a == "name:jevkey" for _, hits in self.view.overlay_hits for _, a, _ in hits))  # set elsewhere
+
     def test_card_hints_are_shortened_not_cut_off(self):
         ago = "1h 20m"
         options = [f"Numbers from {ago} ago · checking", f"{ago} ago · checking", f"{ago} old"]

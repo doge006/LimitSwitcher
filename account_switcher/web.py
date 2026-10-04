@@ -37,6 +37,7 @@ class Controller:
         self.mod_busy = None     # "installing" while that runs, else an error to show
         self.mod_checked = 0.0
         self.wait_near_reset = True
+        self.jev_key_demo = False
         self.jev_compact = False  # compact a session with Jev before it goes on after a swap
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
@@ -148,6 +149,7 @@ class Controller:
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
+                "jevKey": self.jev_key_source(),
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -157,7 +159,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge", "jevCompact"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge", "jevCompact", "jevKey"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -201,6 +203,10 @@ class Controller:
                 if on:
                     self.jev_compact_notes()
             self.jev_compact = on
+            self.notify("changed", None)
+            return
+        if action == "jevKey":  # the OpenRouter key for the Jev compaction (the app never sends it back); instant
+            self.set_jev_key(body.get("key"))
             self.notify("changed", None)
             return
         if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
@@ -368,6 +374,29 @@ class Controller:
             threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
         return {"status": "missing" if self.mod_installed is False else "unknown"}
 
+    def jev_key_source(self):
+        """Where the OpenRouter key is ("file", "env", "settings") or None; never the key itself."""
+        if not self.live:
+            return "file" if self.jev_key_demo else None
+        from . import mod
+        integrations = getattr(self.gateway, "integrations", None)
+        return mod.jev_key_source(integrations.state_file) if integrations else None
+
+    def set_jev_key(self, key):
+        """Save the key the user typed (None or empty removes it)."""
+        key = key.strip() if isinstance(key, str) else None
+        if not self.live:
+            self.jev_key_demo = bool(key)
+            return
+        from . import mod
+        integrations = getattr(self.gateway, "integrations", None)
+        if integrations is None:
+            raise RuntimeError("The key can't be saved right now")
+        try:
+            mod.set_jev_key(integrations.state_file, key or None)
+        except OSError as error:
+            raise RuntimeError(f"Couldn't save the key ({type(error).__name__})") from None
+
     def jev_compact_notes(self):
         """What Jev compaction still needs, as notes in the log: the mod, and a key."""
         from . import mod
@@ -377,7 +406,7 @@ class Controller:
         if self.mod_installed is False or not self.gateway.manager.meta.get("jevModInstalled"):
             self.notify("log", "Jev compaction needs the Claude Code mod: Settings → Install (or update) it")
         if not mod.jev_key_present(integrations.state_file):
-            self.notify("log", f"Jev compaction needs an OpenRouter key: add OPENROUTER_API_KEY=... to {mod.env_file(integrations.state_file)}")
+            self.notify("log", f"Jev compaction needs an OpenRouter key: paste it in Settings, under Jev compaction")
 
     def note_mod_installed(self, installed):
         """Both plugins are there (or not): the Jev compaction is only asked for when they are."""
