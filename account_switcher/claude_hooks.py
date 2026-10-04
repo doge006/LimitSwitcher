@@ -193,7 +193,7 @@ def uninstall(root=None):
 
 # ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
 STATUS_MARK = "account_switcher_statusline"
-STATUS_REFRESH = 5  # seconds. Claude Code allows 1, but every run is a process start (about 30 ms of CPU): 5 s is under 1% of a core per open session
+STATUS_REFRESH = 5  # seconds. Claude Code allows 1, but every run is a process start (about 15 ms of CPU): 5 s is under 1% of a core per open session
 
 
 def _status_exe():
@@ -215,7 +215,7 @@ def statusline_command(state_file):
         return f"{_short(status)} {_short(state_file)} {STATUS_MARK}"
     python = _python()
     script = Path(__file__).with_name("statusline.py")
-    return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"
+    return f"{_short(python)} -S -E{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"  # no site, no PYTHON* variables: it needs neither
 
 
 def _backup(state_file):

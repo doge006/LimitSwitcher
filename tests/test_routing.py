@@ -395,6 +395,16 @@ class ClaudeHookTests(unittest.TestCase):
                     self.assertTrue(command.startswith(str(Path(tmp) / "runtime" / "python.exe").replace("\\", "/")), command)
                     self.assertNotIn("LimitSwitcher.exe", command)
 
+    def test_the_installed_windows_app_runs_its_own_status_launcher_when_it_is_there(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            exe = Path(tmp) / "LimitSwitcher.exe"
+            (Path(tmp) / "LimitSwitcherStatus.exe").write_text("")
+            with mock.patch.object(claude_hooks.sys, "executable", str(exe)), \
+                    mock.patch.object(claude_hooks.sys, "platform", "win32"), \
+                    mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                command = claude_hooks.statusline_command(Path(tmp) / "s.json")
+        self.assertEqual(command, f"{Path(tmp) / 'LimitSwitcherStatus.exe'} {Path(tmp) / 's.json'} {claude_hooks.STATUS_MARK}".replace("\\", "/"))
+
     def test_auto_resume_turns_claude_codes_own_wait_on_and_puts_it_back(self):
         """Off, a usage limit opens a dialog that holds the hook's continue until it is answered."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -1115,6 +1125,26 @@ class StatusLineMarkerTests(unittest.TestCase):
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
         self.assertEqual(painted, "\x1b[94mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
         self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[94mctx \x1b[0m1.2M")
+
+    def test_the_light_json_helpers_agree_with_the_json_module(self):
+        import json
+        from account_switcher import statusline
+        samples = [{"a": [1, 2.5, None, True, False, "é\n\u2028 \"q\""], "b": {"c": -1e-7, "d": []}}, [], {}, "x", 0,
+                   {"rate_limits": {"five_hour": {"used_percentage": 40.5, "resets_at": 1.7e9}}, "session_id": "s"}]
+        for value in samples:
+            self.assertEqual(statusline.loads(statusline.dumps(value)), value)
+            self.assertEqual(statusline.loads(json.dumps(value)), value)
+            self.assertEqual(json.loads(statusline.dumps(value)), value)
+        self.assertEqual(statusline.loads(b' {"a": NaN} ')["a"] != statusline.loads(b'{"a": NaN}')["a"], True)  # NaN, as json reads it
+        for bad in (b"", b"{", b"{} x", b"nope"):
+            with self.assertRaises(ValueError):
+                statusline.loads(bad)
+        with self.assertRaises(TypeError):
+            statusline.dumps({"a": object()})
+        with mock.patch.dict(sys.modules, {"_json": None}):  # a Python without them: the json module
+            loads, dumps = statusline._json_functions()
+        self.assertIs(loads, json.loads)
+        self.assertIs(dumps, json.dumps)
 
     def test_the_last_line_stands_in_while_the_app_is_busy(self):
         from account_switcher import statusline

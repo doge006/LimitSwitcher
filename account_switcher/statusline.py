@@ -13,12 +13,54 @@ the user's own command, so their status line never breaks.
 
 It runs every second or so, once per open session, so its start-up is kept small: a plain socket
 instead of urllib (which pulls in http.client, email, ssl), and no pathlib or subprocess unless
-they're needed. A run is about 30 ms of CPU.
+they're needed. A run is about 15 ms of CPU, 6 of them beyond starting Python.
 """
-import json
 import os
 import sys
 import time
+
+def _json_functions():
+    """(loads, dumps). The json module's regex machinery costs about as much to import as the rest of
+    this script costs to run, so its C scanner and encoder are used directly; if this Python's
+    build doesn't have them in the form expected, the real json module is."""
+    try:
+        from _json import encode_basestring_ascii, make_encoder, make_scanner
+
+        class Context:
+            strict, object_hook, object_pairs_hook, parse_float, parse_int = True, None, None, float, int
+            parse_constant = {"-Infinity": float("-inf"), "Infinity": float("inf"), "NaN": float("nan")}.__getitem__
+
+        scan = make_scanner(Context)
+
+        def refuse(value):
+            raise TypeError(f"{type(value).__name__} is not JSON serializable")
+
+        encode = make_encoder(None, refuse, encode_basestring_ascii, None, ":", ",", False, False, True)
+
+        def loads(text):
+            if isinstance(text, (bytes, bytearray)):
+                text = text.decode("utf-8")
+            text = text.strip()
+            try:
+                value, end = scan(text, 0)
+            except StopIteration:
+                raise ValueError("not JSON") from None
+            if end != len(text):
+                raise ValueError("not JSON")
+            return value
+
+        def dumps(value):
+            return "".join(encode(value, 0))
+
+        if loads(dumps({"a": [1, 2.5, None, True, "\u00e9\n"]})) != {"a": [1, 2.5, None, True, "\u00e9\n"]}:
+            raise ValueError("the C helpers don't round-trip")
+        return loads, dumps
+    except Exception:
+        import json
+        return json.loads, json.dumps
+
+
+loads, dumps = _json_functions()
 
 # Bright colours, so they read on dark and light terminals alike.
 ANSI = {"dim": "90", "label": "94", "good": "92", "warn": "93", "bad": "91"}
@@ -39,14 +81,14 @@ def report(state, data, cache=None):
     try:
         model = data.get("model") if isinstance(data.get("model"), dict) else {}
         effort = data.get("effort") if isinstance(data.get("effort"), dict) else {}
-        body = json.dumps({"rate_limits": limits if isinstance(limits, dict) else None,
+        body = dumps({"rate_limits": limits if isinstance(limits, dict) else None,
                            "session": str(data.get("session_id") or "")[:100],
                            "model": model.get("display_name") or model.get("id"),
                            "effort": effort.get("level")}).encode()
         status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)
         if status >= 400:
             return None, None  # the app refused (a token from before it restarted): nothing, not an old line
-        answer = json.loads(payload)
+        answer = loads(payload)
         if not isinstance(answer, dict):
             return None, None
         limits = answer.get("rate_limits")
@@ -59,17 +101,34 @@ def report(state, data, cache=None):
         return recall(cache), None  # the app is busy or gone: the last line for a moment, not a blank one
 
 
+def connect(name, port, timeout):
+    """A connected TCP socket. The C module directly: socket.py pulls in enum and selectors."""
+    try:
+        import _socket
+    except ImportError:
+        import socket
+        return socket.create_connection((name, port), timeout)
+    connection = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    try:
+        connection.settimeout(timeout)
+        connection.connect((name, port))
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
 def post(url, token, body, timeout):
     """POST `body` (JSON bytes) to the app's loopback address: (status, response body). A plain
     socket and HTTP/1.0: the app closes the connection after its answer."""
-    import socket
     host, _, path = url.partition("://")[2].partition("/")
     name, _, port = host.partition(":")
     head = (f"POST /{path} HTTP/1.0\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n"
             f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode("ascii")
     deadline = time.monotonic() + timeout
     chunks = []
-    with socket.create_connection((name, int(port or 80)), timeout) as connection:
+    connection = connect(name, int(port or 80), timeout)
+    try:
         connection.sendall(head + body)
         while True:
             left = deadline - time.monotonic()
@@ -80,6 +139,8 @@ def post(url, token, body, timeout):
             if not chunk:
                 break
             chunks.append(chunk)
+    finally:
+        connection.close()
     answer = b"".join(chunks)
     header, _, payload = answer.partition(b"\r\n\r\n")
     return int(header.split(b" ", 2)[1]), payload
@@ -89,9 +150,17 @@ def remember(cache, line):
     if cache is None:
         return
     try:
-        if line:
-            with open(cache, "w", encoding="utf-8") as handle:
-                handle.write(json.dumps({"at": time.time(), "line": line}))
+        if not line:
+            return
+        try:  # the same line again: nothing to write until it is getting old
+            with open(cache, encoding="utf-8") as handle:
+                saved = loads(handle.read())
+            if saved["line"] == line and time.time() - saved["at"] < CACHE_FOR / 3:
+                return
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        with open(cache, "w", encoding="utf-8") as handle:
+            handle.write(dumps({"at": time.time(), "line": line}))
     except OSError:
         pass
 
@@ -101,7 +170,7 @@ def recall(cache):
         if not cache:
             return None
         with open(cache, encoding="utf-8") as handle:
-            saved = json.load(handle)
+            saved = loads(handle.read())
         return saved["line"] if saved and time.time() - saved["at"] < CACHE_FOR else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -165,12 +234,12 @@ def with_marker(output):
 def main(argv):
     raw = sys.stdin.buffer.read()
     try:
-        data = json.loads(raw or b"{}")
+        data = loads(raw or b"{}")
     except ValueError:
         data = {}
     try:
         with open(argv[1], encoding="utf-8") as handle:
-            state = json.load(handle)
+            state = loads(handle.read())
     except (OSError, ValueError, IndexError):
         state = {}
     cache = os.path.join(os.path.dirname(argv[1]), "statusline-cache.json") if len(argv) > 1 else None
@@ -183,7 +252,7 @@ def main(argv):
             fresh = dict(data.get("rate_limits") if isinstance(data.get("rate_limits"), dict) else {})
             for key, window in limits.items():
                 fresh[key] = dict(fresh.get(key) if isinstance(fresh.get(key), dict) else {}, **window)
-            raw = json.dumps(dict(data, rate_limits=fresh)).encode("utf-8")
+            raw = dumps(dict(data, rate_limits=fresh)).encode("utf-8")
         output = run_previous(previous, raw)
         write(with_marker(output) if line else output)  # the marker only while the app answers
     elif line:
