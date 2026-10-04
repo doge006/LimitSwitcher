@@ -910,35 +910,41 @@ JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev be
 
 
 def jev_key_field(c, ui, state, x, y, w, hits):
-    """The OpenRouter key's field under Jev compaction. What's typed (or saved) is only ever drawn as
-    dots; a saved key can be removed, and one set in the environment or Claude Code's settings is
-    named but left to whoever set it."""
+    """The OpenRouter key under Jev compaction. With no key: a field to paste one into (what is typed
+    shows only as dots). With one saved: "Key set" and a Remove button that takes two clicks (the
+    second says Confirm), so a saved key is never shown, nor typed over. A key set in the
+    environment or Claude Code's settings is named but left to whoever set it."""
     editing = ui.editing if ui.editing and ui.editing[0] == "jevkey" else None
     source = state.get("jevKey")
     mid = y + 14
     if source in ("env", "settings") and not editing:
         c.text(x, mid, "Key set in " + ("the environment" if source == "env" else "Claude Code's settings"), 12, MUTED, anchor="lm")
         return
-    remove_w = text_w("Remove", 12) + 4 if source == "file" and not editing else 0
-    box_w = w - (remove_w + 8 if remove_w else 0)
+    if source == "file" and not editing:
+        c.text(x, mid, "Key set", 12, GOOD, anchor="lm")
+        confirm = ui.jev_confirm
+        label = "Confirm" if confirm else "Remove"
+        bw = text_w(label, 12, confirm) + 24
+        bx = x + w - bw
+        hot = ui.hover == "jevkey-clear:"
+        base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
+        c.rect(bx, y, bw, 28, 7, base + (255,))
+        c.outline(bx, y, bw, 28, 7, (BAD + (255,)) if confirm else LINE_STRONG)
+        c.text(bx + bw / 2, mid, label, 12, BAD if confirm else TEXT, confirm, anchor="mm", bg=base)
+        hits.append(((bx, y, bw, 28), "jevkey-clear:", "hand"))
+        return
     hot = ui.hover == "name:jevkey"
-    c.rect(x, y, box_w, 28, 7, SURFACE_2 + (255,))
-    c.outline(x, y, box_w, 28, 7, FOCUS + (255,) if editing else LINE_STRONG)
-    dots = len(editing[1]) if editing else 12 if source == "file" else 0
-    dots = min(dots, int((box_w - 24) // 8))  # a long key shows as a full row of dots
+    c.rect(x, y, w, 28, 7, SURFACE_2 + (255,))
+    c.outline(x, y, w, 28, 7, FOCUS + (255,) if editing else LINE_STRONG)
+    dots = min(len(editing[1]) if editing else 0, int((w - 24) // 8))  # a long key shows as a full row of dots
     for i in range(dots):
-        c.dot(x + 12 + 8 * i, mid, 2.4, TEXT if editing else MUTED)
+        c.dot(x + 12 + 8 * i, mid, 2.4, TEXT)
     if editing:
         caret = min(editing[2], dots)
         c.rect(x + 10 + 8 * caret, mid - 8, 1.2, 16, 0, TEXT + (255,))
-    elif not dots:
+    else:
         c.text(x + 10, mid, "OpenRouter key", 12, MUTED if hot else FAINT, anchor="lm", bg=SURFACE_2)
-    hits.append(((x, y, box_w, 28), "name:jevkey", "text"))
-    if remove_w:
-        rx = x + w - remove_w
-        on = ui.hover == "jevkey-clear:"
-        c.text(rx, mid, "Remove", 12, BAD if on else MUTED, anchor="lm")
-        hits.append(((rx - 4, y, remove_w + 8, 28), "jevkey-clear:", "hand"))
+    hits.append(((x, y, w, 28), "name:jevkey", "text"))
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):

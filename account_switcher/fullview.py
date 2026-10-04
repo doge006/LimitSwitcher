@@ -120,6 +120,7 @@ class UI:
         self.pending = None        # account being switched to
         self.confirm = None        # account asking "Remove?"
         self.editing = None        # (account id or JEV_KEY, text, caret, all selected)
+        self.jev_confirm = False   # Settings: "Remove" on the saved OpenRouter key was clicked once; the next click confirms
         self.revealed = set()      # accounts whose email is shown in name mode
         self.menu = None           # "settings" | "add"
         self.editor = None         # the renewal date editor's state
@@ -172,6 +173,8 @@ class FullView:
             ui.editing = None
         if ui.editing and ui.editing[0] == JEV_KEY and not (ui.menu == "settings" and state.get("jevCompact")):
             ui.editing = None
+        if state.get("jevKey") != "file":
+            ui.jev_confirm = False
         if self.prefs and not state.get("busy"):
             self.prefs = {k: v for k, v in self.prefs.items() if bool(state.get(k)) != v}
         self.take_log(state)
@@ -559,8 +562,9 @@ class FullView:
         ui = self.ui
         if action is None or action != pressed:
             if where != "overlay":  # a click on nothing closes menus and finishes editing
-                changed = bool(ui.menu or ui.editor or ui.confirm)
+                changed = bool(ui.menu or ui.editor or ui.confirm or ui.jev_confirm)
                 ui.menu = ui.editor = ui.confirm = None
+                ui.jev_confirm = False
                 if ui.editing:
                     self.commit_name()
                     changed = True
@@ -573,6 +577,8 @@ class FullView:
 
     def activate(self, action):
         ui, state = self.ui, self.state
+        if ui.jev_confirm and action != "jevkey-clear:":
+            ui.jev_confirm = False  # anything else cancels the question
         if ui.editing and not action.startswith("name:" + ui.editing[0]):
             self.commit_name()
         kind, _, arg = action.partition(":")
@@ -650,8 +656,12 @@ class FullView:
             if not ui.editing or ui.editing[0] != arg:
                 label = (self.account(arg) or {}).get("label") or ""
                 ui.editing = (arg, label, len(label), bool(label))
-        elif kind == "jevkey-clear":  # Settings: remove the saved OpenRouter key
-            self.act("jevKey", {"key": None})
+        elif kind == "jevkey-clear":  # Settings: remove the saved OpenRouter key, on the second click
+            if ui.jev_confirm:
+                ui.jev_confirm = False
+                self.act("jevKey", {"key": None})
+            else:
+                ui.jev_confirm = True
         elif kind == "renew":
             self.open_editor(arg)
         elif kind.startswith("ed-"):
@@ -749,6 +759,7 @@ class FullView:
             return
         if name == "escape" and (ui.menu or ui.editor or ui.confirm):
             ui.menu = ui.editor = ui.confirm = None
+            ui.jev_confirm = False
             self.host.invalidate()
 
     def char(self, value):
