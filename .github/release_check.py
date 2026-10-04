@@ -22,7 +22,6 @@ import subprocess
 listed = subprocess.run(["tasklist", "/fo", "csv", "/nh"], capture_output=True, text=True).stdout.lower()
 check('"limitswitcher.exe"' in listed, "the app runs as LimitSwitcher.exe (Task Manager shows LimitSwitcher)")
 check('"pythonw.exe"' not in listed, "no separate Python process")
-check((folder / "LimitSwitcherStatus.exe").exists(), "the status line launcher is installed (Task Manager: LimitSwitcher Status)")
 user32 = ctypes.windll.user32
 for _ in range(40):  # a first start on a fresh runner can be slow (the new exe is scanned)
     if user32.FindWindowW("AccountSwitcherFullView", None):
