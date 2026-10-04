@@ -1,8 +1,9 @@
-The app offers it in Settings → **Update to 1.2.1** (or download below).
+The app offers it in Settings → **Update to 1.2.2** (or download below).
 
-## Changed
+## Fixed
 
-- **A saved OpenRouter key is never shown or typeable:** under Settings → Jev compaction it says **Key set** with a **Remove** button. Remove takes two clicks (the second says **Confirm**), and anything else cancels it. With no key saved you still get the field to paste one into, which shows only dots as you type.
+- **No new program for antivirus to object to:** 1.2.0 and 1.2.1 added a small native status line program (`LimitSwitcherStatus.exe` on Windows, `LimitSwitcher Status` on macOS); an update of 1.2.1 was stopped by Bitdefender (SuspiciousBehavior). It is gone: the Claude Code status line is the Python script again, as before 1.2.0.
+- **The Python status line script is about twice as light:** a run takes about 15 ms and 9 MB (it was 58 ms), it runs every 5 seconds per open session (about 0.3% of a core), and it starts Python without site-packages. It also no longer rewrites its cache file when nothing changed.
 
 ## Download
 
