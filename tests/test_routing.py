@@ -18,7 +18,7 @@ os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 from account_switcher import afk_hook, claude_hooks, codex_config, mod
 from account_switcher.codex_proxy import CodexProxy, ThreadState
 from account_switcher.integrations import Integrations, RoutedAccounts
-from account_switcher.live import LiveAccounts, LiveGateway
+from account_switcher.live import JEV_SHOWN, LiveAccounts, LiveGateway
 from account_switcher.providers import Claude, Codex
 from account_switcher.vault import Vault
 from account_switcher.web import Controller, make_server
@@ -843,6 +843,19 @@ class JevCompactionTests(unittest.TestCase):
         self.assertNotIn("Jev compacting", idle)
         self.assertEqual(idle.parts[0], {"t": "⇄", "c": "good"})
 
+    def test_the_status_line_says_what_a_finished_compaction_saved_for_a_while(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        request = self.manager.compaction_request("s1")
+        self.assertTrue(self.manager.compaction_done("s1", request["id"], "done", 120_000))
+        line = self.manager.statusline(None, "s1")
+        self.assertIn("LimitSwitcher · Jev compacted ~120k tokens saved · b@example.com", line)
+        self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})  # the icon is the normal green one
+        self.assertIn({"t": "~120k", "c": "good"}, line.parts)
+        self.assertNotIn("Jev compacted", self.manager.statusline(None, "s2"))  # only that session's line
+        self.manager.compactions["s1"]["finishedAt"] -= JEV_SHOWN + 1
+        self.assertNotIn("Jev compacted", self.manager.statusline(None, "s1"))
+
     def test_end_to_end_through_the_local_api_and_the_hook(self):
         """The hook asks, the mod picks the compaction up from its status line report and reports
         back, the transcript changes, and the hook still wakes the session (restamp)."""
@@ -1100,8 +1113,8 @@ class StatusLineMarkerTests(unittest.TestCase):
         self.assertIn("\x1b[94m5h\x1b[0m", painted)             # the label, blue
         self.assertIn("\x1b[93m12%\x1b[0m\x1b[90m left\x1b[0m", painted)  # a little left: yellow number, grey word
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
-        self.assertEqual(painted, "\x1b[90mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
-        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[90mctx \x1b[0m1.2M")
+        self.assertEqual(painted, "\x1b[94mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
+        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[94mctx \x1b[0m1.2M")
 
     def test_the_last_line_stands_in_while_the_app_is_busy(self):
         from account_switcher import statusline
