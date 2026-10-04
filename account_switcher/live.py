@@ -78,7 +78,7 @@ AFK_NOTE = "The usage limit was reached, so the session moved to another account
 AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
                  "held. Re-run the tool before relying on exact details from one of them.")
 JEV_WAIT = 240           # seconds a session's Jev compaction may take (3 tries 30 s apart) before it goes on without
-JEV_SHOWN = 120          # seconds the status line says a compaction saved something, after it
+JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
