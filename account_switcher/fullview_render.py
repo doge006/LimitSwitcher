@@ -884,17 +884,19 @@ def toggle(c, x, y, pos, hot, bg):
     c.dot(x + 10.5 + 19 * pos, y + 11, r, mixc(MUTED, (255, 255, 255), pos))
 
 
-SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
-            ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
-            ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone: loading one on another account can use a lot of usage"),
-            ("waitNearReset", "Wait for a near reset", "Don't switch accounts when the 5-hour limit resets within 15 minutes"),
-            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
+SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom"),
+            ("afk", "Auto resume", "Continue the session on another account"),
+            ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone"),
+            ("waitNearReset", "Wait for a near reset", "No switch when the 5-hour limit resets within 15 min"),
+            ("nameMode", "Name mode", "Names instead of emails, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
+ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
 MOD_NAME = "Claude Code Status mod"
-MOD_TEXT_W = 190  # beside the button
+SETTINGS_W = 400  # wide, so the descriptions take one or two lines and the menu stays short
+MOD_TEXT_W = 250  # beside the button
 MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "update": ("Update to add Jev compaction", WARN), "installed": ("Installed · run /reload-plugins in an open session", WARN),
             "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
 
@@ -909,7 +911,7 @@ def mod_row(state):
 
 
 KEY_ROW_H = 40
-JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less. Off: the mod never asks for it")
+JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session so the new account loads less")
 
 
 def jev_key_field(c, ui, state, x, y, w, hits):
@@ -951,36 +953,36 @@ def jev_key_field(c, ui, state, x, y, w, hits):
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
-    w = 320
+    w = SETTINGS_W
     rows = list(SETTINGS)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
         rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
-                     "Start in the tray when you sign in"))
+                     "Start in the tray at sign-in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
-        rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
+        rows.append(("taskbar", "Taskbar view", "The accounts in use, on the taskbar"))
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and bool(displays)
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
     jev_lines = wrap(JEV_ROW[2], 12, w - 80)
     key_h = KEY_ROW_H if state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
-    jev_h = 30 + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
+    jev_h = ROW_PAD + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
+    h = 16 + sum(ROW_PAD + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
         + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] + jev_h if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
 
     def toggle_row(key, title, lines, ry):
         """One setting's switch, name and description; returns its height."""
-        row_h = 30 + 16 * len(lines)
+        row_h = ROW_PAD + 16 * len(lines)
         on = prefs.get(key, bool(state.get(key)))
         locked = state.get("busy") and key in ("autoSwap", "afk")
         hot = ui.hover == "set:" + key and not locked
-        toggle(c, x + 14, ry + 8, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
-        c.text(x + 66, ry + 22, title, 14, TEXT if not locked else MUTED, True)
+        toggle(c, x + 14, ry + 6, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
+        c.text(x + 66, ry + 20, title, 14, TEXT if not locked else MUTED, True)
         for i, line in enumerate(lines):
-            c.text(x + 66, ry + 39 + 16 * i, line, 12, MUTED)
+            c.text(x + 66, ry + 36 + 16 * i, line, 12, MUTED)
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
         return row_h

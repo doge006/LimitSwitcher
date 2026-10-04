@@ -474,7 +474,7 @@ class FullView:
 
         if ui.menu == "settings" and "settings" in ui.anchors:
             ax, aw = ui.anchors["settings"]
-            moving |= faded("settings", lambda dy: vr.settings_menu(image, s, self.state, ui, left + ax + aw - 320,
+            moving |= faded("settings", lambda dy: vr.settings_menu(image, s, self.state, ui, max(8, left + ax + aw - vr.SETTINGS_W),
                                                                     top + 17 + 32 + 6 + dy, self.prefs))
         elif ui.menu == "add" and "add" in ui.anchors:
             ax, aw = ui.anchors["add"]
