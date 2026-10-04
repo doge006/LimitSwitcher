@@ -520,6 +520,12 @@ class Controller:
             return None
         return self.gateway.manager.compaction_request(str(body.get("session") or "")[:100])
 
+    def compacted_context(self, body):
+        """For a session's status line: its context after a Jev compaction, if it had one."""
+        if not self.live or body.get("source") == "mod":
+            return None
+        return self.gateway.manager.compacted_context(str(body.get("session") or "")[:100] or None)
+
     def compaction_done(self, body):
         """A session's mod finished (or gave up on) the compaction it was asked for."""
         if not self.live:
@@ -636,7 +642,8 @@ def make_server(controller, port=0):
                     line = controller.statusline(body)
                     self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
                                        "rate_limits": controller.statusline_limits(),
-                                       "compact": controller.compaction_request(body)})
+                                       "compact": controller.compaction_request(body),
+                                       "compacted": controller.compacted_context(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return

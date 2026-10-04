@@ -630,13 +630,6 @@ class AfkTests(unittest.TestCase):
                 statusline.main(["statusline", str(state)])
             self.assertNotIn("LimitSwitcher", out.getvalue())  # a wrong token gets no app line...
             self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # ...but the context stays (the last figures)
-            ctx = Path(self.tmp.name) / "statusline-ctx-s.json"  # a long wait (a usage limit, a compaction): still there
-            ctx.write_text(json.dumps(dict(json.loads(ctx.read_text()), at=time.time() - 3600)))
-            out = io.StringIO()
-            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
-                    mock.patch.object(sys, "stdout", out):
-                statusline.main(["statusline", str(state)])
-            self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))
         finally:
             server.shutdown()
             server.server_close()
@@ -808,7 +801,10 @@ class JevCompactionTests(unittest.TestCase):
         self.ready()
         self.manager.claude_limit("s1", 600_000)
         request = self.manager.compaction_request("s1")
+        self.assertIsNone(self.manager.compacted_context("s1"))  # not done yet
         self.manager.compaction_done("s1", request["id"], "done", 300_000)
+        self.assertEqual(self.manager.compacted_context("s1")["tokens"], 300_000)  # what the status line shows until the next reply
+        self.assertIsNone(self.manager.compacted_context("s2"))
         self.manager.claude_limit("s1", 600_000)  # restamp
         self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
         self.assertEqual(self.manager.pending_list(), [])
@@ -1169,6 +1165,26 @@ class StatusLineMarkerTests(unittest.TestCase):
                 "total_input_tokens": 50_000, "context_window_size": 400_000, "remaining_percentage": 99}
         self.assertEqual(statusline.context_part({"context_window": live}), "ctx 200k/50% left")
 
+    def test_session_context_lasts_and_follows_a_jev_compaction(self):
+        from account_switcher import statusline
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "ctx.json")
+            window = {"context_window": {"current_usage": {"input_tokens": 0, "cache_read_input_tokens": 300_000},
+                                         "context_window_size": 1_000_000}}
+            with mock.patch.object(statusline.time, "time", return_value=1000.0):
+                self.assertEqual(statusline.session_context(path, window, None), "ctx 300k/70% left")
+            with mock.patch.object(statusline.time, "time", return_value=1000.0 + 6 * 3600):
+                self.assertEqual(statusline.session_context(path, {}, None), "ctx 300k/70% left")  # no figures, hours on: the last ones
+                self.assertEqual(statusline.session_context(path, window, None), "ctx 300k/70% left")  # the same figure: still from t=1000
+            compacted = {"tokens": 180_000, "at": 2000.0}
+            self.assertEqual(statusline.session_context(path, {}, compacted), "ctx 180k/82% left")      # Jev's size
+            self.assertEqual(statusline.session_context(path, window, compacted), "ctx 180k/82% left")  # an old figure: still Jev's
+            newer = {"context_window": {"current_usage": {"input_tokens": 5_000, "cache_read_input_tokens": 190_000},
+                                        "context_window_size": 1_000_000}}
+            with mock.patch.object(statusline.time, "time", return_value=3000.0):
+                self.assertEqual(statusline.session_context(path, newer, compacted), "ctx 195k/80% left")  # the next reply's own
+            self.assertIsNone(statusline.session_context(None, {}, None))
+
     def test_hook_does_not_wake_a_session_that_went_on_meanwhile(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "t.jsonl"
@@ -1208,7 +1224,7 @@ class StatusLineMarkerTests(unittest.TestCase):
             state = Path(tmp) / "state.json"
             state.write_text(json.dumps({"url": "http://127.0.0.1:1/x", "token": "t", "statusline": "my-line.sh"}))
             out = io.BytesIO()
-            with mock.patch.object(statusline, "report", return_value=("line", fresh)), \
+            with mock.patch.object(statusline, "report", return_value=("line", fresh, None)), \
                     mock.patch.object(statusline, "run_previous", side_effect=run), \
                     mock.patch.object(sys, "stdin", mock.Mock(buffer=io.BytesIO(json.dumps(stale).encode()))), \
                     mock.patch.object(sys, "stdout", mock.Mock(buffer=out)):

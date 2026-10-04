@@ -904,6 +904,14 @@ class LiveAccounts:
             self.notify("log", f"Jev compaction {'skipped' if outcome == 'skipped' else 'failed'}: {str(reason)[:200]}")
         return True
 
+    def compacted_context(self, session):
+        """For the session's status line: its context after a Jev compaction ({"tokens", "at"}),
+        which Claude Code itself reports only after the next reply. None when there was none."""
+        job = self.compactions.get(session or "")
+        if job is None or job["status"] != "done" or not job.get("saved") or not isinstance(job.get("tokens"), int):
+            return None
+        return {"tokens": max(0, job["tokens"] - job["saved"]), "at": job.get("finishedAt") or job["at"]}
+
     def compacting(self, session):
         job = self.compactions.get(session or "")
         return job is not None and job["status"] in ("asked", "running") and time.time() - job["at"] < JEV_WAIT

@@ -296,6 +296,15 @@ def days_text(ts):
     return f"{days}d" if days >= 1 else f"{int(seconds // 3600)}h"
 
 
+ENDS_SOON = 7 * 86400  # a cancelled subscription shows in yellow from this close to its end
+
+
+def ends_soon(sub):
+    """A cancelled subscription that ends within ENDS_SOON (the yellow one)."""
+    sub = sub or {}
+    return bool(sub.get("ends")) and bool(sub.get("at")) and sub["at"] - time.time() <= ENDS_SOON
+
+
 def subscription_text(account):
     """("Renews 12d" | "Ends 3d", color) or (None, None)."""
     sub = account.get("subscription") or {}
@@ -303,7 +312,7 @@ def subscription_text(account):
     if not when:
         return None, None
     when = ("~" if sub.get("estimated") else "") + when
-    return (f"Ends {when}", WARN) if sub.get("ends") else (f"Renews {when}", MUTED)
+    return (f"Ends {when}", WARN if ends_soon(sub) else MUTED) if sub.get("ends") else (f"Renews {when}", MUTED)
 
 
 def targets(state, hover=None):

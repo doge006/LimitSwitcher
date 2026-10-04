@@ -582,7 +582,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         c.text(ix + 7, py + 12.5, account["plan"], 11, accent, True, bg=over(SURFACE, accent + (36,)))
     right = w - 18
     if renew:
-        rcolor = WARN if sub and (account.get("subscription") or {}).get("ends") else (MUTED if sub else FAINT)
+        rcolor = WARN if sub and fr.ends_soon(account.get("subscription")) else (MUTED if sub else FAINT)
         t = a("renew") if live else 0
         rw = text_w(renew, 11.5)
         rbg = mixc(SURFACE, SURFACE_3, t)
