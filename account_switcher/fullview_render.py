@@ -762,31 +762,34 @@ def topbar_content(c, state, w, ui):
     c.glyph("caret", x + bw - 14 - 6, 33, 13, MUTED)
     hits.append(((x, 17, bw, 32), "settings", "hand"))
     ui.anchors["settings"] = (x, bw)
-    # The version and updates, outside the menu so they are seen: left of Settings
-    room = x - 10 - (58 + text_w("Every Claude and Codex limit, at a glance.", 13)) - 24
-    label, action, primary = update_button(state.get("update") or {}, room=room)
-    bw = text_w(label, 12, primary) + 24
-    if bw > room + 24 and not primary:
+    # The version above the update button, outside the menu so they are seen: left of Settings
+    update = state.get("update") or {}
+    version = "Version " + str(update.get("current") or "")
+    label, action, primary = update_button(update)
+    bw = max(text_w(label, 12, primary) + 24, text_w(version, 11) + 8)
+    room = x - 10 - (58 + text_w("Every Claude and Codex limit, at a glance.", 13)) - 14
+    if bw > room and not primary:
         return hits  # a window too narrow for it: the title keeps the room
     x -= 10 + bw
     hot = quantize(ui.fades.get(action, 0.0)) if action else 0.0
+    c.text(x + bw / 2, 22, version, 11, FAINT, anchor="mm", bg=BG)
+    bh, by = 24, 29
     if primary:
         fill = mixc(GOOD, blend((255, 255, 255), GOOD, .1), hot)
-        c.rect(x, 19, bw, 28, 7, fill + (255,))
-        c.text(x + bw / 2, 33, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
+        c.rect(x, by, bw, bh, 7, fill + (255,))
+        c.text(x + bw / 2, by + bh / 2, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
     else:
         base = mixc(SURFACE, SURFACE_3, hot)
-        if hot:
-            c.rect(x, 19, bw, 28, 7, SURFACE_3 + (round(255 * hot),))
-        c.text(x + bw / 2, 33, label, 12, mixc(MUTED, TEXT, hot) if action else MUTED, anchor="mm", bg=base)
+        c.rect(x, by, bw, bh, 7, SURFACE_2 + (255,))
+        c.outline(x, by, bw, bh, 7, LINE_STRONG)
+        c.text(x + bw / 2, by + bh / 2, label, 12, mixc(MUTED, TEXT, hot) if action else MUTED, anchor="mm", bg=SURFACE_2)
     if action:
-        hits.append(((x, 19, bw, 28), action, "hand"))
+        hits.append(((x, by, bw, bh), action, "hand"))
     return hits
 
 
-def update_button(update, room=400):
-    """(label, action, primary) for the version / update button in the top bar. Short when `room` is tight."""
-    current = "v" + str(update.get("current") or "")
+def update_button(update):
+    """(label, action, primary) for the update button in the top bar, under the version."""
     if update.get("installing"):
         return "Updating…", None, True
     if update.get("available"):
@@ -794,12 +797,8 @@ def update_button(update, room=400):
     if update.get("checking"):
         return "Checking…", None, False
     if update.get("error"):
-        return "Update check failed · Retry", "update:check", False
-    if update.get("latest"):
-        label = current + " · Up to date"
-    else:
-        label = current + " · Check for updates"
-    return (label if text_w(label, 12) + 24 <= room else current), "update:check", False
+        return "Check failed · Retry", "update:check", False
+    return ("Up to date · Check again" if update.get("latest") else "Check for updates"), "update:check", False
 
 
 def draw_group(data, w, scale):
@@ -948,7 +947,7 @@ def mod_row(state):
 
 
 KEY_ROW_H = 40
-JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session; the new account loads less")
+JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session for the new account")
 
 
 def jev_key_field(c, ui, state, x, y, w, hits):

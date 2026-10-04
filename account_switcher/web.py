@@ -13,6 +13,15 @@ from .demo import DemoGateway
 from .local_http import LocalServer
 
 ASSETS = Path(__file__).with_name("static")
+UPDATE_EVERY = 2 * 3600   # seconds between update checks (the first is at launch)
+UPDATE_RETRY_AFTER = 300  # a check that couldn't reach GitHub is tried again after this, up to UPDATE_RETRIES times
+UPDATE_RETRIES = 3
+
+
+def update_wait(ok, failures):
+    """Seconds until the next update check: the full interval after a good one, a short retry after
+    one that couldn't reach GitHub (the first few times, then the full interval again)."""
+    return UPDATE_EVERY if ok or failures > UPDATE_RETRIES else UPDATE_RETRY_AFTER
 
 
 class Controller:
@@ -63,16 +72,33 @@ class Controller:
         from . import updates
         with self.condition:
             if self.update.get("checking"):
-                return
+                return True
             self.update = dict(self.update, checking=True, error=None)
         self.notify("changed", None)
         result = updates.check()
         with self.condition:
             previous = self.update.get("latest")
+            if result.get("error") and previous:  # offline for a moment: an update already found stays offered
+                result = dict(self.update, checked=result["checked"], error=result["error"])
             self.update = dict(result, checking=False)
         self.notify("changed", None)
         if announce and result.get("available") and result.get("latest") != previous and self.on_update_available:
             self.on_update_available(result["latest"])
+        return not result.get("error")
+
+    def watch_updates(self):
+        """Background thread: a check now (at launch), then every UPDATE_EVERY seconds; one that
+        couldn't reach GitHub (no network yet after boot) is retried sooner."""
+        def loop():
+            retries = 0
+            while not self.closed:
+                ok = self.check_updates()
+                retries = 0 if ok else retries + 1
+                wait = update_wait(ok, retries)
+                end = time.monotonic() + wait
+                while not self.closed and time.monotonic() < end:
+                    time.sleep(min(30, max(0.1, end - time.monotonic())))
+        threading.Thread(target=loop, daemon=True, name="update-check").start()
 
     def notify(self, kind, value):
         with self.condition:
