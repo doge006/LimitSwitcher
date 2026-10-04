@@ -165,13 +165,13 @@ def remember(cache, line):
         pass
 
 
-def recall(cache):
+def recall(cache, lasts=CACHE_FOR):
     try:
         if not cache:
             return None
         with open(cache, encoding="utf-8") as handle:
             saved = loads(handle.read())
-        return saved["line"] if saved and time.time() - saved["at"] < CACHE_FOR else None
+        return saved["line"] if saved and (lasts is None or time.time() - saved["at"] < lasts) else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
 
@@ -283,7 +283,9 @@ def main(argv):
         if extra:
             remember(ctx_cache, extra)
         else:
-            extra = recall(ctx_cache)  # a run without the figures: the last ones, not a gap
+            # A run without the figures (a usage limit, a compaction, until the next reply): the
+            # session's last ones, however long it waits, not a gap
+            extra = recall(ctx_cache, None)
         if line or extra:
             pieces = [line] if line else []
             if extra:

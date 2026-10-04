@@ -143,7 +143,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
 - **Usage limit resets:** banked resets are shown for Codex, which reports them. Claude's usage response doesn't include its free resets (they appear only in Claude's settings), so none are shown for Claude.
-- **Auto swap:** each account is used to 100%; then the app moves to the account with the most room, and the thread carries on with everything it had.
+- **Auto swap:** each account is used to 100%; then the app moves to the account whose weekly limit resets first (so that quota is used before it's lost; one with under 5% left only when nothing has more), and the thread carries on with everything it had.
   - *Codex:* the request that hit the limit is sent again on the next account, so the session never sees the error. If ChatGPT's response headers already showed the account used up, a new turn simply starts on the next account.
   - *Claude:* Claude Code shows its limit message. The hook below switches accounts right away, so your next message uses the new account; with Auto resume on, it also continues by itself.
   - *Claude threads:* nothing in them is tied to an account, so they carry over whole.
@@ -184,7 +184,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 
 In the full view, the gear opens Settings:
 
-- **Auto swap:** move to the account with the most room when a limit hits.
+- **Auto swap:** move to the account whose weekly limit resets first when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
 - **Jev compaction** (under the Claude Code Status mod, off by default): before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.

@@ -82,6 +82,7 @@ STATUS_SYNC = 3.0        # seconds between a status line's look at the login fil
 JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
+MIN_ROOM = 5            # percent: an account with less left than this is only moved to when none has more
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
 
@@ -583,7 +584,7 @@ class LiveAccounts:
 
     def limit_hit(self, account_id, resets_at=None):
         """A routed request found this account out of quota. Mark it, and (with Auto swap)
-        move to the account with the most headroom. Returns the account to retry on, or None."""
+        move to the next account (see _pick). Returns the account to retry on, or None."""
         with self.lock:
             entry = self.meta["accounts"].get(account_id)
             if entry is None:
@@ -808,13 +809,29 @@ class LiveAccounts:
                 limits[key] = {"used_percentage": window["used"], "resets_at": window.get("resetsAt")}
         return limits or None
 
+    @staticmethod
+    def _pick(candidates):
+        """The account to move to: of those with real room, the one whose weekly (longest) window
+        resets first, so its quota is used before it is lost; the one with the most headroom when
+        none has real room (or among accounts whose usage is unknown, which come last)."""
+        if not candidates:
+            return None
+        roomy = [a for a in candidates if a.headroom >= MIN_ROOM]
+        if not roomy:
+            return max(candidates, key=lambda a: a.headroom)
+
+        def weekly_reset(account):
+            resets = [w["resetsAt"] for w in account.account_windows() if w["key"] != "five_hour" and w.get("resetsAt")]
+            return min(resets) if resets else float("inf")
+        return min(roomy, key=lambda a: (weekly_reset(a) // 3600, -a.headroom))  # within the same hour: the most room
+
     def _best_other(self, name, current, allow_unknown=False):
-        """The other account with the most headroom. allow_unknown also accepts accounts whose
+        """The other account to move to (see _pick). allow_unknown also accepts accounts whose
         usage has not been read yet (after the known ones): a client just hit a limit, and
         trying one is better than stopping."""
         candidates = [a for a in self.accounts() if a.provider == name and a.id != current
                       and a.eligible and not a.status and (a.headroom > 0 or (allow_unknown and a.headroom < 0))]
-        return max(candidates, key=lambda a: a.headroom) if candidates else None
+        return self._pick(candidates)
 
     def resets_soon(self, account):
         """True when Claude's only used-up limit is the 5-hour one and it resets within
@@ -1016,7 +1033,7 @@ class LiveAccounts:
                           and a.eligible and (not a.status or a.status.startswith("Rate limited"))]
             if not candidates:
                 return None
-            best = max(candidates, key=lambda a: a.headroom)
+            best = self._pick(candidates)
             tried.add(best.id)
             entry = self.meta["accounts"].get(best.id) or {}
             if time.time() - entry.get("updatedAt", 0.0) > 300:
@@ -1038,7 +1055,7 @@ class LiveAccounts:
         return bool(spent) and all(w.get("resetsAt") and w["resetsAt"] <= now for w in spent)
 
     def auto_swap(self):
-        """Move off an account that has used up a limit, to the one with the most headroom."""
+        """Move off an account that has used up a limit, to the next one (see _pick)."""
         if not self.meta["autoSwap"]:
             return []
         moved = []

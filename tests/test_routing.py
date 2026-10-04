@@ -630,6 +630,13 @@ class AfkTests(unittest.TestCase):
                 statusline.main(["statusline", str(state)])
             self.assertNotIn("LimitSwitcher", out.getvalue())  # a wrong token gets no app line...
             self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # ...but the context stays (the last figures)
+            ctx = Path(self.tmp.name) / "statusline-ctx-s.json"  # a long wait (a usage limit, a compaction): still there
+            ctx.write_text(json.dumps(dict(json.loads(ctx.read_text()), at=time.time() - 3600)))
+            out = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
+                    mock.patch.object(sys, "stdout", out):
+                statusline.main(["statusline", str(state)])
+            self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))
         finally:
             server.shutdown()
             server.server_close()
@@ -1165,10 +1172,22 @@ class StatusLineMarkerTests(unittest.TestCase):
     def test_hook_does_not_wake_a_session_that_went_on_meanwhile(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "t.jsonl"
-            path.write_text("{}\n")
+            def line(**entry):
+                return json.dumps(entry) + "\n"
+
+            path.write_text(line(type="user", uuid="u1") + line(type="assistant", uuid="a1")
+                            + line(type="assistant", uuid="e1", isApiErrorMessage=True))  # the limit's own reply
             before = afk_hook.stamp(str(path))
-            path.write_text("{}\n{}\n")
-            os.utime(path, ns=(before + 10**9, before + 10**9))
+            self.assertEqual(before, "a1")
+            with path.open("a") as handle:  # notices while the hook waits: not the session going on
+                handle.write(line(type="system", uuid="s1", content="Remote Control disconnected"))
+                handle.write(line(type="system", subtype="compact_boundary", uuid="s2"))
+                handle.write(line(type="user", uuid="m1", isMeta=True))
+                handle.write(line(type="file-history-snapshot"))
+                handle.write("not json\n")
+            self.assertEqual(afk_hook.stamp(str(path)), before)
+            with path.open("a") as handle:  # a new reply: it went on
+                handle.write(line(type="assistant", uuid="a2"))
             self.assertNotEqual(afk_hook.stamp(str(path)), before)
             self.assertIsNone(afk_hook.stamp(str(Path(tmp) / "missing")))
 

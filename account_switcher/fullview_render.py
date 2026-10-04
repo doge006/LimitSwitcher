@@ -924,7 +924,7 @@ def toggle(c, x, y, pos, hot, bg):
     c.dot(x + 10.5 + 19 * pos, y + 11, r, mixc(MUTED, (255, 255, 255), pos))
 
 
-SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom"),
+SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets first"),
             ("afk", "Auto resume", "Continue the session on another account"),
             ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone"),
             ("waitNearReset", "Wait for a near reset", "No switch when the 5-hour limit resets within 15 min"),
