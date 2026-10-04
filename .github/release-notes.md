@@ -1,11 +1,15 @@
-The app offers it in Settings → **Update to 1.0.11** (or download below).
+The app offers it in Settings → **Update to 1.2.0** (or download below).
 
-## Fixed
+## New
 
-- **The data folder is called LimitSwitcher now:** your accounts and settings were still kept under `AccountSwitcher` (the app's old name). The first start after updating moves that folder to `LimitSwitcher` by itself (`~/Library/Application Support/LimitSwitcher` on macOS, `account-switcher` to `limitswitcher` under `~/.local/share` on Linux). Nothing is lost: if the folder can't be moved, the old one keeps being used. If you renamed it yourself, yours is used. The Claude Code Status mod is pointed at the new place automatically.
-- **Account cards no longer cut off their status text:** "Numbers from 1h 20m ago · che…" on an account you aren't using now shortens to what fits ("1h 20m ago · checking") instead of ending mid-word.
-- **Claude Code commands the app runs can't pile up:** a `claude plugin …` command that hangs (to look up or install the Claude Code Status mod) is now ended with everything it started, and an unknown mod state is looked up every 10 minutes, not every minute.
-- **A stuck usage refresh leaves a trace:** if a refresh takes more than 3 minutes, `app.log` gets every thread's stack, so a stall (numbers stuck at "1h ago · checking") can be traced.
+- **A much lighter Claude Code status line:** on Windows and macOS it is now a tiny native program (`LimitSwitcher Status` in Task Manager and Activity Monitor: about 1.7 MB and 2 ms a run, instead of a 9 MB Python process), refreshed every second so changes show at once. With a status line of your own, or from source, the Python script still runs (about half the work it was).
+- **Jev compaction sits under the Claude Code Status mod in Settings** (off by default), with a masked field for your OpenRouter key. The key is saved to the `.env` file the mod reads, readable only by you, and shown only as dots. `/jevcompact` runs the compaction by hand in any session.
+- **The status line shows Jev's work:** while it compacts, the icon turns yellow and says so right after `LimitSwitcher`; for 45 seconds after, it says what it saved (`Jev compacted ~120k tokens saved`). `ctx` is blue, and its count and percentage go green, yellow and red as the context fills.
+
+## Changed
+
+- **The "Claude Code status line" switch is gone:** the line comes with the Status mod (installing it is the choice to see it), and your own status line is still wrapped as before.
+- The app looks at the login files at most every 3 seconds when a status line reports (on macOS that read the Keychain on every report).
 
 ## Download
 
