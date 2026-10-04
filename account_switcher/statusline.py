@@ -183,34 +183,53 @@ def tokens_text(count):
     return f"{count / 1_000_000:.1f}M" if count >= 1_000_000 else f"{round(count / 1000)}k" if count >= 1000 else str(count)
 
 
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def context_part(data):
-    """The session's context: how much is used and what's left of the window ("ctx 183k · 82% left").
-    None until Claude Code reports it (before the first reply)."""
+    """The session's context: how much is used and what's left of the window ("ctx 183k/82% left").
+    None until Claude Code reports it (before the first reply). The count and the percentage come
+    from the same figure (the current context, from current_usage) so they move together; the
+    percentage Claude Code reports separately is only the fallback (it can trail the count)."""
     window = data.get("context_window")
     if not isinstance(window, dict):
         return None
-    used, left = window.get("total_input_tokens"), window.get("remaining_percentage")
-    if not isinstance(used, (int, float)) or isinstance(used, bool) or used <= 0:
+    usage, size = window.get("current_usage"), window.get("context_window_size")
+    used = left = None
+    if isinstance(usage, dict):
+        parts = [usage.get(k) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")]
+        if any(_number(v) for v in parts):
+            used = sum(v for v in parts if _number(v))
+    if used is None:
+        used = window.get("total_input_tokens")
+    if not _number(used) or used <= 0:
         return None
+    if _number(size) and size > 0 and (isinstance(usage, dict) and used != window.get("total_input_tokens")):
+        left = 100 - used * 100 / size
+    elif _number(window.get("remaining_percentage")):
+        left = window["remaining_percentage"]
+    elif _number(size) and size > 0:
+        left = 100 - used * 100 / size
     text = "ctx " + tokens_text(int(used))
-    if isinstance(left, (int, float)) and not isinstance(left, bool):
-        text += f" · {max(0, min(100, int(left)))}% left"
+    if left is not None:
+        text += f"/{max(0, min(100, int(left)))}% left"
     return text
 
 
 def context_painted(data):
-    """The same, coloured by how much is left: "ctx 183k · 82% left" with the count and the
+    """The same, coloured by how much is left: "ctx 183k/82% left" with the count and the
     percentage in that colour, "ctx" blue and the rest grey (the count alone when the percentage
     is unknown)."""
     text = context_part(data)
     if text is None:
         return None
-    count, _, left = text.partition(" · ")
+    count, _, left = text.partition("/")
     label, _, number = count.partition(" ")
     if not left:
         return paint([{"t": label + " ", "c": "label"}, {"t": number}])
     color = left_color(int(left.split("%")[0]))
-    return paint([{"t": label + " ", "c": "label"}, {"t": number, "c": color}, {"t": " · ", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
+    return paint([{"t": label + " ", "c": "label"}, {"t": number, "c": color}, {"t": "/", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
                   {"t": " left", "c": "dim"}])
 
 
@@ -255,9 +274,21 @@ def main(argv):
             raw = dumps(dict(data, rate_limits=fresh)).encode("utf-8")
         output = run_previous(previous, raw)
         write(with_marker(output) if line else output)  # the marker only while the app answers
-    elif line:
+    else:
         extra = context_painted(data) if isinstance(data, dict) else None
-        write((line + (paint([{"t": " · ", "c": "dim"}]) + extra if extra else "") + "\n").encode("utf-8"))
+        ctx_cache = None
+        if cache and isinstance(data, dict):
+            session = "".join(c for c in str(data.get("session_id") or "")[:60] if c.isalnum() or c in "-_")
+            ctx_cache = os.path.join(os.path.dirname(cache), f"statusline-ctx-{session}.json") if session else None
+        if extra:
+            remember(ctx_cache, extra)
+        else:
+            extra = recall(ctx_cache)  # a run without the figures: the last ones, not a gap
+        if line or extra:
+            pieces = [line] if line else []
+            if extra:
+                pieces.append(extra)
+            write((paint([{"t": " · ", "c": "dim"}]).join(pieces) + "\n").encode("utf-8"))
     return 0
 
 

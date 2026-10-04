@@ -95,8 +95,11 @@ def absolute(ts):
     return clock(ts) if same_day else time.strftime("%a ", time.localtime(ts)) + clock(ts)
 
 
-def reset_text(ts):
-    return f"Resets {absolute(ts)} · {relative(ts)}" if ts else "Reset time not reported"
+def reset_text(ts, unused=False):
+    """The reset time; a window nobody has used has none yet: it starts with the first message."""
+    if ts:
+        return f"Resets {absolute(ts)} · {relative(ts)}"
+    return "Starts with your first message" if unused else "Reset time not reported"
 
 
 def date_text(ts):
@@ -606,7 +609,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         live_parts.append(("pct", (aid, win["key"]), w - 18 - text_w(" left", 12), y + 14, left))
         c.rect(18, y + 24, w - 36, 6, 3, TRACK)
         live_parts.append(("bar", (aid, win["key"]), 18, y + 24, w - 36, left))
-        c.text(18, y + 46, reset_text(win.get("resetsAt")), 11.5, FAINT)
+        c.text(18, y + 46, reset_text(win.get("resetsAt"), not win.get("used", 0)), 11.5, FAINT)
         y += 50 + 11
     if windows:
         y -= 11

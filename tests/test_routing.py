@@ -620,7 +620,7 @@ class AfkTests(unittest.TestCase):
                 statusline.main(["statusline", str(state)])
             self.assertIn("⇄ LimitSwitcher · a@example.com · Opus 5.5 (high) · 5h 60% left",
                           re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # name · model (effort) · usage
-            self.assertIn("ctx 183k · 82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))
+            self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))
             five = next(w for w in self.manager.accounts() if w.email == "a@example.com").windows()[0]
             self.assertEqual(five["used"], 40.0)
             state.write_text(json.dumps({"url": server.hook_url, "token": "wrong", "statusline": None}))
@@ -628,7 +628,8 @@ class AfkTests(unittest.TestCase):
             with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
                     mock.patch.object(sys, "stdout", out):
                 statusline.main(["statusline", str(state)])
-            self.assertEqual(out.getvalue(), "")  # a wrong token gets nothing
+            self.assertNotIn("LimitSwitcher", out.getvalue())  # a wrong token gets no app line...
+            self.assertIn("ctx 183k/82% left", re.sub(r"\x1b\[[0-9;]*m", "", out.getvalue()))  # ...but the context stays (the last figures)
         finally:
             server.shutdown()
             server.server_close()
@@ -1113,7 +1114,7 @@ class StatusLineMarkerTests(unittest.TestCase):
         self.assertIn("\x1b[94m5h\x1b[0m", painted)             # the label, blue
         self.assertIn("\x1b[93m12%\x1b[0m\x1b[90m left\x1b[0m", painted)  # a little left: yellow number, grey word
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
-        self.assertEqual(painted, "\x1b[94mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
+        self.assertEqual(painted, "\x1b[94mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m/\x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
         self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[94mctx \x1b[0m1.2M")
 
     def test_the_light_json_helpers_agree_with_the_json_module(self):
@@ -1152,10 +1153,14 @@ class StatusLineMarkerTests(unittest.TestCase):
     def test_context_part(self):
         from account_switcher import statusline
         window = {"total_input_tokens": 183400, "remaining_percentage": 82.4}
-        self.assertEqual(statusline.context_part({"context_window": window}), "ctx 183k · 82% left")
+        self.assertEqual(statusline.context_part({"context_window": window}), "ctx 183k/82% left")
         self.assertEqual(statusline.context_part({"context_window": {"total_input_tokens": 1_250_000}}), "ctx 1.2M")
         self.assertIsNone(statusline.context_part({}))  # before the first reply
         self.assertIsNone(statusline.context_part({"context_window": {"total_input_tokens": 0}}))
+        # count and percentage from the same figure: the current context, not the lagging reported percentage
+        live = {"current_usage": {"input_tokens": 0, "cache_creation_input_tokens": 90_000, "cache_read_input_tokens": 110_000},
+                "total_input_tokens": 50_000, "context_window_size": 400_000, "remaining_percentage": 99}
+        self.assertEqual(statusline.context_part({"context_window": live}), "ctx 200k/50% left")
 
     def test_hook_does_not_wake_a_session_that_went_on_meanwhile(self):
         with tempfile.TemporaryDirectory() as tmp:
