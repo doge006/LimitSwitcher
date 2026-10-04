@@ -193,7 +193,7 @@ def uninstall(root=None):
 
 # ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
 STATUS_MARK = "account_switcher_statusline"
-STATUS_REFRESH = 30  # seconds
+STATUS_REFRESH = 5  # seconds (Claude Code allows 1 at the least)
 
 
 def statusline_command(state_file):
