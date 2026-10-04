@@ -186,10 +186,9 @@ In the full view, the gear opens Settings:
 
 - **Auto swap:** move to the account with the most room when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
-- **Jev compaction:** before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
+- **Jev compaction** (under the Claude Code Status mod, off by default): before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
-- **Claude Code status line:** show LimitSwitcher and the account in use there (see below).
 - **Launch with Windows / macOS:** start in the tray when you sign in.
 - **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
 - **Check for updates / Update to …**
@@ -213,9 +212,9 @@ Swapping a long session to another account costs a cold start: the new account h
 
 What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
 
-You can also run it by hand in any session: `/compact limitswitcher:jev-compact`. Your earlier thinking stays wherever the API allows it (an edit invalidates the thinking after it on accounts created since Aug 31, 2026; Claude Code then drops those blocks and retries by itself). It costs no Claude usage (it works on a used-up account) and a fraction of a cent of OpenRouter credit per swap. If Jev fails, the mod waits 30 seconds and tries again, three tries in all; then (or after 4 minutes at most) the session goes on without it. `/compact` and auto-compaction stay Claude Code's own.
+You can also run it by hand in any session with `/jevcompact` (it works with the toggle off). Your earlier thinking stays wherever the API allows it (an edit invalidates the thinking after it on accounts created since Aug 31, 2026; Claude Code then drops those blocks and retries by itself). It costs no Claude usage (it works on a used-up account) and a fraction of a cent of OpenRouter credit per swap. If Jev fails, the mod waits 30 seconds and tries again, three tries in all; then (or after 4 minutes at most) the session goes on without it. `/compact` and auto-compaction stay Claude Code's own.
 
-**Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction**, and give it an [OpenRouter key](https://openrouter.ai/keys): an `OPENROUTER_API_KEY=...` line in the `.env` file in LimitSwitcher's data folder (`%LOCALAPPDATA%\LimitSwitcher\.env`, or `~/Library/Application Support/LimitSwitcher/.env`), the `OPENROUTER_API_KEY` environment variable, or Claude Code's `settings.json` `env` block. The app only checks that a key is there; only the mod reads it.
+**Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction** (it sits under the mod's row and is off until you switch it on; off, the mod never asks for a compaction), and give it an [OpenRouter key](https://openrouter.ai/keys): paste it in the field that appears under the toggle (it shows only as dots, and **Remove** deletes it; it is saved as the `.env` line below, readable only by you), or put an `OPENROUTER_API_KEY=...` line in the `.env` file in LimitSwitcher's data folder (`%LOCALAPPDATA%\LimitSwitcher\.env`, or `~/Library/Application Support/LimitSwitcher/.env`), the `OPENROUTER_API_KEY` environment variable, or Claude Code's `settings.json` `env` block. The app only writes the key you paste and checks that one is there; only the mod reads it, and the app never shows it again.
 
 **How much it saves, and what it costs in quality:** benchmarked on a real 512k-token session (the one that built this) with the live Jev, against the other Jev compaction tools on the same session. *Quality* is a hindsight test: compact the session as it stood at three earlier points, then count the project facts (names, paths, values; not words or standard-library names the model knows anyway) Claude went on to use from memory that only a removed output held.
 
@@ -232,13 +231,13 @@ Any compaction also drops the old system notices Claude Code repeats through a s
 
 ## Claude Code status line
 
-LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
+LimitSwitcher shows itself in Claude Code's status line (the line under the prompt) once the Claude Code Status mod is installed (Settings → **Claude Code Status mod**).
 
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
-- **Turned on (or the mod installed), without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
-- **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
-- **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
-- **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.
+- **With the mod installed, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window; the numbers go green, yellow and red as it fills). While Jev compacts the icon is yellow and says so; for 45 seconds after, the line says what it saved (`Jev compacted ~120k tokens saved`). With your own status line, the context is already in the input Claude Code gives it.
+- **With your own status line:** LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. With the mod installed, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
+- **Without the mod, and without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
+- **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line (unless you set your own `refreshInterval`) every second with the native program below, or every 5 seconds with the Python script (a run of it is a process start of about 15 ms: 0.3% of a core per open session), so a compaction shows up within seconds. In the Windows and Mac apps it is a tiny native program (`LimitSwitcher Status` in Task Manager and Activity Monitor: about 1.7 MB and 2 ms a run, instead of a 9 MB Python process); with a status line of your own, or from source, the Python script runs instead, and gives your own status line command its freshest numbers for the account.
 - **On quit** your original status line setting is put back.
 
 ## Development

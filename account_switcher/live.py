@@ -78,6 +78,8 @@ AFK_NOTE = "The usage limit was reached, so the session moved to another account
 AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
                  "held. Re-run the tool before relying on exact details from one of them.")
 JEV_WAIT = 240           # seconds a session's Jev compaction may take (3 tries 30 s apart) before it goes on without
+STATUS_SYNC = 3.0        # seconds between a status line's look at the login files (it reports every second; on macOS that reads the Keychain)
+JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
@@ -181,6 +183,7 @@ class LiveAccounts:
         self.session_reports = {}  # Claude session -> its last status line numbers
         self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
         self.stale_reports = set()  # numbers from before the last Claude login change (see _login_changed)
+        self.status_synced = 0.0  # when a status line report last looked at the login files
         self.mod_sessions = {}   # Claude session -> when its limit-status mod last reported
         self.compactions = {}    # Claude session -> its Jev compaction before a swap (see claude_limit)
         self.signatures = {}
@@ -719,9 +722,11 @@ class LiveAccounts:
         session's first report counts only while no other session is busy. Otherwise an old
         session and a fresh one take turns and the bar jumps between their numbers."""
         name = "claude"
-        self.sync_live()
-        account_id = self.live_ids.get(name)
         now = time.time()
+        if now - self.status_synced >= STATUS_SYNC:
+            self.status_synced = now
+            self.sync_live()
+        account_id = self.live_ids.get(name)
         entry = self.meta["accounts"].get(account_id) if account_id else None
         if entry is None:
             return None
@@ -756,11 +761,18 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        groups = [[("⇄", "good"), (" ", None), ("LimitSwitcher", "dim")], [(self.shown_name(account_id), "dim")]]
+        compacting = bool(session) and self.compacting(session)
+        # While Jev compacts the icon turns yellow and "Jev compacting…" follows the app's name.
+        groups = [[("⇄", "warn" if compacting else "good"), (" ", None), ("LimitSwitcher", "dim")]]
+        if compacting:
+            groups.append([("Jev compacting…", "warn")])
+        job = self.compactions.get(session or "")
+        if job and job["status"] == "done" and job.get("saved") and now - job.get("finishedAt", 0) < JEV_SHOWN \
+                and round(job["saved"] / 1000) > 0:  # what it saved, for a little while after
+            groups.append([("Jev compacted ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens saved", "dim")])
+        groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))
-        if session and self.compacting(session):
-            groups.append([("Jev compacting…", "warn")])
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"

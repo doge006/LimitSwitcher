@@ -885,10 +885,8 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
             ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
             ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone: loading one on another account can use a lot of usage"),
             ("waitNearReset", "Wait for a near reset", "Don't switch accounts when the 5-hour limit resets within 15 minutes"),
-            ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less (needs the mod and an OpenRouter key)"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
-            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"),
-            ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
+            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
@@ -907,6 +905,42 @@ def mod_row(state):
     return lines, color, 42 + 16 * len(lines)
 
 
+KEY_ROW_H = 40
+JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less. Off: the mod never asks for it")
+
+
+def jev_key_field(c, ui, state, x, y, w, hits):
+    """The OpenRouter key's field under Jev compaction. What's typed (or saved) is only ever drawn as
+    dots; a saved key can be removed, and one set in the environment or Claude Code's settings is
+    named but left to whoever set it."""
+    editing = ui.editing if ui.editing and ui.editing[0] == "jevkey" else None
+    source = state.get("jevKey")
+    mid = y + 14
+    if source in ("env", "settings") and not editing:
+        c.text(x, mid, "Key set in " + ("the environment" if source == "env" else "Claude Code's settings"), 12, MUTED, anchor="lm")
+        return
+    remove_w = text_w("Remove", 12) + 4 if source == "file" and not editing else 0
+    box_w = w - (remove_w + 8 if remove_w else 0)
+    hot = ui.hover == "name:jevkey"
+    c.rect(x, y, box_w, 28, 7, SURFACE_2 + (255,))
+    c.outline(x, y, box_w, 28, 7, FOCUS + (255,) if editing else LINE_STRONG)
+    dots = len(editing[1]) if editing else 12 if source == "file" else 0
+    dots = min(dots, int((box_w - 24) // 8))  # a long key shows as a full row of dots
+    for i in range(dots):
+        c.dot(x + 12 + 8 * i, mid, 2.4, TEXT if editing else MUTED)
+    if editing:
+        caret = min(editing[2], dots)
+        c.rect(x + 10 + 8 * caret, mid - 8, 1.2, 16, 0, TEXT + (255,))
+    elif not dots:
+        c.text(x + 10, mid, "OpenRouter key", 12, MUTED if hot else FAINT, anchor="lm", bg=SURFACE_2)
+    hits.append(((x, y, box_w, 28), "name:jevkey", "text"))
+    if remove_w:
+        rx = x + w - remove_w
+        on = ui.hover == "jevkey-clear:"
+        c.text(rx, mid, "Remove", 12, BAD if on else MUTED, anchor="lm")
+        hits.append(((rx - 4, y, remove_w + 8, 28), "jevkey-clear:", "hand"))
+
+
 def settings_menu(image, scale, state, ui, x, y, prefs):
     w = 320
     rows = list(SETTINGS)
@@ -920,15 +954,16 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     chooser = taskbar and state.get("taskbar") and bool(displays)
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
+    jev_lines = wrap(JEV_ROW[2], 12, w - 80)
+    key_h = KEY_ROW_H if state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
+    jev_h = 30 + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
     h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
-        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] if live_mod else 0)
+        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] + jev_h if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
-    ry = y + 8
-    for (key, title, _), lines in zip(rows, wrapped):
-        if key == "taskbar":
-            c.line(x + 14, ry + 2, w - 28, LINE)
-            ry += 13
+
+    def toggle_row(key, title, lines, ry):
+        """One setting's switch, name and description; returns its height."""
         row_h = 30 + 16 * len(lines)
         on = prefs.get(key, bool(state.get(key)))
         locked = state.get("busy") and key in ("autoSwap", "afk")
@@ -939,7 +974,14 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
             c.text(x + 66, ry + 39 + 16 * i, line, 12, MUTED)
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
-        ry += row_h
+        return row_h
+
+    ry = y + 8
+    for (key, title, _), lines in zip(rows, wrapped):
+        if key == "taskbar":
+            c.line(x + 14, ry + 2, w - 28, LINE)
+            ry += 13
+        ry += toggle_row(key, title, lines, ry)
     if chooser:  # per display, what its taskbar shows: two slots (left, right); a click cycles each
         from . import taskbar_layout
         layout = taskbar_layout.layout(state)
@@ -962,7 +1004,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
             ry += SLOT_ROW_H
     if live_mod:  # the optional Claude Code mod: live usage from Claude Code, shown in a spot of its own
         lines, color, mod_h = mod_row(state)
-        ry = y + h - 52 - mod_h
+        ry = y + h - 52 - jev_h - mod_h
         c.line(x + 14, ry + 2, w - 28, LINE)
         status = (state.get("mod") or {}).get("status") or "unknown"
         c.text(x + 16, ry + 20, MOD_NAME, 14, TEXT, True, anchor="lm")
@@ -984,6 +1026,12 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                 c.outline(bx, ry + 15, bw, 28, 7, LINE_STRONG)
                 c.text(bx + bw / 2, ry + 29, label, 12, TEXT, anchor="mm", bg=base)
             hits.append(((bx, ry + 15, bw, 28), "mod:install", "hand"))
+        # Jev compaction is a part of the mod, off until it's switched on: under the mod's own row
+        ry = y + h - 52 - jev_h
+        c.line(x + 14, ry + 2, w - 28, LINE)
+        ry += toggle_row(JEV_ROW[0], JEV_ROW[1], jev_lines, ry + 4) + 4
+        if key_h:
+            jev_key_field(c, ui, state, x + 66, ry - 2, w - 66 - 14, hits)
     # Version and updates
     ry = y + h - 52
     c.line(x + 14, ry + 2, w - 28, LINE)

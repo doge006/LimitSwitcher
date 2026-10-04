@@ -374,10 +374,12 @@ class Integrations:
             claude_hooks.restore_auto_continue(self.state_file, self.claude_root)
         except OSError as error:
             log.warning("could not restore Claude Code's automatic continue: %s", error)
-        try:
-            self.state_file.unlink()
-        except OSError:
-            pass
+        for path in (self.state_file, claude_hooks.native_state_file(self.state_file),
+                     claude_hooks.native_cache_file(self.state_file)):
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     # ---------- AFK ----------
     def write_state(self, statusline=None):
@@ -385,17 +387,26 @@ class Integrations:
         the user's own status line command (which the script keeps showing)."""
         atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
                                                    "statusline": statusline}).encode())
+        # The same for the native status line client (scripts/status_client.c), which parses nothing:
+        # host, port, token and where to keep its last line, one per line.
+        try:
+            host, _, port = self.hook_url.partition("://")[2].partition("/")[0].partition(":")
+            atomic_write(claude_hooks.native_state_file(self.state_file),
+                         f"{host}\n{port}\n{self.hook_token}\n{claude_hooks.native_cache_file(self.state_file)}\n".encode("utf-8"),
+                         private=True)
+        except OSError as error:
+            log.warning("could not write the status line client's state: %s", error)
 
     def mod_in_use(self):
         """The Claude Code Status mod has reported lately (it feeds the usage and draws the line)."""
         return time.time() - float(self.manager.meta.get("modSeenAt") or 0) < MOD_FRESH
 
     def statusline_wanted(self):
-        """Ours in Claude Code's status line: when it's turned on in Settings, while the mod is in
-        use (installing it is the person's choice to see the line; the mod feeds the usage, the
-        status line shows it), or around the user's own one (which stays unchanged). Otherwise
-        Claude Code's status line is left alone: ours would show an empty line there."""
-        return bool(self.manager.meta.get("statuslineShown", False)) or self.mod_in_use() or \
+        """Ours in Claude Code's status line: while the mod is in use (installing it is the person's
+        choice to see the line; the mod feeds the usage, the status line shows it), or around the
+        user's own one (which stays unchanged). Otherwise Claude Code's status line is left alone:
+        ours would show an empty line there."""
+        return self.mod_in_use() or \
             claude_hooks.own_statusline(self.state_file, self.claude_root) is not None
 
     def apply_afk(self):

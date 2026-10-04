@@ -43,6 +43,18 @@ cl /nologo /O2 /W3 /DUNICODE /D_UNICODE scripts\win_launcher.c (Join-Path $Out '
 if (-not (Test-Path -LiteralPath (Join-Path $app 'LimitSwitcher.exe'))) { throw 'the launcher did not build' }
 Remove-Item -LiteralPath (Join-Path $Out 'launcher.res'), (Join-Path $Out 'win_launcher.obj') -ErrorAction SilentlyContinue
 
+# 4b. LimitSwitcherStatus.exe: Claude Code's status line as a tiny native console program (about 1 MB and
+#     1 ms a run, instead of a Python process: Claude Code starts it every few seconds per open session).
+#     Task Manager shows "LimitSwitcher Status". Static C runtime (/MT): it sits beside the exe, not the runtime.
+$statusOut = Join-Path $Out 'status'
+New-Item -ItemType Directory -Force -Path $statusOut | Out-Null
+rc /nologo /DSTATUS /i $Out /fo (Join-Path $statusOut 'status.res') scripts\win_launcher.rc
+if ($LASTEXITCODE -ne 0) { throw 'rc failed (status)' }
+cl /nologo /O2 /W3 /MT scripts\status_client.c (Join-Path $statusOut 'status.res') `
+    /Fo"$statusOut\\" /Fe"$app\LimitSwitcherStatus.exe" /link /SUBSYSTEM:CONSOLE ws2_32.lib
+if (-not (Test-Path -LiteralPath (Join-Path $app 'LimitSwitcherStatus.exe'))) { throw 'the status launcher did not build' }
+Remove-Item -LiteralPath $statusOut -Recurse -ErrorAction SilentlyContinue
+
 # 5. The installer (scripts\LimitSwitcher.iss).
 $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
 if (-not $iscc) { $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe' }

@@ -193,13 +193,45 @@ def uninstall(root=None):
 
 # ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
 STATUS_MARK = "account_switcher_statusline"
-STATUS_REFRESH = 30  # seconds
+STATUS_REFRESH = 5  # seconds. Claude Code allows 1, but every Python run is a process start (about 15 ms of CPU): 5 s is 0.3% of a core per open session
+STATUS_REFRESH_NATIVE = 1  # the native client takes about 2 ms a run: every second is cheaper than the script every 5
 
 
-def statusline_command(state_file):
+def native_state_file(state_file):
+    """Where the app tells the native status line client (below) how to reach it: four plain lines."""
+    return Path(state_file).with_name("statusline.native")
+
+
+def native_cache_file(state_file):
+    """Where the native client keeps its last line, for when the app is busy for a moment."""
+    return Path(state_file).with_name("statusline-native.cache")
+
+
+def _native_client():
+    """The installed app's native status line program, or None (a source copy, Linux, an old install).
+    It replaces the Python script (about 10 MB and 15 ms a run, every few seconds per open session)
+    with about 1 MB and 1 ms; Task Manager and Activity Monitor show "LimitSwitcher Status"."""
+    python = Path(sys.executable)
+    if sys.platform == "win32":
+        if python.name.lower().startswith("python"):
+            return None  # a source copy
+        client = python.with_name("LimitSwitcherStatus.exe")  # beside LimitSwitcher.exe
+    elif sys.platform == "darwin":
+        client = python.with_name("LimitSwitcher Status")  # beside the bundled python3
+    else:
+        return None
+    return client if client.is_file() else None
+
+
+def statusline_command(state_file, own=False):
+    """The command Claude Code runs as its status line. `own`: the person has a status line of their
+    own, which the Python script has to run (with their environment), so it is used then."""
+    client = None if own else _native_client()
+    if client is not None:
+        return f"{_short(client)} {_short(native_state_file(state_file))} {STATUS_MARK}"
     python = _python()
     script = Path(__file__).with_name("statusline.py")
-    return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"
+    return f"{_short(python)} -S -E{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"  # no site, no PYTHON* variables: it needs neither
 
 
 def _backup(state_file):
@@ -221,10 +253,11 @@ def install_statusline(state_file, root=None):
     else:
         previous = current if isinstance(current, dict) else None
         atomic_write(backup, json.dumps({"previous": previous}).encode("utf-8"))
-    entry = dict(previous or {"padding": 0}, type="command", command=statusline_command(state_file))
+    own = bool(isinstance((previous or {}).get("command"), str) and previous["command"].strip())
+    entry = dict(previous or {"padding": 0}, type="command", command=statusline_command(state_file, own=own))
     # Claude Code otherwise re-runs a status line only when that session changes, so an idle
     # session would keep showing old numbers. The user's own interval, if any, is kept.
-    entry.setdefault("refreshInterval", STATUS_REFRESH)
+    entry.setdefault("refreshInterval", STATUS_REFRESH_NATIVE if not own and _native_client() else STATUS_REFRESH)
     if data.get("statusLine") != entry:
         updated = dict(data, statusLine=entry)
         path.parent.mkdir(parents=True, exist_ok=True)

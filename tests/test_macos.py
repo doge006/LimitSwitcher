@@ -158,9 +158,9 @@ class FullViewProcessTest(unittest.TestCase):
             state = remote.state()
             self.assertEqual(state["revision"], controller.revision)
             self.assertEqual(len(state["accounts"]), len(controller.snapshot()["accounts"]))
-            remote.action("statusline", {"on": not state["statusline"]})
+            remote.action("clock", {"on": not state["clock24"]})
             changed = remote.state(state["revision"])  # the long poll answers once it changes
-            self.assertEqual(changed["statusline"], not state["statusline"])
+            self.assertEqual(changed["clock24"], not state["clock24"])
             with self.assertRaises((ValueError, RuntimeError)):
                 remote.action("no-such-action", {})
             with self.assertRaises(RuntimeError):  # a wrong token is refused, not ignored

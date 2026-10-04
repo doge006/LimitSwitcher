@@ -15,10 +15,10 @@ from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
-from account_switcher import afk_hook, claude_hooks, codex_config
+from account_switcher import afk_hook, claude_hooks, codex_config, mod
 from account_switcher.codex_proxy import CodexProxy, ThreadState
 from account_switcher.integrations import Integrations, RoutedAccounts
-from account_switcher.live import LiveAccounts, LiveGateway
+from account_switcher.live import JEV_SHOWN, LiveAccounts, LiveGateway
 from account_switcher.providers import Claude, Codex
 from account_switcher.vault import Vault
 from account_switcher.web import Controller, make_server
@@ -395,6 +395,40 @@ class ClaudeHookTests(unittest.TestCase):
                     self.assertTrue(command.startswith(str(Path(tmp) / "runtime" / "python.exe").replace("\\", "/")), command)
                     self.assertNotIn("LimitSwitcher.exe", command)
 
+    def test_the_installed_app_runs_its_native_status_line_client_unless_there_is_a_status_line_of_their_own(self):
+        for platform, python, client in (("win32", "LimitSwitcher.exe", "LimitSwitcherStatus.exe"),
+                                         ("darwin", "python3", "LimitSwitcher Status")):
+            with self.subTest(platform), tempfile.TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                state = folder / "s.json"
+                with mock.patch.object(claude_hooks.sys, "executable", str(folder / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform), \
+                        mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                    plain = claude_hooks.statusline_command(state)  # no client installed: the script
+                    self.assertIn("statusline.py", plain)
+                    (folder / client).write_text("")
+                    native = claude_hooks.statusline_command(state)
+                    own = claude_hooks.statusline_command(state, own=True)
+                self.assertEqual(native, f"{folder / client} {folder / 'statusline.native'} {claude_hooks.STATUS_MARK}")
+                with mock.patch.object(claude_hooks.sys, "executable", str(folder / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform), \
+                        mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                    claude_root = folder / "claude"
+                    claude_root.mkdir()
+                    claude_hooks.install_statusline(state, claude_root)
+                    fast = json.loads((claude_root / "settings.json").read_text())["statusLine"]
+                self.assertEqual((fast["command"], fast["refreshInterval"]), (native, claude_hooks.STATUS_REFRESH_NATIVE))
+                self.assertIn("statusline.py", own)  # theirs has to run in the script, with their environment
+                self.assertIn(claude_hooks.STATUS_MARK, native)  # still recognised as ours
+
+    def test_linux_and_source_copies_keep_the_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "LimitSwitcherStatus.exe").write_text("")
+            for platform, python in (("linux", "python3"), ("win32", "python.exe")):
+                with mock.patch.object(claude_hooks.sys, "executable", str(Path(tmp) / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform):
+                    self.assertIn("statusline.py", claude_hooks.statusline_command(Path(tmp) / "s.json"))
+
     def test_auto_resume_turns_claude_codes_own_wait_on_and_puts_it_back(self):
         """Off, a usage limit opens a dialog that holds the hook's continue until it is answered."""
         with tempfile.TemporaryDirectory() as tmp:
@@ -600,7 +634,7 @@ class AfkTests(unittest.TestCase):
         server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.manager.live_since["claude"] = 0
-        self.manager.meta["statuslineShown"] = True  # shown in Claude Code (off by default)
+        self.manager.meta["modSeenAt"] = time.time()  # the mod is in use: the line shows in Claude Code
         state = Path(self.tmp.name) / "state.json"
         state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
         event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}}}
@@ -684,6 +718,126 @@ class ClaudeFullUseTests(AfkTests):
         self.manager.meta["autoSwap"] = False
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
         self.assertEqual(self.claude.read_live().email, "a@example.com")
+
+
+def compile_status_client(folder):
+    """scripts/status_client.c with whatever C compiler is here; None when there is none."""
+    import shutil
+    import subprocess
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None or sys.platform == "win32":
+        return None
+    out = Path(folder) / "status-client"
+    done = subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-o", str(out),
+                           str(Path(__file__).resolve().parent.parent / "scripts" / "status_client.c")],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError("status_client.c doesn't compile:\n" + done.stderr)
+    return out
+
+
+class NativeStatusClientTests(unittest.TestCase):
+    """scripts/status_client.c, the Windows/macOS replacement for the status line script: the same
+    line as the script's, without parsing anything itself."""
+    setUp = AfkTests.setUp
+    tearDown = AfkTests.tearDown
+
+    def run_client(self, client, state, event):
+        import subprocess
+        return subprocess.run([str(client), str(state)], input=json.dumps(event).encode(), capture_output=True, timeout=10)
+
+    def test_prints_what_the_script_prints_and_stands_in_while_the_app_is_gone(self):
+        from account_switcher import statusline
+        client = compile_status_client(self.tmp.name)
+        if client is None:
+            self.skipTest("no C compiler")
+        controller = Controller(gateway=lambda notify: self.gateway)
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.manager.live_since["claude"] = 0
+        self.manager.meta["modSeenAt"] = time.time()
+        host, _, port = server.hook_url.partition("://")[2].partition("/")[0].partition(":")
+        cache = Path(self.tmp.name) / "native.cache"
+        native = Path(self.tmp.name) / "native.state"
+        native.write_text(f"{host}\n{port}\n{server.hook_token}\n{cache}\n")
+        script_state = Path(self.tmp.name) / "state.json"
+        script_state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
+        event = {"session_id": "s", "model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}, "effort": {"level": "high"},
+                 "context_window": {"total_input_tokens": 183_000, "remaining_percentage": 82},
+                 "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}},
+                 "workspace": {"current_dir": "/home/é/proj"}, "cost": {"total_cost_usd": 0.12}}
+        try:
+            expected = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
+                    mock.patch.object(sys, "stdout", expected):
+                statusline.main(["statusline", str(script_state)])
+            done = self.run_client(client, native, event)
+            self.assertEqual(done.returncode, 0)
+            self.assertEqual(done.stdout, expected.getvalue().encode())
+            self.assertIn(b"Opus 5.5", done.stdout)
+            self.assertTrue(cache.exists())
+            native.write_text(f"{host}\n{port}\nwrong\n{cache}\n")  # a refused token: nothing
+            self.assertEqual(self.run_client(client, native, event).stdout, b"")
+            native.write_text(f"{host}\n{port}\n{server.hook_token}\n{cache}\n")
+        finally:
+            server.shutdown()
+            server.server_close()
+        gone = self.run_client(client, native, event)  # the app is gone: the last line, for a moment
+        self.assertEqual(gone.stdout, expected.getvalue().encode())
+        old = cache.read_text().split("\n", 1)
+        cache.write_text(f"{int(time.time()) - 400}\n{old[1]}")  # too old
+        self.assertEqual(self.run_client(client, native, event).stdout, b"")
+        self.assertEqual(self.run_client(client, Path(self.tmp.name) / "nothing", event).stdout, b"")  # not set up
+
+    def test_a_big_input_is_not_sent_in_halves(self):
+        client = compile_status_client(self.tmp.name)
+        if client is None:
+            self.skipTest("no C compiler")
+        native = Path(self.tmp.name) / "native.state"
+        native.write_text(f"127.0.0.1\n9\nt\n{Path(self.tmp.name) / 'c'}\n")
+        done = self.run_client(client, native, {"x": "y" * 70_000})
+        self.assertEqual((done.returncode, done.stdout), (0, b""))
+
+
+class JevKeyFileTests(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.dir.cleanup)
+        self.state_file = Path(self.dir.name) / "afk-hook.json"
+        self.root = Path(self.dir.name) / "claude"
+        env = mock.patch.dict(os.environ)
+        env.start()
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        self.addCleanup(env.stop)
+
+    def source(self):
+        return mod.jev_key_source(self.state_file, self.root)
+
+    def test_saved_replaced_and_removed_keeping_other_lines(self):
+        env = mod.env_file(self.state_file)
+        env.write_text("OTHER=1\nOPENROUTER_API_KEY=old\n", encoding="utf-8")
+        mod.set_jev_key(self.state_file, " 'sk-or-new' ")
+        self.assertEqual(env.read_text(encoding="utf-8"), "OTHER=1\nOPENROUTER_API_KEY=sk-or-new\n")
+        self.assertEqual(self.source(), "file")
+        if sys.platform != "win32":
+            self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+        mod.set_jev_key(self.state_file, None)
+        self.assertEqual(env.read_text(encoding="utf-8"), "OTHER=1\n")
+        self.assertIsNone(self.source())
+        env.write_text("OPENROUTER_API_KEY=x\n", encoding="utf-8")
+        mod.set_jev_key(self.state_file, None)
+        self.assertFalse(env.exists())
+
+    def test_nonsense_is_refused(self):
+        for bad in ("", "two words", "a" * 400):
+            with self.assertRaises(ValueError):
+                mod.set_jev_key(self.state_file, bad)
+        self.assertIsNone(self.source())
+
+    def test_the_environment_wins_like_the_mod_does(self):
+        mod.set_jev_key(self.state_file, "from-file")
+        with mock.patch.dict(os.environ, {"OPENROUTER_API_KEY": "from-env"}):
+            self.assertEqual(self.source(), "env")
 
 
 class JevCompactionTests(unittest.TestCase):
@@ -795,8 +949,25 @@ class JevCompactionTests(unittest.TestCase):
         self.manager.claude_limit("s1")
         line = self.manager.statusline(None, "s1", model="Opus 5.5", effort="high")
         self.assertIn("b@example.com · Opus 5.5 (high) · ", line)
-        self.assertIn("Jev compacting…", line)
-        self.assertNotIn("Jev compacting", self.manager.statusline(None, "s2"))
+        self.assertTrue(str(line).startswith("⇄ LimitSwitcher · Jev compacting… · b@example.com"))  # right after the app's name
+        self.assertEqual(line.parts[0], {"t": "⇄", "c": "warn"})                                   # the icon turns yellow
+        self.assertIn({"t": "Jev compacting…", "c": "warn"}, line.parts)
+        idle = self.manager.statusline(None, "s2")
+        self.assertNotIn("Jev compacting", idle)
+        self.assertEqual(idle.parts[0], {"t": "⇄", "c": "good"})
+
+    def test_the_status_line_says_what_a_finished_compaction_saved_for_a_while(self):
+        self.ready()
+        self.manager.claude_limit("s1")
+        request = self.manager.compaction_request("s1")
+        self.assertTrue(self.manager.compaction_done("s1", request["id"], "done", 120_000))
+        line = self.manager.statusline(None, "s1")
+        self.assertIn("LimitSwitcher · Jev compacted ~120k tokens saved · b@example.com", line)
+        self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})  # the icon is the normal green one
+        self.assertIn({"t": "~120k", "c": "good"}, line.parts)
+        self.assertNotIn("Jev compacted", self.manager.statusline(None, "s2"))  # only that session's line
+        self.manager.compactions["s1"]["finishedAt"] -= JEV_SHOWN + 1
+        self.assertNotIn("Jev compacted", self.manager.statusline(None, "s1"))
 
     def test_end_to_end_through_the_local_api_and_the_hook(self):
         """The hook asks, the mod picks the compaction up from its status line report and reports
@@ -935,7 +1106,7 @@ class IntegrationTests(unittest.TestCase):
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"),
                                   {"claude": Claude(config_dir=claude_root, home=root), "codex": Codex(codex_home=codex_home)},
                                   background=False)
-            gateway.manager.meta.update(afk=True, startWithWindows=False, statuslineShown=True)
+            gateway.manager.meta.update(afk=True, startWithWindows=False, modSeenAt=time.time())
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=codex_home,
                                         claude_root=claude_root, upstream="http://127.0.0.1:9")
             with mock.patch("account_switcher.codex_proxy.DEFAULT_PORT", 0), \
@@ -969,10 +1140,10 @@ class IntegrationTests(unittest.TestCase):
                 integrations.start()
             try:
                 self.assertFalse(claude_hooks.statusline_installed(claude_root))
-                gateway.manager.meta["statuslineShown"] = True  # turned on in Settings
+                gateway.manager.meta["modSeenAt"] = time.time()  # the mod is in use
                 integrations.apply_afk()
                 self.assertTrue(claude_hooks.statusline_installed(claude_root))
-                gateway.manager.meta["statuslineShown"] = False
+                gateway.manager.meta["modSeenAt"] = 0
                 integrations.apply_afk()
                 self.assertNotIn("statusLine", json.loads((claude_root / "settings.json").read_text()))
                 # Their own status line: ours runs it (for live usage), their line unchanged.
@@ -984,21 +1155,24 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
 
     def test_status_line_command_is_installed_while_the_mod_is_in_use(self):
-        """The mod feeds the usage; the line is the status line's (a spot nobody can dismiss), also
-        with the Settings switch off: installing the mod is the choice to see it."""
+        """The mod feeds the usage; the line is the status line's (a spot nobody can dismiss):
+        installing the mod is the choice to see it."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             claude_root = root / "claude"
             claude_root.mkdir()
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
-            gateway.manager.meta.update(startWithWindows=False, statuslineShown=False)
+            gateway.manager.meta.update(startWithWindows=False)
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             with mock.patch("account_switcher.integrations.codex_present", return_value=False):
                 integrations.start()
             try:
-                self.assertFalse(claude_hooks.statusline_installed(claude_root))  # switched off, no mod
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))  # no mod
+                lines = claude_hooks.native_state_file(integrations.state_file).read_text().split("\n")
+                self.assertEqual(lines[:3], ["127.0.0.1", "1", "t"])  # where the native client finds the app
+                self.assertEqual(lines[3], str(claude_hooks.native_cache_file(integrations.state_file)))
                 gateway.manager.meta["modSeenAt"] = time.time()
                 integrations.apply_afk()
                 self.assertTrue(claude_hooks.statusline_installed(claude_root))
@@ -1016,7 +1190,7 @@ class IntegrationTests(unittest.TestCase):
             (claude_root / "settings.json").write_text('{"model": "opus"}')
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
-            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
+            gateway.manager.meta.update(startWithWindows=False, modSeenAt=time.time())
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             integrations.SETTINGS_EVERY = 0.05
@@ -1055,8 +1229,28 @@ class StatusLineMarkerTests(unittest.TestCase):
         self.assertIn("\x1b[94m5h\x1b[0m", painted)             # the label, blue
         self.assertIn("\x1b[93m12%\x1b[0m\x1b[90m left\x1b[0m", painted)  # a little left: yellow number, grey word
         painted = statusline.context_painted({"context_window": {"total_input_tokens": 900000, "remaining_percentage": 8}})
-        self.assertEqual(painted, "\x1b[91mctx 900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
-        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "ctx 1.2M")
+        self.assertEqual(painted, "\x1b[94mctx \x1b[0m\x1b[91m900k\x1b[0m\x1b[90m · \x1b[0m\x1b[91m8%\x1b[0m\x1b[90m left\x1b[0m")
+        self.assertEqual(statusline.context_painted({"context_window": {"total_input_tokens": 1_250_000}}), "\x1b[94mctx \x1b[0m1.2M")
+
+    def test_the_light_json_helpers_agree_with_the_json_module(self):
+        import json
+        from account_switcher import statusline
+        samples = [{"a": [1, 2.5, None, True, False, "é\n\u2028 \"q\""], "b": {"c": -1e-7, "d": []}}, [], {}, "x", 0,
+                   {"rate_limits": {"five_hour": {"used_percentage": 40.5, "resets_at": 1.7e9}}, "session_id": "s"}]
+        for value in samples:
+            self.assertEqual(statusline.loads(statusline.dumps(value)), value)
+            self.assertEqual(statusline.loads(json.dumps(value)), value)
+            self.assertEqual(json.loads(statusline.dumps(value)), value)
+        self.assertEqual(statusline.loads(b' {"a": NaN} ')["a"] != statusline.loads(b'{"a": NaN}')["a"], True)  # NaN, as json reads it
+        for bad in (b"", b"{", b"{} x", b"nope"):
+            with self.assertRaises(ValueError):
+                statusline.loads(bad)
+        with self.assertRaises(TypeError):
+            statusline.dumps({"a": object()})
+        with mock.patch.dict(sys.modules, {"_json": None}):  # a Python without them: the json module
+            loads, dumps = statusline._json_functions()
+        self.assertIs(loads, json.loads)
+        self.assertIs(dumps, json.dumps)
 
     def test_the_last_line_stands_in_while_the_app_is_busy(self):
         from account_switcher import statusline

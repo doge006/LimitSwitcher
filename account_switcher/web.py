@@ -37,6 +37,7 @@ class Controller:
         self.mod_busy = None     # "installing" while that runs, else an error to show
         self.mod_checked = 0.0
         self.wait_near_reset = True
+        self.jev_key_demo = False
         self.jev_compact = False  # compact a session with Jev before it goes on after a swap
         self.clock24 = None      # 24-hour clock: None follows the system
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
@@ -142,12 +143,12 @@ class Controller:
                 "nameMode": name_mode,
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
-                "statusline": self.statusline_on(),
                 "mod": self.mod_state(),
                 "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
+                "jevKey": self.jev_key_source(),
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -157,21 +158,10 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge", "jevCompact"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
-            self.notify("changed", None)
-            return
-        if action == "statusline":  # LimitSwitcher in Claude Code's status line; instant
-            on = bool(body.get("on"))
-            if self.live:
-                with self.gateway.manager.lock:
-                    self.gateway.manager.meta["statuslineShown"] = on
-                    self.gateway.manager.save()
-                if getattr(self.gateway, "integrations", None):
-                    self.gateway.integrations.apply_afk()
-            self.statusline_shown = on
             self.notify("changed", None)
             return
         if action in ("installMod", "checkMod"):  # the optional Claude Code mod (Settings)
@@ -201,6 +191,10 @@ class Controller:
                 if on:
                     self.jev_compact_notes()
             self.jev_compact = on
+            self.notify("changed", None)
+            return
+        if action == "jevKey":  # the OpenRouter key for the Jev compaction (the app never sends it back); instant
+            self.set_jev_key(body.get("key"))
             self.notify("changed", None)
             return
         if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
@@ -368,6 +362,29 @@ class Controller:
             threading.Thread(target=self.mod_check, daemon=True, name="mod-check").start()
         return {"status": "missing" if self.mod_installed is False else "unknown"}
 
+    def jev_key_source(self):
+        """Where the OpenRouter key is ("file", "env", "settings") or None; never the key itself."""
+        if not self.live:
+            return "file" if self.jev_key_demo else None
+        from . import mod
+        integrations = getattr(self.gateway, "integrations", None)
+        return mod.jev_key_source(integrations.state_file) if integrations else None
+
+    def set_jev_key(self, key):
+        """Save the key the user typed (None or empty removes it)."""
+        key = key.strip() if isinstance(key, str) else None
+        if not self.live:
+            self.jev_key_demo = bool(key)
+            return
+        from . import mod
+        integrations = getattr(self.gateway, "integrations", None)
+        if integrations is None:
+            raise RuntimeError("The key can't be saved right now")
+        try:
+            mod.set_jev_key(integrations.state_file, key or None)
+        except OSError as error:
+            raise RuntimeError(f"Couldn't save the key ({type(error).__name__})") from None
+
     def jev_compact_notes(self):
         """What Jev compaction still needs, as notes in the log: the mod, and a key."""
         from . import mod
@@ -377,7 +394,7 @@ class Controller:
         if self.mod_installed is False or not self.gateway.manager.meta.get("jevModInstalled"):
             self.notify("log", "Jev compaction needs the Claude Code mod: Settings → Install (or update) it")
         if not mod.jev_key_present(integrations.state_file):
-            self.notify("log", f"Jev compaction needs an OpenRouter key: add OPENROUTER_API_KEY=... to {mod.env_file(integrations.state_file)}")
+            self.notify("log", f"Jev compaction needs an OpenRouter key: paste it in Settings, under Jev compaction")
 
     def note_mod_installed(self, installed):
         """Both plugins are there (or not): the Jev compaction is only asked for when they are."""
@@ -446,12 +463,6 @@ class Controller:
             self.notify("changed", None)
         threading.Thread(target=work, daemon=True, name="mod-install").start()
 
-    def statusline_on(self):
-        """Show LimitSwitcher in Claude Code's status line (off unless turned on in Settings)."""
-        if self.live:
-            return bool(self.gateway.manager.meta.get("statuslineShown", False))
-        return getattr(self, "statusline_shown", False)
-
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
 
@@ -470,12 +481,30 @@ class Controller:
             self.note_mod()
             self.gateway.manager.note_mod_session(session)
             return None
-        # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
-        # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
-        # Installing the mod is the person's own choice to see it too: no second switch.
-        if not self.statusline_on() and time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
+        # Without the mod the usage still comes in (no API calls needed), but nothing of LimitSwitcher
+        # shows in Claude Code (the user's own status line, if any, is unchanged): installing the
+        # mod is the person's choice to see the line.
+        if time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
             return None
         return line
+
+    def statusline_text(self, data):
+        """For the native status line client: Claude Code's own input for the status line (what the
+        Python script would read from stdin) in, the finished, coloured line out (UTF-8 bytes with
+        its newline), or None when there is nothing to show."""
+        from . import statusline as script
+        model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        effort = data.get("effort") if isinstance(data.get("effort"), dict) else {}
+        line = self.statusline({"rate_limits": data.get("rate_limits") if isinstance(data.get("rate_limits"), dict) else None,
+                                "session": str(data.get("session_id") or "")[:100],
+                                "model": model.get("display_name") or model.get("id"), "effort": effort.get("level")})
+        if not line:
+            return None
+        text = script.paint(line.parts) if getattr(line, "parts", None) else str(line)
+        extra = script.context_painted(data)
+        if extra:
+            text += script.paint([{"t": " · ", "c": "dim"}]) + extra
+        return (text + "\n").encode("utf-8")
 
     def compaction_request(self, body):
         """For a session's mod: the Jev compaction to run before it goes on, if one is due."""
@@ -586,6 +615,19 @@ def make_server(controller, port=0):
 
         def do_POST(self):
             app_token = secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token)
+            if self.path == "/api/statusline-text":  # the native status line client: raw input in, the line out
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    data = json.loads(self.rfile.read(size)) if 0 < size <= 65536 else {}
+                    text = controller.statusline_text(data if isinstance(data, dict) else {})
+                except (ValueError, RuntimeError, OSError):
+                    text = None
+                self.respond(200 if text else 204, text or b"", "text/plain; charset=utf-8")
+                return
             if self.path == "/api/statusline" and not app_token:  # Claude Code's status line script: live usage, narrow token
                 # (with the app's own token it's the Settings switch, like any other action; the Mac full view uses it)
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

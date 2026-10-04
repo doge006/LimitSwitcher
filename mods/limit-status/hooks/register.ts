@@ -8,6 +8,7 @@ import type { Register } from 'claude-code'
 // its account was swapped: the jev-compact plugin shrinks the tool outputs the session no longer
 // needs, so the new account (which has none of it cached) loads less. Claude Code skips a
 // plugin's own compaction hook when that plugin starts the compaction, so the two are separate.
+// `/jevcompact` runs the same compaction by hand (registered here for that reason too).
 const EVERY = 30_000 // an idle session still reports now and then, and picks up a compaction asked for
 const SOON = [2_000, 5_000, 10_000, 20_000, 40_000] // after a turn that ended on an error (a usage limit): look sooner
 
@@ -110,6 +111,19 @@ async function compactFor($: any, statePath: string, session: string, id: string
   }
 }
 
+/** `/jevcompact`: the same compaction by hand, once, in the session it is typed in. */
+async function compactByHand($: any): Promise<string> {
+  try {
+    const result = await $.session.compact({ instructions: MARKER })
+    if (result.skip !== undefined) return `No Jev compaction: ${result.skip}`
+    const saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
+      ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
+    return `Jev compacted: ~${Math.round(saved / 1000)}k tokens less to load`
+  } catch (error) {
+    return `No Jev compaction: ${error instanceof Error ? error.message : String(error)}`
+  }
+}
+
 export const register: Register = (on, options) => {
   const statePath = String(options.statePath ?? '')
   let last = '' // what was last sent: nothing new, nothing to send again
@@ -124,7 +138,24 @@ export const register: Register = (on, options) => {
     return result
   })
 
+  // The engine refuses a compaction under the command's own hook: it starts right after, outside
+  // this dispatch, and says how it went in the status line and a toast.
+  on('command.run', { command: 'jevcompact' }, async $ => {
+    $.clock.after(0, async () => {
+      $.ui.status('⇄ LimitSwitcher · Jev compacting…')
+      const text = await compactByHand($)
+      $.ui.status(`⇄ LimitSwitcher · ${text}`)
+      $.ui.toast(text)
+      $.clock.after(15_000, () => $.ui.status(undefined))
+    })
+    return { text: 'Jev compacting…' }
+  })
+
   on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'jevcompact',
+      description: 'Shrink this session\'s old tool outputs with Jev (needs jev-compact and an OpenRouter key)',
+    })
     const result = await next(e)
     void poll($, statePath) // never holds the session's start
     $.clock.every(EVERY, () => poll($, statePath))

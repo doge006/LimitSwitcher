@@ -114,24 +114,57 @@ def configure(state_file):
 KEY_LINE = re.compile(r"^\s*(?:export\s+)?OPENROUTER_API_KEY\s*=\s*(['\"]?)(\S+?)\1\s*$", re.M)
 
 
-def jev_key_present(state_file, claude_root=None):
-    """An OpenRouter key is set where the Jev compaction looks for one (the same order): the
-    environment, Claude Code's settings.json env block, the .env file in the data folder.
-    Only whether it's there; the app never reads or keeps the key itself."""
+def jev_key_source(state_file, claude_root=None):
+    """Where the Jev compaction finds its OpenRouter key (the same order it looks): "env" (the
+    environment), "settings" (Claude Code's settings.json env block), "file" (the .env file in the
+    data folder), or None. Only where it is; this never returns the key."""
     if os.environ.get("OPENROUTER_API_KEY", "").strip():
-        return True
+        return "env"
     from . import claude_hooks
     try:
         path = (Path(claude_root) if claude_root else claude_hooks.settings_path()) / "settings.json"
         block = json.loads(path.read_text(encoding="utf-8")).get("env")
         if isinstance(block, dict) and str(block.get("OPENROUTER_API_KEY") or "").strip():
-            return True
+            return "settings"
     except (OSError, ValueError, AttributeError):
         pass
     try:
-        return KEY_LINE.search(env_file(state_file).read_text(encoding="utf-8")) is not None
+        if KEY_LINE.search(env_file(state_file).read_text(encoding="utf-8")) is not None:
+            return "file"
     except (OSError, ValueError):
-        return False
+        pass
+    return None
+
+
+def jev_key_present(state_file, claude_root=None):
+    """An OpenRouter key is set where the Jev compaction looks for one. Only whether it's there."""
+    return jev_key_source(state_file, claude_root) is not None
+
+
+def set_jev_key(state_file, key):
+    """Save (or, with None, remove) the OpenRouter key in the .env file in the data folder, the
+    file the Jev compaction reads. The file is private to the user and its other lines are kept.
+    Raises ValueError for something that can't be a key."""
+    from .vault import atomic_write
+    path = env_file(state_file)
+    if key is not None:
+        key = key.strip().strip("'\"")
+        if not key or len(key) > 300 or any(ch.isspace() or not ch.isprintable() for ch in key):
+            raise ValueError("That doesn't look like an OpenRouter key")
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, ValueError):
+        lines = []
+    lines = [line for line in lines if not KEY_LINE.match(line)]
+    if key is not None:
+        lines.append("OPENROUTER_API_KEY=" + key)
+    if not lines:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        return
+    atomic_write(path, ("\n".join(lines) + "\n").encode("utf-8"), private=True)
 
 
 def _why(done):
