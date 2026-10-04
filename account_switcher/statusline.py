@@ -102,15 +102,17 @@ def context_part(data):
 
 def context_painted(data):
     """The same, coloured by how much is left: "ctx 183k · 82% left" with the count and the
-    percentage in that colour and the rest grey (the count alone when the percentage is unknown)."""
+    percentage in that colour and the rest, "ctx" included, grey (the count alone when the percentage
+    is unknown)."""
     text = context_part(data)
     if text is None:
         return None
     count, _, left = text.partition(" · ")
+    label, _, number = count.partition(" ")
     if not left:
-        return count
+        return paint([{"t": label + " ", "c": "dim"}, {"t": number}])
     color = left_color(int(left.split("%")[0]))
-    return paint([{"t": count, "c": color}, {"t": " · ", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
+    return paint([{"t": label + " ", "c": "dim"}, {"t": number, "c": color}, {"t": " · ", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
                   {"t": " left", "c": "dim"}])
 
 
