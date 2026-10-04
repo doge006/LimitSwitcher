@@ -430,7 +430,7 @@ def main(argv=None):
     # A long poll interval: the loop never has to exit on its own because quitting
     # goes through the tray, so this thread just sleeps between connections.
     threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 60}, daemon=True).start()
-    threading.Thread(target=controller.check_updates, daemon=True, name="update-check").start()  # once, at launch
+    controller.watch_updates()  # at launch, then every 2 hours
     integrations = None
     if controller.live:  # route Codex through the app, and the Claude AFK hook
         from .integrations import Integrations

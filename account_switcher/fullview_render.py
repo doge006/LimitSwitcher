@@ -762,7 +762,47 @@ def topbar_content(c, state, w, ui):
     c.glyph("caret", x + bw - 14 - 6, 33, 13, MUTED)
     hits.append(((x, 17, bw, 32), "settings", "hand"))
     ui.anchors["settings"] = (x, bw)
+    # The version above the update button, outside the menu so they are seen: left of Settings
+    update = state.get("update") or {}
+    version = "Version " + str(update.get("current") or "")
+    room = x - 10 - (58 + text_w("Every Claude and Codex limit, at a glance.", 13)) - 14
+    label, action, primary = next(((l, a_, p_) for l, a_, p_ in update_buttons(update)
+                                   if text_w(l, 12, p_) + 24 <= room), update_buttons(update)[-1])
+    bw = max(text_w(label, 12, primary) + 24, text_w(version, 11) + 8)
+    if bw > room and not primary:
+        return hits  # a window too narrow for it: the title keeps the room
+    x -= 10 + bw
+    hot = quantize(ui.fades.get(action, 0.0)) if action else 0.0
+    c.text(x + bw / 2, 16, version, 11, FAINT, anchor="mm", bg=BG)
+    bh, by = 24, 25  # its bottom lines up with the Settings button's (49)
+    if primary:
+        fill = mixc(GOOD, blend((255, 255, 255), GOOD, .1), hot)
+        c.rect(x, by, bw, bh, 7, fill + (255,))
+        c.text(x + bw / 2, by + bh / 2, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
+    else:
+        base = mixc(SURFACE, SURFACE_3, hot)
+        c.rect(x, by, bw, bh, 7, SURFACE_2 + (255,))
+        c.outline(x, by, bw, bh, 7, LINE_STRONG)
+        c.text(x + bw / 2, by + bh / 2, label, 12, mixc(MUTED, TEXT, hot) if action else MUTED, anchor="mm", bg=SURFACE_2)
+    if action:
+        hits.append(((x, by, bw, bh), action, "hand"))
     return hits
+
+
+def update_buttons(update):
+    """[(label, action, primary)] for the update button in the top bar, longest first: the first that
+    fits the room is used."""
+    if update.get("installing"):
+        return [("Updating…", None, True)]
+    if update.get("available"):
+        return [(f"Update to {update.get('latest')}", "update:install", True)]
+    if update.get("checking"):
+        return [("Checking…", None, False)]
+    if update.get("error"):
+        return [("Check failed · Retry", "update:check", False), ("Retry", "update:check", False)]
+    if update.get("latest"):
+        return [("Up to date · Check again", "update:check", False), ("Up to date", "update:check", False)]
+    return [("Check for updates", "update:check", False), ("Check", "update:check", False)]
 
 
 def draw_group(data, w, scale):
@@ -884,17 +924,19 @@ def toggle(c, x, y, pos, hot, bg):
     c.dot(x + 10.5 + 19 * pos, y + 11, r, mixc(MUTED, (255, 255, 255), pos))
 
 
-SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom when a limit hits"),
-            ("afk", "Auto resume", "After a usage limit, the session continues by itself on another account (or once it resets)"),
-            ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone: loading one on another account can use a lot of usage"),
-            ("waitNearReset", "Wait for a near reset", "Don't switch accounts when the 5-hour limit resets within 15 minutes"),
-            ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
+SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroom"),
+            ("afk", "Auto resume", "Continue the session on another account"),
+            ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone"),
+            ("waitNearReset", "Wait for a near reset", "No switch when the 5-hour limit resets within 15 min"),
+            ("nameMode", "Name mode", "Names instead of emails, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
-SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots
+ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
+SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"
-MOD_TEXT_W = 190  # beside the button
+SETTINGS_W = 400  # wide, so the descriptions take one or two lines and the menu stays short
+MOD_TEXT_W = 250  # beside the button
 MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "update": ("Update to add Jev compaction", WARN), "installed": ("Installed · run /reload-plugins in an open session", WARN),
             "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
 
@@ -909,7 +951,7 @@ def mod_row(state):
 
 
 KEY_ROW_H = 40
-JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less. Off: the mod never asks for it")
+JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session for the new account")
 
 
 def jev_key_field(c, ui, state, x, y, w, hits):
@@ -951,36 +993,36 @@ def jev_key_field(c, ui, state, x, y, w, hits):
 
 
 def settings_menu(image, scale, state, ui, x, y, prefs):
-    w = 320
+    w = SETTINGS_W
     rows = list(SETTINGS)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
         rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
-                     "Start in the tray when you sign in"))
+                     "Start in the tray at sign-in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
-        rows.append(("taskbar", "Taskbar view", "The accounts in use, right on the taskbar"))
+        rows.append(("taskbar", "Taskbar view", "The accounts in use, on the taskbar"))
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and bool(displays)
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80) for _, _, desc in rows]
     jev_lines = wrap(JEV_ROW[2], 12, w - 80)
     key_h = KEY_ROW_H if state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
-    jev_h = 30 + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
-    h = 16 + sum(30 + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
-        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 52 + (mod_row(state)[2] + jev_h if live_mod else 0)
+    jev_h = ROW_PAD + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
+    h = 16 + sum(ROW_PAD + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
+        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 8 + (mod_row(state)[2] + jev_h if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
 
     def toggle_row(key, title, lines, ry):
         """One setting's switch, name and description; returns its height."""
-        row_h = 30 + 16 * len(lines)
+        row_h = ROW_PAD + 16 * len(lines)
         on = prefs.get(key, bool(state.get(key)))
         locked = state.get("busy") and key in ("autoSwap", "afk")
         hot = ui.hover == "set:" + key and not locked
-        toggle(c, x + 14, ry + 8, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
-        c.text(x + 66, ry + 22, title, 14, TEXT if not locked else MUTED, True)
+        toggle(c, x + 14, ry + 6, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
+        c.text(x + 66, ry + 20, title, 14, TEXT if not locked else MUTED, True)
         for i, line in enumerate(lines):
-            c.text(x + 66, ry + 39 + 16 * i, line, 12, MUTED)
+            c.text(x + 66, ry + 36 + 16 * i, line, 12, MUTED)
         if not locked:
             hits.append(((x + 8, ry + 2, w - 16, row_h - 4), "set:" + key, "hand"))
         return row_h
@@ -994,12 +1036,13 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     if chooser:  # per display, what its taskbar shows: two slots (left, right); a click cycles each
         from . import taskbar_layout
         layout = taskbar_layout.layout(state)
-        bw = (w - 66 - 14 - 6) / 2
+        bw = (w - 66 - 106 - 14 - 6) / 2
         for d in displays:
-            c.text(x + 66, ry + 12, "On " + d["label"][0].lower() + d["label"][1:], 12, MUTED, anchor="lm")
+            name = "On " + d["label"][0].lower() + d["label"][1:]
+            c.text(x + 66, ry + 18, fit(name, 12, False, 100), 12, MUTED, anchor="lm")
             slots = layout.get(d["id"]) or [None, None]
             for index in (0, 1):
-                bx, by = x + 66 + index * (bw + 6), ry + 22
+                bx, by = x + 66 + 106 + index * (bw + 6), ry + 5
                 action = f"slot:{d['id']}:{index}"
                 hot = ui.hover == action
                 on = slots[index] is not None
@@ -1013,7 +1056,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
             ry += SLOT_ROW_H
     if live_mod:  # the optional Claude Code mod: live usage from Claude Code, shown in a spot of its own
         lines, color, mod_h = mod_row(state)
-        ry = y + h - 52 - jev_h - mod_h
+        ry = y + h - 8 - jev_h - mod_h
         c.line(x + 14, ry + 2, w - 28, LINE)
         status = (state.get("mod") or {}).get("status") or "unknown"
         c.text(x + 16, ry + 20, MOD_NAME, 14, TEXT, True, anchor="lm")
@@ -1036,42 +1079,11 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                 c.text(bx + bw / 2, ry + 29, label, 12, TEXT, anchor="mm", bg=base)
             hits.append(((bx, ry + 15, bw, 28), "mod:install", "hand"))
         # Jev compaction is a part of the mod, off until it's switched on: under the mod's own row
-        ry = y + h - 52 - jev_h
+        ry = y + h - 8 - jev_h
         c.line(x + 14, ry + 2, w - 28, LINE)
         ry += toggle_row(JEV_ROW[0], JEV_ROW[1], jev_lines, ry + 4) + 4
         if key_h:
             jev_key_field(c, ui, state, x + 66, ry - 2, w - 66 - 14, hits)
-    # Version and updates
-    ry = y + h - 52
-    c.line(x + 14, ry + 2, w - 28, LINE)
-    update = state.get("update") or {}
-    c.text(x + 16, ry + 28, "Version " + str(update.get("current") or ""), 12, MUTED, anchor="lm")
-    if update.get("installing"):
-        label, action, primary = "Updating…", None, True
-    elif update.get("available"):
-        label, action, primary = f"Update to {update.get('latest')}", "update:install", True
-    elif update.get("checking"):
-        label, action, primary = "Checking…", None, False
-    elif update.get("error"):
-        label, action, primary = update["error"] + " · Retry", "update:check", False
-    elif update.get("latest"):
-        label, action, primary = "Up to date · Check again", "update:check", False
-    else:
-        label, action, primary = "Check for updates", "update:check", False
-    bw = text_w(label, 12, primary) + 24
-    bx = x + w - 14 - bw
-    hot = bool(action) and ui.hover == action
-    if primary:
-        fill = GOOD if not hot else blend((255, 255, 255), GOOD, .1)
-        c.rect(bx, ry + 14, bw, 28, 7, fill + (255,))
-        c.text(bx + bw / 2, ry + 28, label, 12, ON_ACCENT, True, anchor="mm", bg=fill)
-    else:
-        base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
-        c.rect(bx, ry + 14, bw, 28, 7, base + (255,))
-        c.outline(bx, ry + 14, bw, 28, 7, LINE_STRONG)
-        c.text(bx + bw / 2, ry + 28, label, 12, TEXT if action else MUTED, anchor="mm", bg=base)
-    if action:
-        hits.append(((bx, ry + 14, bw, 28), action, "hand"))
     return (x, y, w, h), hits
 
 

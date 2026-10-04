@@ -1,9 +1,10 @@
-The app offers it in Settings → **Update to 1.2.3** (or download below).
+The app offers it in Settings → **Update to 1.2.4** (or download below).
 
-## Fixed
+## Changed
 
-- **Status line context:** `ctx 183k/82% left`. The token count and the percentage now come from the same figure (the current context), so the percentage no longer lags behind the count. The context also stays on screen when the app is busy or a run comes without it, instead of blinking out.
-- **Unused 5-hour window:** the full view says "Starts with your first message" instead of "Reset time not reported". An account's 5-hour window only starts with its first message, so there is no reset time before that.
+- **Settings fits:** the menu is wider and tighter, with shorter descriptions, so it no longer runs off a normal window (739 px down to about 560 px at its tallest). Each display's taskbar slots are on one line.
+- **Version and updates in the top bar:** the version and the update button sit left of Settings, with the version above the button, so an available update is seen without opening anything.
+- **Update checks:** at launch and every 2 hours (a check that can't reach GitHub is retried after 5 minutes), and an update already found stays offered if a later check fails.
 
 ## Download
 

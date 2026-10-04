@@ -259,8 +259,9 @@ class FullView:
             make = lambda: (vr.record_card if self.native else vr.draw_card)(
                 data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
         elif kind == "topbar":
-            cache = (w, tuple(vr.quantize(ui.fades.get(k, 0.0)) for k in ("settings", "add", "refresh")),
-                     ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"))
+            cache = (w, tuple(vr.quantize(ui.fades.get(k, 0.0)) for k in ("settings", "add", "refresh", "update:check", "update:install")),
+                     ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"),
+                     repr(sorted((state.get("update") or {}).items())))
             make = lambda: (vr.record_topbar if self.native else vr.draw_topbar)(state, w, self.scale, ui)
         elif kind == "group":
             cache = (w, data)
@@ -474,7 +475,7 @@ class FullView:
 
         if ui.menu == "settings" and "settings" in ui.anchors:
             ax, aw = ui.anchors["settings"]
-            moving |= faded("settings", lambda dy: vr.settings_menu(image, s, self.state, ui, left + ax + aw - 320,
+            moving |= faded("settings", lambda dy: vr.settings_menu(image, s, self.state, ui, max(8, left + ax + aw - vr.SETTINGS_W),
                                                                     top + 17 + 32 + 6 + dy, self.prefs))
         elif ui.menu == "add" and "add" in ui.anchors:
             ax, aw = ui.anchors["add"]
