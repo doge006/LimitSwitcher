@@ -765,15 +765,16 @@ def topbar_content(c, state, w, ui):
     # The version above the update button, outside the menu so they are seen: left of Settings
     update = state.get("update") or {}
     version = "Version " + str(update.get("current") or "")
-    label, action, primary = update_button(update)
-    bw = max(text_w(label, 12, primary) + 24, text_w(version, 11) + 8)
     room = x - 10 - (58 + text_w("Every Claude and Codex limit, at a glance.", 13)) - 14
+    label, action, primary = next(((l, a_, p_) for l, a_, p_ in update_buttons(update)
+                                   if text_w(l, 12, p_) + 24 <= room), update_buttons(update)[-1])
+    bw = max(text_w(label, 12, primary) + 24, text_w(version, 11) + 8)
     if bw > room and not primary:
         return hits  # a window too narrow for it: the title keeps the room
     x -= 10 + bw
     hot = quantize(ui.fades.get(action, 0.0)) if action else 0.0
-    c.text(x + bw / 2, 22, version, 11, FAINT, anchor="mm", bg=BG)
-    bh, by = 24, 29
+    c.text(x + bw / 2, 16, version, 11, FAINT, anchor="mm", bg=BG)
+    bh, by = 24, 25  # its bottom lines up with the Settings button's (49)
     if primary:
         fill = mixc(GOOD, blend((255, 255, 255), GOOD, .1), hot)
         c.rect(x, by, bw, bh, 7, fill + (255,))
@@ -788,17 +789,20 @@ def topbar_content(c, state, w, ui):
     return hits
 
 
-def update_button(update):
-    """(label, action, primary) for the update button in the top bar, under the version."""
+def update_buttons(update):
+    """[(label, action, primary)] for the update button in the top bar, longest first: the first that
+    fits the room is used."""
     if update.get("installing"):
-        return "Updating…", None, True
+        return [("Updating…", None, True)]
     if update.get("available"):
-        return f"Update to {update.get('latest')}", "update:install", True
+        return [(f"Update to {update.get('latest')}", "update:install", True)]
     if update.get("checking"):
-        return "Checking…", None, False
+        return [("Checking…", None, False)]
     if update.get("error"):
-        return "Check failed · Retry", "update:check", False
-    return ("Up to date · Check again" if update.get("latest") else "Check for updates"), "update:check", False
+        return [("Check failed · Retry", "update:check", False), ("Retry", "update:check", False)]
+    if update.get("latest"):
+        return [("Up to date · Check again", "update:check", False), ("Up to date", "update:check", False)]
+    return [("Check for updates", "update:check", False), ("Check", "update:check", False)]
 
 
 def draw_group(data, w, scale):
