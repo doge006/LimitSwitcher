@@ -114,15 +114,30 @@ class FullViewTests(unittest.TestCase):
         self.assertIn(("jevKey", {"key": "sk-or-v1-abc"}), self.controller.calls)
         self.assertIsNone(self.view.ui.editing)
 
-    def test_jev_key_field_empty_changes_nothing_and_remove_clears(self):
+    def test_a_saved_jev_key_shows_key_set_and_is_removed_on_the_second_click(self):
         self.view.set_state(state(jevCompact=True, jevKey="file"))
         self.click("settings")
-        self.click("name:jevkey")
-        self.view.key("enter")
-        self.view.frame()
-        self.assertFalse(any(c[0] == "jevKey" for c in self.controller.calls))
+        hits = [a for _, h in self.view.overlay_hits for _, a, _ in h]
+        self.assertNotIn("name:jevkey", hits)  # nothing to type into: the saved key is never shown
         self.click("jevkey-clear:")
+        self.assertFalse(any(c[0] == "jevKey" for c in self.controller.calls))  # the first click only asks
+        self.assertTrue(self.view.ui.jev_confirm)
+        self.click("set:nameMode")  # anything else cancels the question
+        self.assertFalse(self.view.ui.jev_confirm)
+        self.click("jevkey-clear:")
+        self.click("jevkey-clear:")  # Confirm
         self.assertIn(("jevKey", {"key": None}), self.controller.calls)
+        self.assertFalse(self.view.ui.jev_confirm)
+        self.view.set_state(state(jevCompact=True, jevKey=None))  # removed: the field comes back, empty
+        self.view.frame()
+        self.assertIn("name:jevkey", [a for _, h in self.view.overlay_hits for _, a, _ in h])
+
+    def test_closing_settings_cancels_the_remove_question(self):
+        self.view.set_state(state(jevCompact=True, jevKey="file"))
+        self.click("settings")
+        self.click("jevkey-clear:")
+        self.view.mouse_up(5, 5)  # a click on nothing closes the menu
+        self.assertFalse(self.view.ui.jev_confirm)
 
     def test_jev_key_field_only_shows_with_jev_compaction_on(self):
         self.view.set_state(state(jevCompact=False))
