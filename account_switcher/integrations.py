@@ -374,10 +374,12 @@ class Integrations:
             claude_hooks.restore_auto_continue(self.state_file, self.claude_root)
         except OSError as error:
             log.warning("could not restore Claude Code's automatic continue: %s", error)
-        try:
-            self.state_file.unlink()
-        except OSError:
-            pass
+        for path in (self.state_file, claude_hooks.native_state_file(self.state_file),
+                     claude_hooks.native_cache_file(self.state_file)):
+            try:
+                path.unlink()
+            except OSError:
+                pass
 
     # ---------- AFK ----------
     def write_state(self, statusline=None):
@@ -385,6 +387,15 @@ class Integrations:
         the user's own status line command (which the script keeps showing)."""
         atomic_write(self.state_file, json.dumps({"url": self.hook_url, "token": self.hook_token,
                                                    "statusline": statusline}).encode())
+        # The same for the native status line client (scripts/status_client.c), which parses nothing:
+        # host, port, token and where to keep its last line, one per line.
+        try:
+            host, _, port = self.hook_url.partition("://")[2].partition("/")[0].partition(":")
+            atomic_write(claude_hooks.native_state_file(self.state_file),
+                         f"{host}\n{port}\n{self.hook_token}\n{claude_hooks.native_cache_file(self.state_file)}\n".encode("utf-8"),
+                         private=True)
+        except OSError as error:
+            log.warning("could not write the status line client's state: %s", error)
 
     def mod_in_use(self):
         """The Claude Code Status mod has reported lately (it feeds the usage and draws the line)."""

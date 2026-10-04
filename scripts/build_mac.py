@@ -113,6 +113,10 @@ def main():
     # 3. The executable and what it runs (paths inside Contents/Resources; the log in the user's folder).
     run("clang", "-arch", args.arch, "-mmacosx-version-min=11.0", "-O2", "-Wall", "-o", contents / "MacOS" / "LimitSwitcher",
         ROOT / "scripts" / "mac_launcher.c")
+    # Claude Code's status line as a tiny native program, beside the bundled python3 (the app starts it
+    # instead of a Python process: about 1 MB and 1 ms a run). Activity Monitor shows "LimitSwitcher Status".
+    run("clang", "-arch", args.arch, "-mmacosx-version-min=11.0", "-O2", "-Wall", "-o", runtime / "bin" / "LimitSwitcher Status",
+        ROOT / "scripts" / "status_client.c")
     (resources / "launcher.conf").write_text("\n".join([
         f"runtime/lib/libpython{PYTHON}.dylib", "runtime/bin/python3", "app/LimitSwitcher.pyw",
         "~/Library/Application Support/LimitSwitcher/app.log"]) + "\n")

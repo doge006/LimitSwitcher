@@ -395,15 +395,39 @@ class ClaudeHookTests(unittest.TestCase):
                     self.assertTrue(command.startswith(str(Path(tmp) / "runtime" / "python.exe").replace("\\", "/")), command)
                     self.assertNotIn("LimitSwitcher.exe", command)
 
-    def test_the_installed_windows_app_runs_its_own_status_launcher_when_it_is_there(self):
+    def test_the_installed_app_runs_its_native_status_line_client_unless_there_is_a_status_line_of_their_own(self):
+        for platform, python, client in (("win32", "LimitSwitcher.exe", "LimitSwitcherStatus.exe"),
+                                         ("darwin", "python3", "LimitSwitcher Status")):
+            with self.subTest(platform), tempfile.TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                state = folder / "s.json"
+                with mock.patch.object(claude_hooks.sys, "executable", str(folder / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform), \
+                        mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                    plain = claude_hooks.statusline_command(state)  # no client installed: the script
+                    self.assertIn("statusline.py", plain)
+                    (folder / client).write_text("")
+                    native = claude_hooks.statusline_command(state)
+                    own = claude_hooks.statusline_command(state, own=True)
+                self.assertEqual(native, f"{folder / client} {folder / 'statusline.native'} {claude_hooks.STATUS_MARK}")
+                with mock.patch.object(claude_hooks.sys, "executable", str(folder / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform), \
+                        mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
+                    claude_root = folder / "claude"
+                    claude_root.mkdir()
+                    claude_hooks.install_statusline(state, claude_root)
+                    fast = json.loads((claude_root / "settings.json").read_text())["statusLine"]
+                self.assertEqual((fast["command"], fast["refreshInterval"]), (native, claude_hooks.STATUS_REFRESH_NATIVE))
+                self.assertIn("statusline.py", own)  # theirs has to run in the script, with their environment
+                self.assertIn(claude_hooks.STATUS_MARK, native)  # still recognised as ours
+
+    def test_linux_and_source_copies_keep_the_script(self):
         with tempfile.TemporaryDirectory() as tmp:
-            exe = Path(tmp) / "LimitSwitcher.exe"
             (Path(tmp) / "LimitSwitcherStatus.exe").write_text("")
-            with mock.patch.object(claude_hooks.sys, "executable", str(exe)), \
-                    mock.patch.object(claude_hooks.sys, "platform", "win32"), \
-                    mock.patch.object(claude_hooks, "_short", lambda path: str(path).replace("\\", "/")):
-                command = claude_hooks.statusline_command(Path(tmp) / "s.json")
-        self.assertEqual(command, f"{Path(tmp) / 'LimitSwitcherStatus.exe'} {Path(tmp) / 's.json'} {claude_hooks.STATUS_MARK}".replace("\\", "/"))
+            for platform, python in (("linux", "python3"), ("win32", "python.exe")):
+                with mock.patch.object(claude_hooks.sys, "executable", str(Path(tmp) / python)), \
+                        mock.patch.object(claude_hooks.sys, "platform", platform):
+                    self.assertIn("statusline.py", claude_hooks.statusline_command(Path(tmp) / "s.json"))
 
     def test_auto_resume_turns_claude_codes_own_wait_on_and_puts_it_back(self):
         """Off, a usage limit opens a dialog that holds the hook's continue until it is answered."""
@@ -694,6 +718,85 @@ class ClaudeFullUseTests(AfkTests):
         self.manager.meta["autoSwap"] = False
         self.assertEqual(self.manager.claude_limit("s1"), {"action": "stop"})
         self.assertEqual(self.claude.read_live().email, "a@example.com")
+
+
+def compile_status_client(folder):
+    """scripts/status_client.c with whatever C compiler is here; None when there is none."""
+    import shutil
+    import subprocess
+    cc = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+    if cc is None or sys.platform == "win32":
+        return None
+    out = Path(folder) / "status-client"
+    done = subprocess.run([cc, "-O2", "-Wall", "-Wextra", "-Werror", "-o", str(out),
+                           str(Path(__file__).resolve().parent.parent / "scripts" / "status_client.c")],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        raise AssertionError("status_client.c doesn't compile:\n" + done.stderr)
+    return out
+
+
+class NativeStatusClientTests(unittest.TestCase):
+    """scripts/status_client.c, the Windows/macOS replacement for the status line script: the same
+    line as the script's, without parsing anything itself."""
+    setUp = AfkTests.setUp
+    tearDown = AfkTests.tearDown
+
+    def run_client(self, client, state, event):
+        import subprocess
+        return subprocess.run([str(client), str(state)], input=json.dumps(event).encode(), capture_output=True, timeout=10)
+
+    def test_prints_what_the_script_prints_and_stands_in_while_the_app_is_gone(self):
+        from account_switcher import statusline
+        client = compile_status_client(self.tmp.name)
+        if client is None:
+            self.skipTest("no C compiler")
+        controller = Controller(gateway=lambda notify: self.gateway)
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.manager.live_since["claude"] = 0
+        self.manager.meta["modSeenAt"] = time.time()
+        host, _, port = server.hook_url.partition("://")[2].partition("/")[0].partition(":")
+        cache = Path(self.tmp.name) / "native.cache"
+        native = Path(self.tmp.name) / "native.state"
+        native.write_text(f"{host}\n{port}\n{server.hook_token}\n{cache}\n")
+        script_state = Path(self.tmp.name) / "state.json"
+        script_state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
+        event = {"session_id": "s", "model": {"id": "claude-opus-5-5", "display_name": "Opus 5.5"}, "effort": {"level": "high"},
+                 "context_window": {"total_input_tokens": 183_000, "remaining_percentage": 82},
+                 "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}},
+                 "workspace": {"current_dir": "/home/é/proj"}, "cost": {"total_cost_usd": 0.12}}
+        try:
+            expected = io.StringIO()
+            with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \
+                    mock.patch.object(sys, "stdout", expected):
+                statusline.main(["statusline", str(script_state)])
+            done = self.run_client(client, native, event)
+            self.assertEqual(done.returncode, 0)
+            self.assertEqual(done.stdout, expected.getvalue().encode())
+            self.assertIn(b"Opus 5.5", done.stdout)
+            self.assertTrue(cache.exists())
+            native.write_text(f"{host}\n{port}\nwrong\n{cache}\n")  # a refused token: nothing
+            self.assertEqual(self.run_client(client, native, event).stdout, b"")
+            native.write_text(f"{host}\n{port}\n{server.hook_token}\n{cache}\n")
+        finally:
+            server.shutdown()
+            server.server_close()
+        gone = self.run_client(client, native, event)  # the app is gone: the last line, for a moment
+        self.assertEqual(gone.stdout, expected.getvalue().encode())
+        old = cache.read_text().split("\n", 1)
+        cache.write_text(f"{int(time.time()) - 400}\n{old[1]}")  # too old
+        self.assertEqual(self.run_client(client, native, event).stdout, b"")
+        self.assertEqual(self.run_client(client, Path(self.tmp.name) / "nothing", event).stdout, b"")  # not set up
+
+    def test_a_big_input_is_not_sent_in_halves(self):
+        client = compile_status_client(self.tmp.name)
+        if client is None:
+            self.skipTest("no C compiler")
+        native = Path(self.tmp.name) / "native.state"
+        native.write_text(f"127.0.0.1\n9\nt\n{Path(self.tmp.name) / 'c'}\n")
+        done = self.run_client(client, native, {"x": "y" * 70_000})
+        self.assertEqual((done.returncode, done.stdout), (0, b""))
 
 
 class JevKeyFileTests(unittest.TestCase):
@@ -1067,6 +1170,9 @@ class IntegrationTests(unittest.TestCase):
                 integrations.start()
             try:
                 self.assertFalse(claude_hooks.statusline_installed(claude_root))  # no mod
+                lines = claude_hooks.native_state_file(integrations.state_file).read_text().split("\n")
+                self.assertEqual(lines[:3], ["127.0.0.1", "1", "t"])  # where the native client finds the app
+                self.assertEqual(lines[3], str(claude_hooks.native_cache_file(integrations.state_file)))
                 gateway.manager.meta["modSeenAt"] = time.time()
                 integrations.apply_afk()
                 self.assertTrue(claude_hooks.statusline_installed(claude_root))

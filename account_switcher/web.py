@@ -488,6 +488,24 @@ class Controller:
             return None
         return line
 
+    def statusline_text(self, data):
+        """For the native status line client: Claude Code's own input for the status line (what the
+        Python script would read from stdin) in, the finished, coloured line out (UTF-8 bytes with
+        its newline), or None when there is nothing to show."""
+        from . import statusline as script
+        model = data.get("model") if isinstance(data.get("model"), dict) else {}
+        effort = data.get("effort") if isinstance(data.get("effort"), dict) else {}
+        line = self.statusline({"rate_limits": data.get("rate_limits") if isinstance(data.get("rate_limits"), dict) else None,
+                                "session": str(data.get("session_id") or "")[:100],
+                                "model": model.get("display_name") or model.get("id"), "effort": effort.get("level")})
+        if not line:
+            return None
+        text = script.paint(line.parts) if getattr(line, "parts", None) else str(line)
+        extra = script.context_painted(data)
+        if extra:
+            text += script.paint([{"t": " · ", "c": "dim"}]) + extra
+        return (text + "\n").encode("utf-8")
+
     def compaction_request(self, body):
         """For a session's mod: the Jev compaction to run before it goes on, if one is due."""
         if not self.live or body.get("source") != "mod":
@@ -597,6 +615,19 @@ def make_server(controller, port=0):
 
         def do_POST(self):
             app_token = secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token)
+            if self.path == "/api/statusline-text":  # the native status line client: raw input in, the line out
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    data = json.loads(self.rfile.read(size)) if 0 < size <= 65536 else {}
+                    text = controller.statusline_text(data if isinstance(data, dict) else {})
+                except (ValueError, RuntimeError, OSError):
+                    text = None
+                self.respond(200 if text else 204, text or b"", "text/plain; charset=utf-8")
+                return
             if self.path == "/api/statusline" and not app_token:  # Claude Code's status line script: live usage, narrow token
                 # (with the app's own token it's the Settings switch, like any other action; the Mac full view uses it)
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
