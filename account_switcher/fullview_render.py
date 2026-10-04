@@ -887,8 +887,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account with the most headroo
             ("waitNearReset", "Wait for a near reset", "Don't switch accounts when the 5-hour limit resets within 15 minutes"),
             ("jevCompact", "Jev compaction", "Shrink a swapped session with Jev before it goes on, so the new account loads less (needs the mod and an OpenRouter key)"),
             ("nameMode", "Name mode", "Names instead of emails everywhere, for screen sharing"),
-            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"),
-            ("statusline", "Claude Code status line", "Show LimitSwitcher and the account in use in Claude Code's status line"))
+            ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
 SLOT_ROW_H = 56  # a display's line in the settings: its name, then its two taskbar slots

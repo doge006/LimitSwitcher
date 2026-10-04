@@ -189,7 +189,6 @@ In the full view, the gear opens Settings:
 - **Jev compaction:** before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
-- **Claude Code status line:** show LimitSwitcher and the account in use there (see below).
 - **Launch with Windows / macOS:** start in the tray when you sign in.
 - **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
 - **Check for updates / Update to …**
@@ -232,12 +231,12 @@ Any compaction also drops the old system notices Claude Code repeats through a s
 
 ## Claude Code status line
 
-LimitSwitcher can show itself in Claude Code's status line (the line under the prompt). It's **off by default**: turn it on in Settings → **Claude Code status line**.
+LimitSwitcher shows itself in Claude Code's status line (the line under the prompt) once the Claude Code Status mod is installed (Settings → **Claude Code Status mod**).
 
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
-- **Turned on (or the mod installed), without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
-- **With your own status line** (on or off): LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. While it's turned on, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
-- **Off, without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
+- **With the mod installed, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k · 82% left`: tokens in use and what's left of Claude Code's context window). With your own status line, the context is already in the input Claude Code gives it.
+- **With your own status line:** LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. With the mod installed, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
+- **Without the mod, and without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 30 seconds (unless you set your own `refreshInterval`), and gives your own status line command its freshest numbers for the account.
 - **On quit** your original status line setting is put back.
 

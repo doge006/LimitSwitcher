@@ -391,11 +391,11 @@ class Integrations:
         return time.time() - float(self.manager.meta.get("modSeenAt") or 0) < MOD_FRESH
 
     def statusline_wanted(self):
-        """Ours in Claude Code's status line: when it's turned on in Settings, while the mod is in
-        use (installing it is the person's choice to see the line; the mod feeds the usage, the
-        status line shows it), or around the user's own one (which stays unchanged). Otherwise
-        Claude Code's status line is left alone: ours would show an empty line there."""
-        return bool(self.manager.meta.get("statuslineShown", False)) or self.mod_in_use() or \
+        """Ours in Claude Code's status line: while the mod is in use (installing it is the person's
+        choice to see the line; the mod feeds the usage, the status line shows it), or around the
+        user's own one (which stays unchanged). Otherwise Claude Code's status line is left alone:
+        ours would show an empty line there."""
+        return self.mod_in_use() or \
             claude_hooks.own_statusline(self.state_file, self.claude_root) is not None
 
     def apply_afk(self):

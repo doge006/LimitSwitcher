@@ -156,19 +156,19 @@ class ModStateTests(unittest.TestCase):
         c.gateway = mock.Mock()
         c.gateway.manager.statusline.return_value = "line"
         c.gateway.manager.lock = threading.RLock()
-        c.gateway.manager.meta = {"statuslineShown": True}
+        c.gateway.manager.meta = {"modSeenAt": time.time()}
         self.assertIsNone(c.statusline({"session": "s", "source": "mod"}))  # the mod draws nothing
         c.gateway.manager.note_mod_session.assert_called_with("s")
         self.assertEqual(c.statusline({"session": "s"}), "line")  # the status line shows it
 
-    def test_with_the_mod_the_status_line_shows_the_line_even_with_the_switch_off(self):
+    def test_the_status_line_shows_the_line_only_once_the_mod_is_in_use(self):
         c = self.controller
         c.live = True
         c.gateway = mock.Mock()
         c.gateway.manager.statusline.return_value = "line"
         c.gateway.manager.lock = threading.RLock()
-        c.gateway.manager.meta = {"statuslineShown": False}  # the script's own switch
-        self.assertIsNone(c.statusline({"session": "s"}))
+        c.gateway.manager.meta = {}
+        self.assertIsNone(c.statusline({"session": "s"}))  # no mod, nothing shown
         c.statusline({"session": "s", "source": "mod"})
         self.assertEqual(c.statusline({"session": "s"}), "line")
 
@@ -177,7 +177,7 @@ class ModStateTests(unittest.TestCase):
         c.live = True
         c.gateway = mock.Mock()
         c.gateway.manager.lock = threading.RLock()
-        c.gateway.manager.meta = {"statuslineShown": True}
+        c.gateway.manager.meta = {"modSeenAt": time.time()}
         c.statusline({"session": "s", "model": "Opus 5.5", "effort": "high"})
         c.gateway.manager.statusline.assert_called_with(None, "s", model="Opus 5.5", effort="high")
 

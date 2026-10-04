@@ -279,7 +279,7 @@ class FullView:
         moving = motion.step()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
         vr.CLOCK_24 = self.state.get("clock24")
-        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "statusline", "afkSkipLarge", "waitNearReset", "jevCompact")}
+        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkSkipLarge", "waitNearReset", "jevCompact")}
         for key, on in prefs.items():
             motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
             ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
@@ -610,8 +610,6 @@ class FullView:
                 self.act("jevCompact", {"on": not state.get("jevCompact")})
             elif arg == "afkSkipLarge":
                 self.act("afkSkipLarge", {"on": not state.get("afkSkipLarge", True)})
-            elif arg == "statusline":
-                self.act("statusline", {"on": not state.get("statusline")})
             elif arg == "launchAtLogin":
                 self.act("startup", {"on": not state.get("launchAtLogin")})
         elif kind == "mod":  # Settings: install the Claude Code mod

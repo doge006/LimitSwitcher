@@ -305,19 +305,14 @@ class LiveTests(unittest.TestCase):
             start.assert_called_once_with(False)
             self.assertFalse(controller.snapshot()["launchAtLogin"])
             self.assertFalse(controller.gateway.manager.meta["startWithWindows"])  # remembered
-            # Claude Code's status line: off by default; turned off, the usage still comes in.
-            self.assertFalse(state["statusline"])
+            # Claude Code's status line: nothing of ours shows until the mod is installed (it reports
+            # in); the usage still comes in without it.
             limits = {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 3600}}
             self.assertIsNone(controller.statusline({"rate_limits": limits}))
-            controller.action("statusline", {"on": True})
+            self.assertIsNone(controller.statusline({"rate_limits": limits, "session": "s", "source": "mod"}))
             line = controller.statusline({"rate_limits": limits})
             self.assertIn("LimitSwitcher", line or "")
             self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})  # the coloured pieces ride along
-            controller.action("statusline", {"on": False})
-            self.assertFalse(controller.snapshot()["statusline"])
-            self.assertIsNone(controller.statusline({"rate_limits": limits}))
-            self.assertFalse(controller.gateway.manager.meta["statuslineShown"])  # remembered
-            controller.action("statusline", {"on": True})
             m = controller.gateway.manager
             claude_id = next(a["id"] for a in controller.snapshot()["accounts"] if a["provider"] == "claude")
             # Name mode: the status line shows the account's name ("Claude 1" without one), not its email.

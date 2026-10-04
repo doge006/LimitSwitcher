@@ -143,7 +143,6 @@ class Controller:
                 "nameMode": name_mode,
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
-                "statusline": self.statusline_on(),
                 "mod": self.mod_state(),
                 "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
@@ -159,21 +158,10 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "statusline", "afkSkipLarge", "jevCompact", "jevKey"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
-            self.notify("changed", None)
-            return
-        if action == "statusline":  # LimitSwitcher in Claude Code's status line; instant
-            on = bool(body.get("on"))
-            if self.live:
-                with self.gateway.manager.lock:
-                    self.gateway.manager.meta["statuslineShown"] = on
-                    self.gateway.manager.save()
-                if getattr(self.gateway, "integrations", None):
-                    self.gateway.integrations.apply_afk()
-            self.statusline_shown = on
             self.notify("changed", None)
             return
         if action in ("installMod", "checkMod"):  # the optional Claude Code mod (Settings)
@@ -475,12 +463,6 @@ class Controller:
             self.notify("changed", None)
         threading.Thread(target=work, daemon=True, name="mod-install").start()
 
-    def statusline_on(self):
-        """Show LimitSwitcher in Claude Code's status line (off unless turned on in Settings)."""
-        if self.live:
-            return bool(self.gateway.manager.meta.get("statuslineShown", False))
-        return getattr(self, "statusline_shown", False)
-
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
 
@@ -499,10 +481,10 @@ class Controller:
             self.note_mod()
             self.gateway.manager.note_mod_session(session)
             return None
-        # Turned off in Settings: the usage still comes in (no API calls needed), but nothing of
-        # LimitSwitcher shows in Claude Code (the user's own status line, if any, is unchanged).
-        # Installing the mod is the person's own choice to see it too: no second switch.
-        if not self.statusline_on() and time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
+        # Without the mod the usage still comes in (no API calls needed), but nothing of LimitSwitcher
+        # shows in Claude Code (the user's own status line, if any, is unchanged): installing the
+        # mod is the person's choice to see the line.
+        if time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
             return None
         return line
 

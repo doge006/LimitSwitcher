@@ -600,7 +600,7 @@ class AfkTests(unittest.TestCase):
         server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.manager.live_since["claude"] = 0
-        self.manager.meta["statuslineShown"] = True  # shown in Claude Code (off by default)
+        self.manager.meta["modSeenAt"] = time.time()  # the mod is in use: the line shows in Claude Code
         state = Path(self.tmp.name) / "state.json"
         state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
         event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}}}
@@ -980,7 +980,7 @@ class IntegrationTests(unittest.TestCase):
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"),
                                   {"claude": Claude(config_dir=claude_root, home=root), "codex": Codex(codex_home=codex_home)},
                                   background=False)
-            gateway.manager.meta.update(afk=True, startWithWindows=False, statuslineShown=True)
+            gateway.manager.meta.update(afk=True, startWithWindows=False, modSeenAt=time.time())
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=codex_home,
                                         claude_root=claude_root, upstream="http://127.0.0.1:9")
             with mock.patch("account_switcher.codex_proxy.DEFAULT_PORT", 0), \
@@ -1014,10 +1014,10 @@ class IntegrationTests(unittest.TestCase):
                 integrations.start()
             try:
                 self.assertFalse(claude_hooks.statusline_installed(claude_root))
-                gateway.manager.meta["statuslineShown"] = True  # turned on in Settings
+                gateway.manager.meta["modSeenAt"] = time.time()  # the mod is in use
                 integrations.apply_afk()
                 self.assertTrue(claude_hooks.statusline_installed(claude_root))
-                gateway.manager.meta["statuslineShown"] = False
+                gateway.manager.meta["modSeenAt"] = 0
                 integrations.apply_afk()
                 self.assertNotIn("statusLine", json.loads((claude_root / "settings.json").read_text()))
                 # Their own status line: ours runs it (for live usage), their line unchanged.
@@ -1029,21 +1029,21 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads((claude_root / "settings.json").read_text())["statusLine"]["command"], "mine.sh")
 
     def test_status_line_command_is_installed_while_the_mod_is_in_use(self):
-        """The mod feeds the usage; the line is the status line's (a spot nobody can dismiss), also
-        with the Settings switch off: installing the mod is the choice to see it."""
+        """The mod feeds the usage; the line is the status line's (a spot nobody can dismiss):
+        installing the mod is the choice to see it."""
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             claude_root = root / "claude"
             claude_root.mkdir()
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
-            gateway.manager.meta.update(startWithWindows=False, statuslineShown=False)
+            gateway.manager.meta.update(startWithWindows=False)
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             with mock.patch("account_switcher.integrations.codex_present", return_value=False):
                 integrations.start()
             try:
-                self.assertFalse(claude_hooks.statusline_installed(claude_root))  # switched off, no mod
+                self.assertFalse(claude_hooks.statusline_installed(claude_root))  # no mod
                 gateway.manager.meta["modSeenAt"] = time.time()
                 integrations.apply_afk()
                 self.assertTrue(claude_hooks.statusline_installed(claude_root))
@@ -1061,7 +1061,7 @@ class IntegrationTests(unittest.TestCase):
             (claude_root / "settings.json").write_text('{"model": "opus"}')
             gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
                                   background=False)
-            gateway.manager.meta.update(startWithWindows=False, statuslineShown=True)
+            gateway.manager.meta.update(startWithWindows=False, modSeenAt=time.time())
             integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
                                         claude_root=claude_root)
             integrations.SETTINGS_EVERY = 0.05
