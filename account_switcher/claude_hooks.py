@@ -193,10 +193,26 @@ def uninstall(root=None):
 
 # ---------- status line: live usage from Claude Code (no tokens, no API calls) ----------
 STATUS_MARK = "account_switcher_statusline"
-STATUS_REFRESH = 5  # seconds (Claude Code allows 1 at the least)
+STATUS_REFRESH = 5  # seconds. Claude Code allows 1, but every run is a process start (about 30 ms of CPU): 5 s is under 1% of a core per open session
+
+
+def _status_exe():
+    """The installed Windows app's own console launcher for the status line, or None: Task Manager
+    then shows "LimitSwitcher Status" for it (it runs statusline.py with the bundled Python)
+    instead of python.exe."""
+    if sys.platform != "win32":
+        return None
+    exe = Path(sys.executable)
+    if exe.name.lower().startswith("python"):
+        return None
+    status = exe.with_name("LimitSwitcherStatus.exe")
+    return status if status.exists() else None
 
 
 def statusline_command(state_file):
+    status = _status_exe()
+    if status is not None:  # the script is built into it
+        return f"{_short(status)} {_short(state_file)} {STATUS_MARK}"
     python = _python()
     script = Path(__file__).with_name("statusline.py")
     return f"{_short(python)}{_NO_PYC} {_short(script)} {_short(state_file)} {STATUS_MARK}"

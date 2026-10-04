@@ -10,14 +10,15 @@ the app follows Claude usage live: no tokens, no API calls. This script
 The app also sets refreshInterval, so idle sessions re-run it and stay current.
 Standard library only; it must not import the app. When the app isn't running it still runs
 the user's own command, so their status line never breaks.
+
+It runs every second or so, once per open session, so its start-up is kept small: a plain socket
+instead of urllib (which pulls in http.client, email, ssl), and no pathlib or subprocess unless
+they're needed. A run is about 30 ms of CPU.
 """
 import json
-import subprocess
+import os
 import sys
 import time
-from pathlib import Path
-from urllib.error import HTTPError
-from urllib.request import ProxyHandler, Request, build_opener
 
 # Bright colours, so they read on dark and light terminals alike.
 ANSI = {"dim": "90", "label": "94", "good": "92", "warn": "93", "bad": "91"}
@@ -42,10 +43,10 @@ def report(state, data, cache=None):
                            "session": str(data.get("session_id") or "")[:100],
                            "model": model.get("display_name") or model.get("id"),
                            "effort": effort.get("level")}).encode()
-        request = Request(state["url"].rsplit("/", 1)[0] + "/statusline", data=body, method="POST",
-                          headers={"Authorization": "Bearer " + state["token"], "Content-Type": "application/json"})
-        with build_opener(ProxyHandler({})).open(request, timeout=0.6) as response:
-            answer = json.load(response)
+        status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)
+        if status >= 400:
+            return None, None  # the app refused (a token from before it restarted): nothing, not an old line
+        answer = json.loads(payload)
         if not isinstance(answer, dict):
             return None, None
         limits = answer.get("rate_limits")
@@ -54,10 +55,34 @@ def report(state, data, cache=None):
         shown = (paint(parts) if parts else line) if line else None
         remember(cache, shown)
         return shown, limits if isinstance(limits, dict) else None
-    except HTTPError:
-        return None, None  # the app refused (a token from before it restarted): nothing, not an old line
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
         return recall(cache), None  # the app is busy or gone: the last line for a moment, not a blank one
+
+
+def post(url, token, body, timeout):
+    """POST `body` (JSON bytes) to the app's loopback address: (status, response body). A plain
+    socket and HTTP/1.0: the app closes the connection after its answer."""
+    import socket
+    host, _, path = url.partition("://")[2].partition("/")
+    name, _, port = host.partition(":")
+    head = (f"POST /{path} HTTP/1.0\r\nHost: {host}\r\nAuthorization: Bearer {token}\r\n"
+            f"Content-Type: application/json\r\nContent-Length: {len(body)}\r\n\r\n").encode("ascii")
+    deadline = time.monotonic() + timeout
+    chunks = []
+    with socket.create_connection((name, int(port or 80)), timeout) as connection:
+        connection.sendall(head + body)
+        while True:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise OSError("the app took too long")
+            connection.settimeout(left)
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    answer = b"".join(chunks)
+    header, _, payload = answer.partition(b"\r\n\r\n")
+    return int(header.split(b" ", 2)[1]), payload
 
 
 def remember(cache, line):
@@ -65,14 +90,18 @@ def remember(cache, line):
         return
     try:
         if line:
-            Path(cache).write_text(json.dumps({"at": time.time(), "line": line}), encoding="utf-8")
+            with open(cache, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"at": time.time(), "line": line}))
     except OSError:
         pass
 
 
 def recall(cache):
     try:
-        saved = json.loads(Path(cache).read_text(encoding="utf-8")) if cache else None
+        if not cache:
+            return None
+        with open(cache, encoding="utf-8") as handle:
+            saved = json.load(handle)
         return saved["line"] if saved and time.time() - saved["at"] < CACHE_FOR else None
     except (OSError, ValueError, KeyError, TypeError):
         return None
@@ -118,6 +147,7 @@ def context_painted(data):
 
 def run_previous(command, raw):
     """The user's own status line command: its output, unchanged."""
+    import subprocess  # only when there is a status line of the user's own to run
     try:
         done = subprocess.run(command, shell=True, input=raw, capture_output=True, timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -143,7 +173,7 @@ def main(argv):
             state = json.load(handle)
     except (OSError, ValueError, IndexError):
         state = {}
-    cache = str(Path(argv[1]).with_name("statusline-cache.json")) if len(argv) > 1 else None
+    cache = os.path.join(os.path.dirname(argv[1]), "statusline-cache.json") if len(argv) > 1 else None
     line, limits = report(state, data if isinstance(data, dict) else {}, cache) if state.get("url") else (None, None)
     previous = state.get("statusline")
     if previous:
