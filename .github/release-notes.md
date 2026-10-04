@@ -1,10 +1,8 @@
-The app offers it in Settings → **Update to 1.2.4** (or download below).
+The app offers it in Settings → **Update to 1.2.5** (or download below).
 
-## Changed
+## Fixed
 
-- **Settings fits:** the menu is wider and tighter, with shorter descriptions, so it no longer runs off a normal window (739 px down to about 560 px at its tallest). Each display's taskbar slots are on one line.
-- **Version and updates in the top bar:** the version and the update button sit left of Settings, with the version above the button, so an available update is seen without opening anything.
-- **Update checks:** at launch and every 2 hours (a check that can't reach GitHub is retried after 5 minutes), and an update already found stays offered if a later check fails.
+- **Auto swap and Auto resume now apply to sessions that are already open.** Claude Code reads its hooks when a session starts, and the limit hook was only added once a toggle was switched on, so a session opened before that never reported its limit: no swap, no resume, no Jev compaction. The hook now stays in place while the app runs and the app decides, so the toggles take effect at once. A session that was already open when you update needs one restart to get the hook.
 
 ## Download
 

@@ -411,11 +411,11 @@ class Integrations:
             self.manager.notify("log", f"Couldn't update Claude Code's status line: {error}")
         self.write_state(previous)
         try:
-            # The hook reports Claude's usage limits: needed for Auto swap and for AFK.
-            if self.manager.meta.get("afk") or self.manager.meta.get("autoSwap"):
-                claude_hooks.install(self.state_file, self.claude_root)
-            else:
-                claude_hooks.uninstall(self.claude_root)
+            # The hook reports Claude's usage limits. It stays installed whatever the toggles say: Claude
+            # Code reads its hooks when a session starts, so one added only when a toggle turns on would
+            # miss every session already open. The app decides per limit (see claude_limit: "stop" when
+            # Auto swap and Auto resume are both off), so the toggles take effect at once.
+            claude_hooks.install(self.state_file, self.claude_root)
         except (OSError, ValueError) as error:
             log.warning("could not update Claude Code's hook: %s", error)
             self.manager.notify("log", f"Couldn't update Claude Code's settings for AFK: {error}")
