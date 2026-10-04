@@ -836,8 +836,12 @@ class JevCompactionTests(unittest.TestCase):
         self.manager.claude_limit("s1")
         line = self.manager.statusline(None, "s1", model="Opus 5.5", effort="high")
         self.assertIn("b@example.com · Opus 5.5 (high) · ", line)
-        self.assertIn("Jev compacting…", line)
-        self.assertNotIn("Jev compacting", self.manager.statusline(None, "s2"))
+        self.assertTrue(str(line).startswith("⇄ LimitSwitcher · Jev compacting… · b@example.com"))  # right after the app's name
+        self.assertEqual(line.parts[0], {"t": "⇄", "c": "warn"})                                   # the icon turns yellow
+        self.assertIn({"t": "Jev compacting…", "c": "warn"}, line.parts)
+        idle = self.manager.statusline(None, "s2")
+        self.assertNotIn("Jev compacting", idle)
+        self.assertEqual(idle.parts[0], {"t": "⇄", "c": "good"})
 
     def test_end_to_end_through_the_local_api_and_the_hook(self):
         """The hook asks, the mod picks the compaction up from its status line report and reports

@@ -756,11 +756,14 @@ class LiveAccounts:
                     entry["liveAt"] = now
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
-        groups = [[("⇄", "good"), (" ", None), ("LimitSwitcher", "dim")], [(self.shown_name(account_id), "dim")]]
+        compacting = bool(session) and self.compacting(session)
+        # While Jev compacts the icon turns yellow and "Jev compacting…" follows the app's name.
+        groups = [[("⇄", "warn" if compacting else "good"), (" ", None), ("LimitSwitcher", "dim")]]
+        if compacting:
+            groups.append([("Jev compacting…", "warn")])
+        groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))
-        if session and self.compacting(session):
-            groups.append([("Jev compacting…", "warn")])
         for window in project(entry.get("usage") or [], now):
             if window.get("scope") == "account" and window["key"] in ("five_hour", "weekly"):
                 label = "5h" if window["key"] == "five_hour" else "1w"
