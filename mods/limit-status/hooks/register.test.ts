@@ -122,6 +122,24 @@ describe('limit-status', () => {
     expect(w.compactions).toHaveLength(1)
   })
 
+  test('/jevcompact runs the compaction by hand and says what it saved', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { outcomes: [{ saved: 30_000 }, { skip: 'no OpenRouter key (OPENROUTER_API_KEY)' }] })
+    const registered: string[] = []
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('ui.toast', () => ({ value: undefined }))
+    on('command.register', ($, e) => { registered.push(e.name); return { value: { command: e.name } } })
+    await $.session.start({ cwd: '/' })
+    expect(registered).toContain('jevcompact')
+    const started = await $.command.run({ command: 'jevcompact' })
+    expect(started.text).toBe('Jev compacting…')
+    await (w as any).clock.settle()
+    expect(w.statuses.at(-1)).toBe('⇄ LimitSwitcher · Jev compacted: ~30k tokens less to load')
+    await $.command.run({ command: 'jevcompact' })
+    await (w as any).clock.settle()
+    expect(w.statuses.at(-1)).toBe('⇄ LimitSwitcher · No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)')
+    expect(w.compactions).toEqual([MARKER, MARKER])
+  })
+
   test('without LimitSwitcher running, nothing happens', { options: { statePath: STATE } }, async ($, on) => {
     on('fs.read', () => { throw new Error('ENOENT') })
     on('session.measure', ($, e) => ({ changed: e.changed }))

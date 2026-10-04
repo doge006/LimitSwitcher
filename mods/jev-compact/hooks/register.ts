@@ -9,7 +9,7 @@ import { askerOver, type Transport } from '../src/openrouter.ts'
 // compaction itself, so Claude Code makes no model request (it works on an account at 0%).
 //
 // It acts only on LimitSwitcher's own request (`$.session.compact` from the limit-status mod with
-// MARKER as its instructions), or `/compact limitswitcher:jev-compact` typed by hand; plain /compact and
+// MARKER as its instructions, also for `/jevcompact` typed by hand); plain /compact and
 // auto-compaction stay Claude Code's own. The request is
 // never handed to Claude Code's summary: when this can't prune, it skips, and limit-status retries
 // or lets the session go on without it.
@@ -62,7 +62,7 @@ export const register: Register = (on, options) => {
   const envFile = String(options.envFile ?? '')
 
   on('session.compact', async ($, e, next) => {
-    // LimitSwitcher's own request, or a person typing `/compact limitswitcher:jev-compact`
+    // LimitSwitcher's own request (`/jevcompact` is that request made by hand), or `/compact limitswitcher:jev-compact`
     const ours = (e.trigger === 'plugin' || e.trigger === 'manual') && e.instructions?.trim() === MARKER
     if (!ours || e.agentId !== undefined) return next(e)
     let reason: string

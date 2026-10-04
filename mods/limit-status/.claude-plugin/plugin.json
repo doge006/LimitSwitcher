@@ -1,6 +1,6 @@
 {
   "name": "limit-status",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Feeds Claude Code's live usage to LimitSwitcher after every turn, and runs the Jev compaction LimitSwitcher asks for before a swapped session goes on (with the jev-compact plugin).",
   "userConfig": {
     "statePath": {
