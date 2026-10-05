@@ -146,8 +146,8 @@ def measure_panel(flyout_module, controller, scale):
 
 
 def measure_full_view(fullview_win, controller, scale):
-    """The full view at `scale`: cards rising in as it opens, hover fades over the cards, then
-    scrolling with the mouse wheel."""
+    """The full view at `scale`: cards rising in as it opens, hover fades over the cards, the
+    menus and a toast, then scrolling with the mouse wheel."""
     tray = FakeTray(controller)
     window = fullview_win.FullViewWindow(tray)
     window.show()
@@ -174,6 +174,17 @@ def measure_full_view(fullview_win, controller, scale):
             pump(0.35)
             hovers.append(cadence(frames.take()))
     result["hover"] = merge(hovers)
+    menus, toasts = [], []
+    for _ in range(3):  # the Settings and Add menus fading in and out, then a toast
+        for menu in ("settings", "settings", "add", "add"):
+            view.activate(menu)
+            window.invalidate()
+            pump(0.35)
+            menus.append(cadence(frames.take()))
+        view.toast("Swapped to another account", "ok")
+        pump(0.5)
+        toasts.append(cadence(frames.take()))
+    result["menu"], result["toast"] = merge(menus), merge(toasts)
     result.update(measure_scroll(window, frames))
     user32.DestroyWindow(window.hwnd)
     pump(0.1)
@@ -248,7 +259,8 @@ def rows(data):
         for motion, label in (("open", "open animation"), ("close", "close animation"), ("hover", "hover fades")):
             out.append((f"Panel {label} @{round(float(scale) * 100)}%", parts.get(motion)))
     for scale, parts in data["full_view"].items():
-        for motion, label in (("rise", "cards rising in"), ("hover", "hover fades"), ("scroll", "scrolling (wheel)")):
+        for motion, label in (("rise", "cards rising in"), ("hover", "hover fades"), ("menu", "menus open/close"),
+                              ("toast", "a toast fading in"), ("scroll", "scrolling (wheel)")):
             out.append((f"Full view {label} @{round(float(scale) * 100)}%", (parts or {}).get(motion)))
     return out
 

@@ -225,6 +225,11 @@ def ring_mask(w, h, r, width):
 BIG_MASK = 256 * 256  # masks this big (whole cards) aren't kept for every opacity
 
 
+def _solid_middle(w, h, r):
+    """rr_mask(w, h, r) is 255 in every row but its top and bottom r (it is made from corners)."""
+    return w > 0 and h > 0 and (r <= 0 or 2 * r + 2 <= min(w, h))
+
+
 def rr_alpha(w, h, r, alpha):
     """rr_mask at `alpha`. Small ones are kept; a card-sized one is made when needed (a fraction
     of a millisecond, only when a card is drawn again) rather than kept for every hover step."""
@@ -274,14 +279,41 @@ class Canvas:
     def rect(self, x, y, w, h, r, fill):
         x0, y0, pw, ph = self.box(x, y, w, h)
         alpha = fill[3] if len(fill) == 4 else 255
-        mask = rr_alpha(pw, ph, self.px(r), alpha)
-        self.image.paste(fill[:3], (x0, y0), mask)
+        r = self.px(r)
+        if pw * ph > BIG_MASK and _solid_middle(pw, ph, r):
+            # A big one (a menu): only its rounded top and bottom need the mask; between them it is solid.
+            self.bands(fill[:3], alpha, x0, y0, lambda: rr_mask(pw, ph, r), r, [(x0, y0 + r, x0 + pw, y0 + ph - r)])
+            return
+        self.image.paste(fill[:3], (x0, y0), rr_alpha(pw, ph, r, alpha))
 
     def outline(self, x, y, w, h, r, color, width=1):
         x0, y0, pw, ph = self.box(x, y, w, h)
         alpha = color[3] if len(color) == 4 else 255
-        mask = ring_alpha(pw, ph, self.px(r), max(1, round(width * self.s)), alpha)
-        self.image.paste(color[:3], (x0, y0), mask)
+        r, width = self.px(r), max(1, round(width * self.s))
+        if pw * ph > BIG_MASK and _solid_middle(pw, ph, r) and _solid_middle(pw - 2 * width, ph - 2 * width, max(0, r - width)):
+            # A big one: its top and bottom from the mask, its sides solid, and nothing in between.
+            t = max(r, width)
+            self.bands(color[:3], alpha, x0, y0, lambda: ring_mask(pw, ph, r, width), t,
+                       [(x0, y0 + t, x0 + width, y0 + ph - t), (x0 + pw - width, y0 + t, x0 + pw, y0 + ph - t)])
+            return
+        self.image.paste(color[:3], (x0, y0), ring_alpha(pw, ph, r, width, alpha))
+
+    def bands(self, color, alpha, x0, y0, mask, t, solid):
+        """Paste `color` through mask() (at x0, y0, in this image's px) in its top and bottom `t`
+        rows only, and fill the `solid` boxes (where the mask is 255): the same pixels as pasting
+        through all of it."""
+        mask = mask() if t > 0 else None
+        for top in (0, mask.height - t) if mask else ():
+            band = mask.crop((0, top, mask.width, top + t))
+            if alpha < 255:
+                band = band.point(lambda v: v * alpha // 255)
+            self.image.paste(color, (x0, y0 + top), band)
+        for bx0, by0, bx1, by1 in solid:
+            if bx1 > bx0 and by1 > by0:
+                if alpha >= 255:
+                    self.image.paste(color, (bx0, by0, bx1, by1))
+                else:
+                    self.image.paste(color, (bx0, by0, bx1, by1), Image.new("L", (bx1 - bx0, by1 - by0), alpha))
 
     def dot(self, cx, cy, r, fill):
         self.rect(cx - r, cy - r, 2 * r, 2 * r, r, fill)
@@ -975,23 +1007,33 @@ def release():
 
 # ---------- overlays: menus, the date editor, toasts ----------
 class Surface:
-    """Where overlays draw: the whole frame (Pillow here; macOS has its own with the same calls)."""
+    """Where overlays draw: the whole frame (Pillow here; macOS has its own with the same calls).
+    With `base` (the page the frame was made from, the same pixels until an overlay draws), a
+    fade needs no copy of the frame, and `boxes` says which device areas the overlays drew in."""
 
-    def __init__(self, image, scale):
-        self.image, self.s = image, scale
+    def __init__(self, image, scale, base=None):
+        self.image, self.s, self.base = image, scale, base
+        self.boxes = []
 
     def canvas(self, bg):
         return Canvas(self.image, self.s, bg)
 
     def shadow(self, x, y, w, h, strength):
-        """A floating surface's shadow (logical box), 4 px lower."""
+        """A floating surface's shadow (logical box), 4 px lower. Every overlay starts with one
+        (panel()), and draws within it."""
         s = self.s
         sh = shadow(w, h, s, strength)
-        self.image.paste(sh, (round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)), sh)
+        x0, y0 = round(x * s) - round(SHADOW * s), round(y * s) - round(SHADOW * s) + round(4 * s)
+        self.image.paste(sh, (x0, y0), sh)
+        m = round(8 * s)  # and a little more, for anything drawn along its edge
+        self.boxes.append((min(x0, round(x * s)) - m, min(y0, round(y * s)) - m,
+                           max(x0 + sh.width, round((x + w) * s)) + m, max(y0 + sh.height, round((y + h) * s)) + m))
 
     def fade_begin(self, t):
         """Start drawing something that shows at opacity t (0..1); fade_end finishes it."""
-        return self.image.copy()
+        if self.base is None:
+            return self.image.copy()
+        return [(box, self.image.crop(box)) for box in self.boxes]  # where it differs from base so far
 
     def fade_end(self, before, box, t):
         """What was drawn since fade_begin over `box` (logical, plus its shadow) at opacity t."""
@@ -1000,7 +1042,14 @@ class Surface:
         region = tuple(round(v * self.s) for v in (x - m, y - m, x + w + m, y + h + m))
         region = (max(0, region[0]), max(0, region[1]), min(self.image.width, region[2]), min(self.image.height, region[3]))
         if region[2] > region[0] and region[3] > region[1]:
-            self.image.paste(Image.blend(before.crop(region), self.image.crop(region), max(0.0, min(1.0, t))), region[:2])
+            if isinstance(before, list):  # the page, with what overlays drew before this one
+                under = self.base.crop(region)
+                for (x0, y0, _, _), part in before:
+                    under.paste(part, (x0 - region[0], y0 - region[1]))
+            else:
+                under = before.crop(region)
+            self.image.paste(Image.blend(under, self.image.crop(region), max(0.0, min(1.0, t))), region[:2])
+            self.boxes.append(region)
 
 
 def panel(surface, scale, x, y, w, h):

@@ -176,6 +176,8 @@ class FullView:
         self.changed = None        # device boxes the last frame changed (None: all of it), for the host
         self.had_overlays = False
         self.scrolled = False      # the last frame moved the page
+        self.shown = None          # (frame, device boxes the overlays drew in) while menus or toasts show
+        self.overlays_moving = False
         self.take_log(state)
         try:
             controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
@@ -377,18 +379,37 @@ class FullView:
     def frame(self):
         """The window's pixels (RGB, device px) and the clickable regions."""
         ops, moving = self.build()
-        image = self.compose(ops)
+        page = self.compose(ops)
         self.overlay_hits = []
-        overlays = self.overlays_showing()
-        if overlays:
-            image = image.copy()  # the page stays as it is, for the next frame to build on
-            moving |= self.draw_overlays(vr.Surface(image, self.scale))
+        if self.overlays_showing():
+            image = self.with_overlays(page)
+            moving |= self.overlays_moving
         else:
-            self.draw_overlays(vr.Surface(image, self.scale))  # nothing to draw; keeps the toast timers right
-        if overlays or self.had_overlays:
-            self.changed = None  # menus and toasts sit on top of the page: all of it (while they show)
-        self.had_overlays = overlays
+            image = page
+            self.draw_overlays(vr.Surface(page, self.scale))  # nothing to draw; keeps the toast timers right
+            if self.shown is not None:  # menus and toasts went away: the page shows again where they were
+                if self.changed is not None:
+                    self.changed = merge_boxes(self.changed + self.shown[1], page.size)
+                self.shown = None
         self.after_frame(moving)
+        return image
+
+    def with_overlays(self, page):
+        """The page with menus, the date editor and toasts on top, in a frame of its own (the page
+        stays as it is, for the next frame to build on). That frame is kept while they show: each
+        frame puts the page back only where it changed or an overlay was, and draws them again."""
+        held = self.shown
+        if held is None or held[0].size != page.size or self.changed is None or not self.incremental:
+            image, restore = page.copy(), None
+        else:
+            image, restore = held[0], merge_boxes(self.changed + held[1], page.size)
+            for box in restore:
+                image.paste(page.crop(box), box[:2])
+        surface = vr.Surface(image, self.scale, base=page if self.incremental else None)
+        self.overlays_moving = self.draw_overlays(surface)
+        drawn = merge_boxes(surface.boxes, image.size)
+        self.changed = None if restore is None else merge_boxes(restore + drawn, image.size)
+        self.shown = (image, drawn)
         return image
 
     def after_frame(self, moving):
@@ -890,5 +911,5 @@ class FullView:
         if self.ui.editing:
             self.commit_name()
         self.tiles.clear()
-        self.last_page = None
+        self.last_page = self.shown = None
         vr.release()
