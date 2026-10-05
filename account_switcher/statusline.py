@@ -84,7 +84,8 @@ def report(state, data, cache=None):
         body = dumps({"rate_limits": limits if isinstance(limits, dict) else None,
                            "session": str(data.get("session_id") or "")[:100],
                            "model": model.get("display_name") or model.get("id"),
-                           "effort": effort.get("level")}).encode()
+                           "effort": effort.get("level"),
+                           "configDir": os.environ.get("CLAUDE_CONFIG_DIR") or None}).encode()
         status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)
         if status >= 400:
             return None, None, None  # the app refused (a token from before it restarted): nothing, not an old line

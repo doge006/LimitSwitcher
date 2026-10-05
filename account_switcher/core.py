@@ -25,6 +25,7 @@ class Account:
     updated_at: float = 0.0
     subscription: dict = None   # {"at": ts, "ends": bool|None, "source": "manual"|"auto"}
     credits: dict = None        # Codex credits / Claude extra usage, as reported
+    pinned: bool = False        # held by a window of its own (profiles.py)
 
     def account_windows(self):
         return [w for w in self.windows() if w["scope"] == "account"]

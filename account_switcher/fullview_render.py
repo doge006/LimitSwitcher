@@ -663,11 +663,20 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hints = [" · ".join(parts + [updated] if updated else parts)]
                 if updated:
                     hints += [" · ".join(parts + [updated.replace("Updated ", "")]), updated]
-            room = w - 36 - 124 - (0 if active else 96)  # the in-use card has no Remove button to leave room for
-            c.text(18, fy + 21, best_fit(hints, 12, room), 12, WARN if status else FAINT)
+            own = live and provider == "claude" and not active  # can have a window of its own (profiles.py)
+            room = w - 36 - 124 - (0 if active else 96) - (96 if own else 0)  # the in-use card has no Remove button to leave room for
+            c.text(18, fy + 21, best_fit(hints, 12, room), 12, WARN if status and not account.get("pinned") else FAINT)
         bw, bx = 124, w - 18 - 124
+        pinned = account.get("pinned")
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
+        elif pinned:  # its own window has it: another window on it, never a swap (one copy of a login)
+            t = 0.0 if locked else a("openWindow")
+            fill = mixc(accent, blend((255, 255, 255), accent, .1), t)
+            c.rect(bx, fy, bw, 32, 8, fill + (255,))
+            c.text(bx + bw / 2, fy + 16, "New window", 13, ON_ACCENT, True, anchor="mm", bg=fill)
+            if not locked:
+                hit(bx, fy, bw, 32, "openWindow")
         elif switching:
             c.rect(bx, fy, bw, 32, 8, accent + (230,))
             c.text(bx + bw / 2, fy + 16, "Switching…", 13, ON_ACCENT, True, anchor="mm", bg=over(SURFACE, accent + (230,)))
@@ -685,9 +694,19 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hit(bx, fy, bw, 32, "swap")
         if live and not active and not switching and card_t > 0:  # Remove fades in while the card is hovered
             rx = bx - 6 - 80
-            quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
-            if not locked and card_t >= .5:
-                hit(rx, fy, 80, 32, "remove")
+            if pinned:  # gives the account back to the other windows (deletes its profile)
+                quiet_button(c, rx, fy, 80, "Give back", a("closeWindow"), card_t)
+                if not locked and card_t >= .5:
+                    hit(rx, fy, 80, 32, "closeWindow")
+            else:
+                quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
+                if not locked and card_t >= .5:
+                    hit(rx, fy, 80, 32, "remove")
+                if provider == "claude":  # a Claude Code window that keeps this account
+                    rx -= 6 + 90
+                    quiet_button(c, rx, fy, 90, "Own window", a("openWindow"), card_t)
+                    if not locked and card_t >= .5:
+                        hit(rx, fy, 90, 32, "openWindow")
 
     border = accent + (115,) if active else mixc(LINE, LINE_STRONG, card_t)
     return hits, live_parts, border, not eligible and not active

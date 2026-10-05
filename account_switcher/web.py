@@ -184,7 +184,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "closeWindow"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -308,11 +308,11 @@ class Controller:
                 raise ValueError("Date must be a timestamp or null")
             self.gateway.manager.set_subscription(body.get("id"), at, bool(body.get("ends")))
             return
-        if action in {"add", "remove"} and not self.live:
+        if action in {"add", "remove", "openWindow", "closeWindow"} and not self.live:
             raise ValueError("Adding and removing accounts needs real-account mode")
         if action == "add" and body.get("provider") not in {"claude", "codex"}:
             raise ValueError("Choose Claude or Codex")
-        if action in {"swap", "remove"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
+        if action in {"swap", "remove", "openWindow", "closeWindow"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
         if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
             raise ValueError("Preferences must be booleans")
@@ -341,6 +341,10 @@ class Controller:
                     self.gateway.manager.add(body["provider"], expect=expect)  # expect: the account to sign back in
                 elif action == "remove":
                     self.gateway.manager.remove(body["id"])
+                elif action == "openWindow":  # a Claude Code window that keeps this account (profiles.py)
+                    self.gateway.manager.open_profile(body["id"])
+                elif action == "closeWindow":
+                    self.gateway.manager.close_profile(body["id"])
                 elif action == "reset":
                     self.gateway.reset()  # the refresh button: fetch usage now (demo: fresh sample accounts)
                     if not self.live:
@@ -492,8 +496,10 @@ class Controller:
     def afk_enabled(self):
         return bool(self.gateway.manager.meta.get("afk")) if self.live else self.afk
 
-    def statusline_limits(self):
-        return self.gateway.manager.claude_limits() if self.live else None
+    def statusline_limits(self, body=None):
+        body = body or {}
+        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        return self.gateway.manager.claude_limits(config_dir, str(body.get("session") or "")[:100] or None) if self.live else None
 
     def statusline(self, body):
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
@@ -502,7 +508,8 @@ class Controller:
         session = str(body.get("session") or "")[:100] or None
         model = body.get("model") if isinstance(body.get("model"), str) else None
         effort = body.get("effort") if isinstance(body.get("effort"), str) else None
-        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort)
+        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, config_dir=config_dir)
         if body.get("source") == "mod":  # the mod feeds the usage; the line itself is the status line's
             self.note_mod()
             self.gateway.manager.note_mod_session(session)
@@ -547,6 +554,9 @@ class Controller:
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
         if not self.live or body.get("provider") != "claude":
             return {"action": "stop"}
+        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        if self.gateway.manager.profile_account(config_dir, str(body.get("session") or "")[:100] or None):
+            return {"action": "stop"}  # a window with its own account: its limit stays there (profiles.py)
         answer = self.gateway.manager.claude_limit(
             str(body.get("session") or "")[:100], body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
         self.notify("changed", None)
@@ -647,7 +657,7 @@ def make_server(controller, port=0):
                     body = body if isinstance(body, dict) else {}
                     line = controller.statusline(body)
                     self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
-                                       "rate_limits": controller.statusline_limits(),
+                                       "rate_limits": controller.statusline_limits(body),
                                        "compact": controller.compaction_request(body),
                                        "compacted": controller.compacted_context(body)})
                 except (ValueError, RuntimeError, OSError) as error:

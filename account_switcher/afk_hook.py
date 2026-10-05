@@ -129,7 +129,7 @@ def main(argv):
             with open(argv[1], encoding="utf-8") as handle:
                 state = json.load(handle)
             body = json.dumps({"provider": "claude", "session": str(event.get("session_id") or ""),
-                               "contextTokens": tokens}).encode()
+                               "contextTokens": tokens, "configDir": os.environ.get("CLAUDE_CONFIG_DIR") or None}).encode()
             request = Request(state["url"], data=body, method="POST",
                               headers={"Authorization": "Bearer " + state["token"], "Content-Type": "application/json"})
             with opener.open(request, timeout=180) as response:

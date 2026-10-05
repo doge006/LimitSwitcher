@@ -640,6 +640,8 @@ class FullView:
             self.host.set_timer("pending", 8000)
             if not self.act("swap", {"id": arg}):
                 ui.pending = None
+        elif kind in ("openWindow", "closeWindow"):  # a Claude Code window that keeps this account
+            self.act(kind, {"id": arg})
         elif kind == "remove":
             ui.confirm = arg
         elif kind == "remove-no":
