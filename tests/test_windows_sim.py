@@ -224,7 +224,7 @@ class WindowSimulation(unittest.TestCase):
         self.assertEqual(self.do("W2", "turn")["email"], emails["W2"])
         self.assertEqual(self.do("W4", "turn")["email"], "a@example.com")
         self.assert_one_place_each()
-        self.assertFalse(m.meta["accounts"][m.find("claude", "uuid-" + w1[0])].get("status", "").startswith("In window"))
+        self.assertNotIn(m.find("claude", "uuid-" + w1[0]), m.pinned)  # W1's old account is free again
 
         # 5. W2 renews its login (Claude Code does, on its own): the app keeps the new tokens and renews nothing.
         renewed = self.do("W2", "renew")

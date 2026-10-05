@@ -75,7 +75,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(config["oauthAccount"]["emailAddress"], "b@example.com")
         b = self.account("b@example.com")
         self.assertTrue(b.pinned)
-        self.assertEqual((b.status, b.window), ("In window 1", 1))
+        self.assertEqual((b.status, b.window), ("", 1))  # the card says "In window 1"
         self.assertEqual([(w["number"], w["accountId"]) for w in self.m.windows()], [(1, b.id)])
 
     def test_an_account_is_in_one_place_at_a_time(self):

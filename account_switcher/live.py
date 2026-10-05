@@ -216,8 +216,6 @@ class LiveAccounts:
                     # The retry time in the current clock setting (it may have changed since)
                     status = f"Rate limited by {m['provider'].title()} · retrying at " + \
                         clock_text(m["backoffUntil"], self.meta.get("clock24"))
-                if not status and account_id in pinned:
-                    status = f"In window {numbers.get(account_id, '?')}"
                 rows.append(Account(account_id, m["provider"], m.get("email") or m["identity"], 0, 0, 0, 0,
                                     plan=m.get("plan", ""), email=m.get("email", ""),
                                     usage=project(m.get("usage") or [], now),
