@@ -695,7 +695,7 @@ def frame(width, height, scale):
 
 def paint(layout, width, height, scale):
     """Rasterise a layout. Returns (RGBA image incl. shadow margin, hits in logical px incl. margin)."""
-    M, big = MARGIN, scale * SS
+    M = MARGIN
     full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
     mask, shadow = frame(width, height, scale)
     # Exactly SS times the panel, so every device pixel is the mean of its own SS x SS block
