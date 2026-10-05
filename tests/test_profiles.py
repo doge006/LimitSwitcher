@@ -139,6 +139,7 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(answer["action"], "continue")
         self.assertEqual(Claude(config_dir=directory, keychain=False).read_live().email, "c@example.com")
         self.assertEqual(self.main_login(), "a@example.com")
+        self.assertEqual(self.m.profile_account(None, "win-1"), self.account("c@example.com").id)  # the mod follows the switch
 
     def test_the_wrapper_gets_a_free_account_when_the_setting_is_on(self):
         self.assertIsNone(self.m.allocate_window(os.getpid(), "/work/app"))  # setting off

@@ -199,7 +199,7 @@ class LiveAccounts:
         # Per-window accounts (profiles.py): Claude config folders that keep their own account.
         self.profile_dirs = {}        # folder (normalized) -> account id its login belongs to
         self.profile_signatures = {}  # folder -> its login's signature, as for the official files
-        self.profile_sessions = {}    # Claude session -> account id, for sessions in a profile window
+        self.profile_sessions = {}    # Claude session -> its profile folder (normalized), for reports that can't say
         self.profile_paths = {}       # folder (normalized) -> (window id, folder)
         self.window_reports = {}      # folder (normalized) -> {"model", "session", "at"} from its status line
 
@@ -318,8 +318,8 @@ class LiveAccounts:
     def profile_account(self, config_dir, session=None):
         """The account of the window a hook or status line runs in (it sends its CLAUDE_CONFIG_DIR),
         else None. Sessions are remembered, for reports that can't say (the mod)."""
-        if not config_dir:
-            return self.profile_sessions.get(session) if session else None
+        if not config_dir:  # the window it was in, and that window's account now (it may have been switched)
+            return self.profile_dirs.get(self.profile_sessions.get(session)) if session else None
         try:
             key = profiles.key(config_dir)
         except (OSError, ValueError):
@@ -329,7 +329,7 @@ class LiveAccounts:
         account_id = self.profile_dirs.get(key)
         if account_id and session:
             with self.lock:
-                self.profile_sessions[session] = account_id
+                self.profile_sessions[session] = key
                 if len(self.profile_sessions) > 200:
                     self.profile_sessions.pop(next(iter(self.profile_sessions)))
         return account_id
