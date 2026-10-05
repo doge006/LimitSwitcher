@@ -177,7 +177,7 @@ def part_panel():
 
 def part_fullview():
     """The full view through a fixed script: cards rising in, hovers, the Settings and Add menus,
-    toasts, scrolling. Every frame the animation asks for is drawn, as the host would."""
+    toasts (scrolling is part_scroll). Every frame the animation asks for is drawn, as the host would."""
     from unittest import mock
     import random
     from account_switcher import fullview
@@ -223,12 +223,6 @@ def part_fullview():
                     step(15, "menu")
                     view.toast("Swapped to another account", "ok")
                     step(30, "toast")
-                    for _ in range(6):
-                        view.wheel(40)
-                        step(2, "scroll")
-                    for _ in range(6):
-                        view.wheel(-40)
-                        step(2, "scroll")
                 results[str(scale)] = {name: summary(values) for name, values in times.items()}
         finally:
             controller.close()
@@ -388,7 +382,7 @@ def rows(data):
     for scale in SCALES:
         s = str(scale)
         for key, label in (("first", "first frame"), ("rise", "cards rising frame"), ("hover", "hover frame"),
-                           ("menu", "menu open/close frame"), ("toast", "toast frame"), ("scroll", "scroll frame")):
+                           ("menu", "menu open/close frame"), ("toast", "toast frame")):
             stats = ("median",) if key == "first" else ("median", "p95")
             for stat in stats:
                 out.append(("Full view", f"{label} @{int(scale * 100)}% ({stat})", data["fullview"][s][key][stat], "ms"))
