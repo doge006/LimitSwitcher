@@ -8,7 +8,8 @@ every animation frame the panel and the full view draw, memory, and the app's CP
 same way, alternating between the two so a busy or warming machine affects both alike.
 
 Frames are drawn exactly as Windows draws them (Pillow), through fixed scripts of states and
-in-between animation values, at 100%, 150% and 200% display scaling. A frame has 16.7 ms at 60 fps.
+in-between animation values, at 100%, 150% and 200% display scaling; scrolling is measured on its
+own, a process per scale, so its peak memory is its own. A frame has 16.7 ms at 60 fps.
 Each part runs in its own Python process, a few times; the typical (median) run is reported.
 What needs a real desktop (the window manager showing the pixels, Windows' timer resolution)
 is not measured here: scripts/measure.py and LIMITSWITCH_PROFILE cover the running app.
@@ -235,6 +236,52 @@ def part_fullview():
     return results
 
 
+def part_scroll(scale):
+    """Scrolling the full view at one scale, in a process of its own (so its peak memory is the
+    scroll's): a page of 16 cards, wheel notches down and back up, every frame the host would draw.
+    Only frames where the page moved count as scroll frames."""
+    from unittest import mock
+    from account_switcher import fullview
+    from account_switcher.web import Controller
+    scale = float(scale)
+    clock = [1000.0]
+    times, moves, notches = [], 0, 0
+    with mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]), \
+            mock.patch.object(fullview.time, "monotonic", lambda: clock[0]), \
+            mock.patch("time.time", lambda: 1_790_000_000.0):
+        controller = Controller()
+        try:
+            state = controller.snapshot()
+            state["accounts"] = [dict(a, id=f"{a['id']}-{n}") for n in range(4) for a in state["accounts"]]
+            view = fullview.FullView(controller, Host(), state)
+            view.resize(1100, 800, scale)
+            view.mouse_move(550, 400)  # the pointer rests over the page, as it does while scrolling
+
+            drawn = [view.scroll]  # where the last frame showed the page
+
+            def notch(pixels, timed):
+                nonlocal moves, notches
+                view.wheel(pixels)
+                notches += timed
+                for _ in range(30):  # half a second: the glide, and anything it set off
+                    clock[0] += 1 / 60
+                    start = real()
+                    view.frame()
+                    took = real() - start
+                    if timed and view.scroll != drawn[0]:
+                        times.append(took)
+                        moves += 1
+                    drawn[0] = view.scroll
+            for timed in (False, True):  # the first pass draws every card once, as anyone's first scroll does
+                for _ in range(12):
+                    notch(64, timed)
+                for _ in range(12):
+                    notch(-64, timed)
+        finally:
+            controller.close()
+    return {**summary(times), "per_notch": moves / max(1, notches), "peak_rss_mb": peak_rss_mb()}
+
+
 def real():
     return REAL_PERF()
 
@@ -283,7 +330,7 @@ def part_idle(seconds):
     tray.main(["--demo", "--quiet"])
 
 
-PARTS = {"startup": part_startup, "panel": part_panel, "fullview": part_fullview}
+PARTS = {"startup": part_startup, "panel": part_panel, "fullview": part_fullview, "scroll": part_scroll}
 
 
 # ---------- the report ----------
@@ -292,11 +339,12 @@ def measure(roots, runs, idle_seconds):
     data = {root: {"python": sys.version.split()[0], "cpu": cpu_name(), "platform": sys.platform} for root in roots}
     collected = {root: {} for root in roots}
     plan = [("startup", ())] * (runs * 3) + [("panel", ()), ("fullview", ())] * runs
+    plan += [("scroll:" + str(scale), (str(scale),)) for scale in SCALES] * runs
     if idle_seconds:
         plan += [("idle", (str(idle_seconds),))] * max(1, runs // 2)
     for part, args in plan:
         for root in roots:
-            collected[root].setdefault(part, []).append(run_part(root, part, *args))
+            collected[root].setdefault(part, []).append(run_part(root, part.split(":")[0], *args))
     for root in roots:
         for part, rounds in collected[root].items():
             data[root][part] = median_of(rounds)
@@ -345,6 +393,13 @@ def rows(data):
             for stat in stats:
                 out.append(("Full view", f"{label} @{int(scale * 100)}% ({stat})", data["fullview"][s][key][stat], "ms"))
     out.append(("Full view", "peak memory (drawing process)", data["fullview"]["peak_rss_mb"], "MB"))
+    for scale in SCALES:
+        part, at = data.get(f"scroll:{scale}"), f"@{int(scale * 100)}%"
+        if part:
+            out += [("Scrolling", f"frame {at} (median)", part["median"], "ms"),
+                    ("Scrolling", f"frame {at} (p95)", part["p95"], "ms"),
+                    ("Scrolling", f"frames per wheel notch {at}", part["per_notch"], ""),
+                    ("Scrolling", f"peak memory {at} (drawing process)", part["peak_rss_mb"], "MB")]
     if "idle" in data:
         idle = data["idle"]
         out += [("Idle", "CPU (share of one core)", idle["cpu_percent"], "%"),
@@ -393,7 +448,7 @@ def main():
         part_idle(float(args.args[0]))
         return
     if args.part:
-        print(json.dumps(PARTS[args.part]()))
+        print(json.dumps(PARTS[args.part](*args.args)))
         return
     roots = [os.path.abspath(args.against), ROOT] if args.against else [ROOT]
     measured = measure(roots, args.runs, args.idle)

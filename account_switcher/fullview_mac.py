@@ -114,9 +114,10 @@ class FullViewCanvas(NSView):
         if self.view is None:
             return
         dy = float(event.scrollingDeltaY())
-        if not event.hasPreciseScrollingDeltas():
-            dy *= vr.SCROLL_STEP / 3  # a mouse wheel: lines
-        self.view.wheel(-dy)
+        precise = bool(event.hasPreciseScrollingDeltas())  # a trackpad: already smooth, follow it as it is
+        if not precise:
+            dy *= vr.SCROLL_STEP / 3  # a mouse wheel: lines, glided
+        self.view.wheel(-dy, glide=not precise)
 
     def keyDown_(self, event):
         if self.view is None:

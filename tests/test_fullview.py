@@ -216,10 +216,58 @@ class FullViewTests(unittest.TestCase):
         many = state(accounts=[account(i, "claude") for i in range(12)])
         self.view.set_state(many)
         self.view.wheel(10_000)
+        self.view.motion.settle()
+        self.view.frame()
         self.assertEqual(self.view.scroll, self.view.max_scroll())
         self.assertGreater(self.view.scroll, 0)
         self.view.wheel(-10_000)
+        self.view.motion.settle()
+        self.view.frame()
         self.assertEqual(self.view.scroll, 0)
+
+    def test_a_wheel_notch_glides_and_a_trackpad_moves_at_once(self):
+        self.view.set_state(state(accounts=[account(i, "claude") for i in range(12)]))
+        self.view.motion.settle()
+        clock = [time.perf_counter()]
+        with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]):
+            self.view.wheel(vr.SCROLL_STEP)
+            self.view.wheel(vr.SCROLL_STEP)  # a second notch before the first got there: goes on from there
+            self.assertEqual(self.view.scroll, 0)  # nothing moves before the next frame
+            seen = []
+            for _ in range(40):  # cards scrolling into view for the first time rise in too
+                clock[0] += 1 / 60
+                self.view.frame()
+                seen.append(self.view.scroll)
+                self.assertEqual(round(self.view.scroll * self.view.scale, 6) % 1, 0)  # on a device pixel
+        self.assertEqual(seen, sorted(seen))
+        self.assertGreater(len(set(seen)), 5)  # many small steps, not one jump
+        self.assertEqual(seen[-1], 2 * vr.SCROLL_STEP)
+        self.assertNotIn("anim", self.host.timers)  # and then it rests
+        self.view.wheel(-30, glide=False)
+        self.view.frame()
+        self.assertEqual(self.view.scroll, 2 * vr.SCROLL_STEP - 30)
+
+    def test_the_page_getting_shorter_brings_the_scroll_back(self):
+        self.view.set_state(state(accounts=[account(i, "claude") for i in range(12)]))
+        self.view.wheel(10_000, glide=False)
+        self.view.frame()
+        self.view.set_state(state())
+        self.view.frame()
+        self.assertEqual(self.view.scroll, self.view.max_scroll())
+        self.assertEqual(self.view.scroll_to, self.view.max_scroll())
+
+    def test_moving_rows_in_place_matches_a_copy(self):
+        from PIL import Image
+        image = Image.effect_noise((37, 300), 60).convert("RGB")
+        for shift in (1, 5, 95, 96, 97, 200, 299, -1, -5, -96, -97, -200, -299):
+            moved = image.copy()
+            fullview.shift_rows(moved, shift)
+            expect = image.copy()
+            if shift > 0:
+                expect.paste(image.crop((0, shift, 37, 300)), (0, 0))
+            else:
+                expect.paste(image.crop((0, 0, 37, 300 + shift)), (0, -shift))
+            self.assertEqual(moved.tobytes(), expect.tobytes(), shift)
 
     def test_unchanged_cards_are_not_redrawn(self):
         before = {key: tile for key, (_, tile) in self.view.tiles.items()}
@@ -372,9 +420,9 @@ class IncrementalDrawingTests(unittest.TestCase):
                     view.incremental = incremental
                     views.append(view)
 
-                def step(n):
+                def step(n, seconds=0.04):
                     for _ in range(n):
-                        clock[0] += 0.04
+                        clock[0] += seconds
                         state = controller.snapshot()
                         frames = []
                         for view in views:
@@ -402,6 +450,14 @@ class IncrementalDrawingTests(unittest.TestCase):
                     view.wheel(100)
                 step(8)
                 self.assertIsNotNone(views[0].last_page)
+                page = views[0].last_page[2]
+                for notches in (3, -1, 2, -4):  # scrolling: the page is moved, not drawn again
+                    for view in views:
+                        view.wheel(notches * vr.SCROLL_STEP)
+                        view.mouse_move(450, 300)  # hovering whatever passes under the pointer
+                    step(7, 0.012)
+                self.assertGreater(views[0].max_scroll(), 0)
+                self.assertIs(views[0].last_page[2], page)
         finally:
             controller.close()
 

@@ -45,14 +45,14 @@ Real-account tests use fake login files and a fake provider API. Tray tests use 
 
 Measure the tray alone, with the panel open, and with the full view open, a few times each, and quote the typical number with the machine it ran on.
 
-`scripts/bench.py` measures what needs no desktop: start-up, the time each animation frame of the panel and the full view takes to draw (at 100%, 150% and 200%), memory, and idle CPU. `--against <folder>` measures another copy the same way, taking turns, and prints both side by side (a `git worktree` of the commit before a change):
+`scripts/bench.py` measures what needs no desktop: start-up, the time each animation frame of the panel and the full view takes to draw (at 100%, 150% and 200%), scrolling the full view (frames per wheel notch, time per frame, peak memory), memory, and idle CPU. `--against <folder>` measures another copy the same way, taking turns, and prints both side by side (a `git worktree` of the commit before a change):
 
 ```sh
 git worktree add ../before main
 python scripts/bench.py --against ../before
 ```
 
-On a real Windows desktop, the **Windows app** workflow with **job** `frames` counts the frames per second the panel and the full view get while they animate, for this commit and for **base** (default `main`), and puts both in the run's summary.
+On a real Windows desktop, the **Windows app** workflow with **job** `frames` counts the frames per second the panel and the full view get while they animate and scroll, and the app's memory after scrolling, for this commit and for **base** (default `main`), and puts both in the run's summary.
 
 On macOS, `scripts/mac_memory.py` shows where the menu bar app's memory goes, step by step (Python, PyObjC, the app's code), running with the installed app's own Python in demo mode; `scripts/compare_native.py` draws the full view natively off screen at Retina size and reports its memory, time per frame and how close it is to the Windows drawing:
 

@@ -306,7 +306,8 @@ class FullViewWindow:
                 x1, y1 = min(self.frame.width, area.right), min(self.frame.height, area.bottom)
                 if x1 > x0 and y1 > y0:
                     width, height = x1 - x0, y1 - y0
-                    data = self.frame.crop((x0, y0, x1, y1)).tobytes("raw", "BGRX")
+                    whole = (x0, y0, x1, y1) == (0, 0) + self.frame.size  # each frame of a scroll: no extra copy
+                    data = (self.frame if whole else self.frame.crop((x0, y0, x1, y1))).tobytes("raw", "BGRX")
                     header = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), width, -height, 1, 32, 0, 0, 0, 0, 0, 0)
                     gdi32.SetDIBitsToDevice(hdc, x0, y0, width, height, 0, 0, 0, height, data, ctypes.byref(header), 0)
         finally:
@@ -356,7 +357,8 @@ class FullViewWindow:
             return 0
         if msg == WM_MOUSEWHEEL:
             delta = ctypes.c_short((wparam >> 16) & 0xFFFF).value
-            view.wheel(-delta / 120 * vr.SCROLL_STEP)
+            # Whole notches (120) glide; a touchpad's small steps are already smooth, so they don't.
+            view.wheel(-delta / 120 * vr.SCROLL_STEP, glide=delta % 120 == 0)
             return 0
         if msg == WM_KEYDOWN:
             name = KEYS.get(wparam)
