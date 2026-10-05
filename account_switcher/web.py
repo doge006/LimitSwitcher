@@ -520,10 +520,22 @@ class Controller:
             return None
         return self.gateway.manager.compaction_request(str(body.get("session") or "")[:100])
 
+    def compacted_context(self, body):
+        """For a session's status line: its context after a Jev compaction, if it had one."""
+        if not self.live or body.get("source") == "mod":
+            return None
+        return self.gateway.manager.compacted_context(str(body.get("session") or "")[:100] or None)
+
     def compaction_done(self, body):
         """A session's mod finished (or gave up on) the compaction it was asked for."""
         if not self.live:
             return False
+        if body.get("outcome") == "running":  # one the session started itself (/jevcompact)
+            started = self.gateway.manager.compaction_started(str(body.get("session") or "")[:100] or None,
+                                                              str(body.get("id") or "")[:40])
+            if started:
+                self.notify("changed", None)
+            return started
         saved = body.get("saved") if type(body.get("saved")) is int else None
         done = self.gateway.manager.compaction_done(str(body.get("session") or "")[:100], str(body.get("id") or ""),
                                                     str(body.get("outcome") or ""), saved, body.get("reason"))
@@ -636,11 +648,12 @@ def make_server(controller, port=0):
                     line = controller.statusline(body)
                     self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
                                        "rate_limits": controller.statusline_limits(),
-                                       "compact": controller.compaction_request(body)})
+                                       "compact": controller.compaction_request(body),
+                                       "compacted": controller.compacted_context(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return
-            if self.path == "/api/compaction":  # the mod: a Jev compaction it was asked for is done
+            if self.path == "/api/compaction":  # the mod: a Jev compaction started by hand, or one it ran is done
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
                     self.respond(403, {"error": "Forbidden"})

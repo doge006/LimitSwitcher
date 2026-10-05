@@ -143,7 +143,7 @@ The memory is the app's footprint, the same number as Activity Monitor's Memory 
   - Both are checked at most once a day. When nothing is reported, click **Set renewal date** on the card; a date you enter always wins.
   - The names of the fields these endpoints return (never their values) are kept in `subscription-fields.json`, to help match the detection to real responses.
 - **Usage limit resets:** banked resets are shown for Codex, which reports them. Claude's usage response doesn't include its free resets (they appear only in Claude's settings), so none are shown for Claude.
-- **Auto swap:** each account is used to 100%; then the app moves to the account with the most room, and the thread carries on with everything it had.
+- **Auto swap:** each account is used to 100%; then the app moves to the account whose weekly limit resets first (so that quota is used before it's lost; one with under 5% left only when nothing has more), and the thread carries on with everything it had.
   - *Codex:* the request that hit the limit is sent again on the next account, so the session never sees the error. If ChatGPT's response headers already showed the account used up, a new turn simply starts on the next account.
   - *Claude:* Claude Code shows its limit message. The hook below switches accounts right away, so your next message uses the new account; with Auto resume on, it also continues by itself.
   - *Claude threads:* nothing in them is tied to an account, so they carry over whole.
@@ -184,7 +184,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 
 In the full view, the gear opens Settings:
 
-- **Auto swap:** move to the account with the most room when a limit hits.
+- **Auto swap:** move to the account whose weekly limit resets first when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
 - **Jev compaction** (under the Claude Code Status mod, off by default): before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
@@ -208,7 +208,7 @@ Swapping a long session to another account costs a cold start: the new account h
 
 1. The session hits its limit; the account is swapped at once.
 2. The session's mod runs the compaction (every shortened output keeps a note listing the names, paths and values it held). [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole; a file view or search (cheap to read again) needs a higher score to stay whole than a test run or a web page. A file read again later is replaced by a note without asking, and long old scripts and file contents Claude wrote are shortened (what they did is on disk).
-3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev compacting…`.
+3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev Compacting…` (also for `/jevcompact`).
 
 What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
 
@@ -234,7 +234,7 @@ Any compaction also drops the old system notices Claude Code repeats through a s
 LimitSwitcher shows itself in Claude Code's status line (the line under the prompt) once the Claude Code Status mod is installed (Settings → **Claude Code Status mod**).
 
 - **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
-- **With the mod installed, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k/82% left`: tokens in use and what's left of Claude Code's context window; the numbers go green, yellow and red as it fills). While Jev compacts the icon is yellow and says so; for 45 seconds after, the line says what it saved (`Jev compacted ~120k tokens saved`). With your own status line, the context is already in the input Claude Code gives it.
+- **With the mod installed, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k/82% left`: tokens in use and what's left of Claude Code's context window; the numbers go green, yellow and red as it fills). While Jev compacts the icon is yellow and says so; for 45 seconds after, the line says what it saved (`Jev Compacted (saved ~120k tokens)`), and ctx shows the size less what Jev saved until the next reply. With your own status line, the context is already in the input Claude Code gives it.
 - **With your own status line:** LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. With the mod installed, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
 - **Without the mod, and without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 5 seconds (unless you set your own `refreshInterval`; a run is a small process start of about 15 ms, well under 1% of a core per open session), so a compaction shows up within a few seconds. It gives your own status line command its freshest numbers for the account.

@@ -87,18 +87,20 @@ def report(state, data, cache=None):
                            "effort": effort.get("level")}).encode()
         status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)
         if status >= 400:
-            return None, None  # the app refused (a token from before it restarted): nothing, not an old line
+            return None, None, None  # the app refused (a token from before it restarted): nothing, not an old line
         answer = loads(payload)
         if not isinstance(answer, dict):
-            return None, None
+            return None, None, None
         limits = answer.get("rate_limits")
         line = answer.get("line")
         parts = answer.get("parts") if isinstance(answer.get("parts"), list) else None
         shown = (paint(parts) if parts else line) if line else None
         remember(cache, shown)
-        return shown, limits if isinstance(limits, dict) else None
+        compacted = answer.get("compacted")
+        compacted = compacted if isinstance(compacted, dict) and _number(compacted.get("saved")) and _number(compacted.get("at")) else None
+        return shown, limits if isinstance(limits, dict) else None, compacted
     except (OSError, ValueError, KeyError, TypeError, IndexError):
-        return recall(cache), None  # the app is busy or gone: the last line for a moment, not a blank one
+        return recall(cache), None, None  # the app is busy or gone: the last line for a moment, not a blank one
 
 
 def connect(name, port, timeout):
@@ -192,6 +194,19 @@ def context_part(data):
     None until Claude Code reports it (before the first reply). The count and the percentage come
     from the same figure (the current context, from current_usage) so they move together; the
     percentage Claude Code reports separately is only the fallback (it can trail the count)."""
+    figures = context_figures(data)
+    return context_text(*figures[:2]) if figures else None
+
+
+def context_text(used, left):
+    text = "ctx " + tokens_text(int(used))
+    if left is not None:
+        text += f"/{max(0, min(100, int(left)))}% left"
+    return text
+
+
+def context_figures(data):
+    """(tokens used, percent left or None, window size or None) from Claude Code's figures, or None."""
     window = data.get("context_window")
     if not isinstance(window, dict):
         return None
@@ -211,17 +226,17 @@ def context_part(data):
         left = window["remaining_percentage"]
     elif _number(size) and size > 0:
         left = 100 - used * 100 / size
-    text = "ctx " + tokens_text(int(used))
-    if left is not None:
-        text += f"/{max(0, min(100, int(left)))}% left"
-    return text
+    return used, left, size if _number(size) and size > 0 else None
 
 
 def context_painted(data):
     """The same, coloured by how much is left: "ctx 183k/82% left" with the count and the
     percentage in that colour, "ctx" blue and the rest grey (the count alone when the percentage
     is unknown)."""
-    text = context_part(data)
+    return paint_context(context_part(data))
+
+
+def paint_context(text):
     if text is None:
         return None
     count, _, left = text.partition("/")
@@ -231,6 +246,41 @@ def context_painted(data):
     color = left_color(int(left.split("%")[0]))
     return paint([{"t": label + " ", "c": "label"}, {"t": number, "c": color}, {"t": "/", "c": "dim"}, {"t": left.split(" ")[0], "c": color},
                   {"t": " left", "c": "dim"}])
+
+
+def session_context(path, data, compacted):
+    """The ctx text for this run. Claude Code's own figures while it has new ones; its last ones
+    while it sends none (a usage limit, a compaction: until the next reply), however long that is;
+    and once a Jev compaction shrank the session, that size less what Jev saved, until a reply
+    brings a newer figure. The session's file keeps the text, its figure, and since when that figure stands."""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            saved = loads(handle.read()) if path else None
+        saved = saved if isinstance(saved, dict) and isinstance(saved.get("text"), str) else None
+    except (OSError, ValueError, TypeError):
+        saved = None
+    figures = context_figures(data)
+    if figures:
+        used, left, size = figures
+        text = context_text(used, left)
+        since = saved["since"] if saved and saved.get("used") == used and _number(saved.get("since")) else time.time()
+        if path and (not saved or saved.get("text") != text or saved.get("since") != since):
+            try:
+                with open(path, "w", encoding="utf-8") as handle:
+                    handle.write(dumps({"text": text, "used": used, "size": size or saved and saved.get("size"), "since": since}))
+            except OSError:
+                pass
+    elif saved:
+        text, size, since = saved["text"], saved.get("size"), saved.get("since")
+    else:
+        text, size, since = None, None, None
+    used = figures[0] if figures else (saved or {}).get("used")
+    if compacted and _number(used) and _number(since) and compacted["at"] > since:
+        # Claude Code still reports the size from before the compaction: less what Jev saved
+        tokens = max(0, used - compacted["saved"])
+        size = size or (saved or {}).get("size")
+        return context_text(tokens, 100 - tokens * 100 / size if _number(size) and size > 0 else None)
+    return text
 
 
 def run_previous(command, raw):
@@ -262,7 +312,7 @@ def main(argv):
     except (OSError, ValueError, IndexError):
         state = {}
     cache = os.path.join(os.path.dirname(argv[1]), "statusline-cache.json") if len(argv) > 1 else None
-    line, limits = report(state, data if isinstance(data, dict) else {}, cache) if state.get("url") else (None, None)
+    line, limits, compacted = report(state, data if isinstance(data, dict) else {}, cache) if state.get("url") else (None, None, None)
     previous = state.get("statusline")
     if previous:
         if limits and isinstance(data, dict):
@@ -275,15 +325,11 @@ def main(argv):
         output = run_previous(previous, raw)
         write(with_marker(output) if line else output)  # the marker only while the app answers
     else:
-        extra = context_painted(data) if isinstance(data, dict) else None
-        ctx_cache = None
-        if cache and isinstance(data, dict):
+        extra = None
+        if isinstance(data, dict):
             session = "".join(c for c in str(data.get("session_id") or "")[:60] if c.isalnum() or c in "-_")
-            ctx_cache = os.path.join(os.path.dirname(cache), f"statusline-ctx-{session}.json") if session else None
-        if extra:
-            remember(ctx_cache, extra)
-        else:
-            extra = recall(ctx_cache)  # a run without the figures: the last ones, not a gap
+            ctx_cache = os.path.join(os.path.dirname(cache), f"statusline-ctx-{session}.json") if cache and session else None
+            extra = paint_context(session_context(ctx_cache, data, compacted))
         if line or extra:
             pieces = [line] if line else []
             if extra:

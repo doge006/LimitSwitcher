@@ -86,6 +86,9 @@ class FlyoutRenderTests(unittest.TestCase):
         texts = [t[2] for t in fr.build(state)[0].texts]
         self.assertIn("Renews 12d", texts)
         self.assertIn("Ends 3d", texts)
+        self.assertEqual(fr.subscription_text(state["accounts"][1])[1], fr.WARN)  # ends within a week: yellow
+        state["accounts"][1]["subscription"] = {"at": fr.time.time() + 20.5 * 86400, "ends": True}
+        self.assertEqual(fr.subscription_text(state["accounts"][1]), ("Ends 20d", fr.MUTED))  # weeks away: not yet
 
     def test_animation_values_change_the_frame(self):
         rest, _ = fr.render(self.state)

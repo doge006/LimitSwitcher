@@ -83,11 +83,28 @@ def context_tokens(path):
 
 
 def stamp(path):
-    """When the session's transcript last changed, or None when it can't be told."""
+    """The session's last real message (a prompt, a reply, a tool result), or None when it can't
+    be told. Only these say the session went on: Claude Code also appends notices to the transcript
+    while the hook waits (the account switch, a compaction's log line, its own wait being
+    cancelled), and taking those for the session going on swallowed the continue."""
     try:
-        return os.stat(path).st_mtime_ns
+        with open(path, "rb") as handle:
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - TAIL))
+            lines = handle.read().decode("utf-8", "replace").splitlines()
     except (OSError, TypeError, ValueError):
         return None
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant"):
+            continue  # notices, summaries, snapshots, titles
+        if entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isApiErrorMessage"):
+            continue  # not the conversation going on (the limit's own error reply is one)
+        return entry.get("uuid") or line
+    return None
 
 
 def main(argv):
@@ -122,7 +139,7 @@ def main(argv):
         action = answer.get("action") if isinstance(answer, dict) else None
         if action == "continue":
             if started is not None and stamp(transcript) != started:
-                return 0  # the session went on by itself while waiting (Claude Code's own wait, or you): no second wake
+                return 0  # a new message since the wait began: the session went on by itself (Claude Code's own wait, or you), no second wake
             sys.stderr.write(str(answer.get("message") or NOTE))
             return 2
         if action == "wait":

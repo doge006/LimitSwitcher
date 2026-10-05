@@ -107,9 +107,10 @@ def codex_login(home, account_id, email, access, refresh, plan="pro"):
     (home / ".codex" / "auth.json").write_text(json.dumps(auth))
 
 
-def claude_usage(five, week, fable=None, reset_in=3600):
+def claude_usage(five, week, fable=None, reset_in=3600, week_in=None):
     reset = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + reset_in))
-    body = {"five_hour": {"utilization": five, "resets_at": reset}, "seven_day": {"utilization": week, "resets_at": reset}}
+    weekly = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + week_in)) if week_in else reset
+    body = {"five_hour": {"utilization": five, "resets_at": reset}, "seven_day": {"utilization": week, "resets_at": weekly}}
     if fable is not None:
         body["limits"] = [{"kind": "weekly_scoped", "percent": fable, "resets_at": reset,
                            "scope": {"model": {"display_name": "Fable 5"}}}]
@@ -273,6 +274,21 @@ class LiveTests(unittest.TestCase):
         self.api.claude_usage["at-c"] = claude_usage(100, 5)
         m.refresh(force=True)
         self.assertEqual(m.auto_swap(), [])
+
+    def test_auto_swap_uses_the_weekly_that_resets_first(self):
+        """Weekly quota that resets sooner is lost sooner: use it first, even with less room left,
+        but not an account that has next to nothing left."""
+        m = self.manager()
+        m.sync_live()
+        for uuid, email, access, week, days in (("uuid-b", "b@example.com", "at-b", 10, 6), ("uuid-c", "c@example.com", "at-c", 57, 4.8),
+                                                ("uuid-d", "d@example.com", "at-d", 98, 1)):
+            claude_login(self.home, uuid, email, access, "rt-" + uuid, expires_in=36000)
+            self.api.claude_usage[access] = claude_usage(0, week, week_in=days * 86400)
+            m.sync_live()
+        m.swap(self.by_email(m, "a@example.com").id)
+        self.api.claude_usage["at-a"] = claude_usage(100, 30)
+        m.refresh(force=True)
+        self.assertEqual(m.auto_swap(), [self.by_email(m, "c@example.com").id])  # not b (more room, later) nor d (2% left)
 
     def test_codex_limit_reached_and_remove(self):
         m = self.manager()

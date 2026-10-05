@@ -10,11 +10,14 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[] } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
-  on('fs.read', () => ({ value: JSON.stringify({ url: 'http://127.0.0.1:9/api/afk', token: 'tok' }) }))
+  on('fs.read', () => {
+    if (options.noApp) throw new Error('ENOENT') // LimitSwitcher is not running
+    return { value: JSON.stringify({ url: 'http://127.0.0.1:9/api/afk', token: 'tok' }) }
+  })
   on('session.id', () => ({ value: 'session-1' }))
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
@@ -68,8 +71,7 @@ describe('limit-status', () => {
     expect(w.compactions).toEqual([MARKER])
     const done = w.posts.find((p) => p.path === '/api/compaction')!
     expect(done.body).toEqual({ session: 'session-1', id: 'job-1', outcome: 'done', saved: 20_000 })
-    expect(w.statuses[0]).toContain('Jev compacting')
-    expect(w.statuses.some((s) => s?.includes('~20k tokens less'))).toBe(true)
+    expect(w.statuses).toEqual([]) // shown in LimitSwitcher's own line, not a band of the mod's
   })
 
   test('Jev failing: waits 30 s and tries again, three tries in all, then gives up', { options: { statePath: STATE } }, async ($, on) => {
@@ -122,22 +124,37 @@ describe('limit-status', () => {
     expect(w.compactions).toHaveLength(1)
   })
 
-  test('/jevcompact runs the compaction by hand and says what it saved', { options: { statePath: STATE } }, async ($, on) => {
+  test('/jevcompact runs the compaction by hand and LimitSwitcher\'s line shows it', { options: { statePath: STATE } }, async ($, on) => {
     const w = world(on, { outcomes: [{ saved: 30_000 }, { skip: 'no OpenRouter key (OPENROUTER_API_KEY)' }] })
     const registered: string[] = []
+    const toasts: string[] = []
     on('session.start', ($, e) => ({ cwd: e.cwd }))
-    on('ui.toast', () => ({ value: undefined }))
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
     on('command.register', ($, e) => { registered.push(e.name); return { value: { command: e.name } } })
     await $.session.start({ cwd: '/' })
     expect(registered).toContain('jevcompact')
+    w.posts.length = 0
     const started = await $.command.run({ command: 'jevcompact' })
     expect(started.text).toBe('Jev compacting…')
     await (w as any).clock.settle()
-    expect(w.statuses.at(-1)).toBe('⇄ LimitSwitcher · Jev compacted: ~30k tokens less to load')
+    const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
+    expect(told[0]).toMatchObject({ session: 'session-1', outcome: 'running' })  // before it starts: the line says "Jev Compacting…"
+    expect(told[1]).toMatchObject({ session: 'session-1', id: told[0].id, outcome: 'done', saved: 30_000 })
+    expect(toasts).toEqual([])                                                   // the line says what it saved
+    expect(w.statuses).toEqual([])
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
-    expect(w.statuses.at(-1)).toBe('⇄ LimitSwitcher · No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)')
+    expect(toasts).toEqual(['No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)'])
     expect(w.compactions).toEqual([MARKER, MARKER])
+  })
+
+  test('/jevcompact without LimitSwitcher running says how it went in a toast', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { outcomes: [{ saved: 30_000 }], noApp: true })
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    await $.command.run({ command: 'jevcompact' })
+    await (w as any).clock.settle()
+    expect(toasts).toEqual(['Jev compacted: ~30k tokens less to load'])
   })
 
   test('without LimitSwitcher running, nothing happens', { options: { statePath: STATE } }, async ($, on) => {

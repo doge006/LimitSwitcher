@@ -75,7 +75,8 @@ export const register: Register = (on, options) => {
         const ratio = reductionRatio(result)
         const summary = summarize(result)
         if (ratio >= MIN_REDUCTION) {
-          await $.ui.log(`pruned before the swap, nothing summarised: ${summary}`)
+          // LimitSwitcher's line in the status bar says what it saved; the details are for debugging
+          await $.ui.log(`Jev compaction: pruned, nothing summarised: ${summary}`, { to: 'debug' })
           return {
             messages: result.messages as SessionMessage[],
             tokensBefore: result.stats.tokensBefore,

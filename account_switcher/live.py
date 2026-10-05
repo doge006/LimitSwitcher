@@ -82,6 +82,7 @@ STATUS_SYNC = 3.0        # seconds between a status line's look at the login fil
 JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
+MIN_ROOM = 5            # percent: an account with less left than this is only moved to when none has more
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
 
@@ -583,7 +584,7 @@ class LiveAccounts:
 
     def limit_hit(self, account_id, resets_at=None):
         """A routed request found this account out of quota. Mark it, and (with Auto swap)
-        move to the account with the most headroom. Returns the account to retry on, or None."""
+        move to the next account (see _pick). Returns the account to retry on, or None."""
         with self.lock:
             entry = self.meta["accounts"].get(account_id)
             if entry is None:
@@ -762,14 +763,14 @@ class LiveAccounts:
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
         compacting = bool(session) and self.compacting(session)
-        # While Jev compacts the icon turns yellow and "Jev compacting…" follows the app's name.
+        # While Jev compacts the icon turns yellow and "Jev Compacting…" follows the app's name.
         groups = [[("⇄", "warn" if compacting else "good"), (" ", None), ("LimitSwitcher", "dim")]]
         if compacting:
-            groups.append([("Jev compacting…", "warn")])
+            groups.append([("Jev Compacting…", "warn")])
         job = self.compactions.get(session or "")
         if job and job["status"] == "done" and job.get("saved") and now - job.get("finishedAt", 0) < JEV_SHOWN \
                 and round(job["saved"] / 1000) > 0:  # what it saved, for a little while after
-            groups.append([("Jev compacted ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens saved", "dim")])
+            groups.append([("Jev Compacted (saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens)", "dim")])
         groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))
@@ -808,13 +809,29 @@ class LiveAccounts:
                 limits[key] = {"used_percentage": window["used"], "resets_at": window.get("resetsAt")}
         return limits or None
 
+    @staticmethod
+    def _pick(candidates):
+        """The account to move to: of those with real room, the one whose weekly (longest) window
+        resets first, so its quota is used before it is lost; the one with the most headroom when
+        none has real room (or among accounts whose usage is unknown, which come last)."""
+        if not candidates:
+            return None
+        roomy = [a for a in candidates if a.headroom >= MIN_ROOM]
+        if not roomy:
+            return max(candidates, key=lambda a: a.headroom)
+
+        def weekly_reset(account):
+            resets = [w["resetsAt"] for w in account.account_windows() if w["key"] != "five_hour" and w.get("resetsAt")]
+            return min(resets) if resets else float("inf")
+        return min(roomy, key=lambda a: (weekly_reset(a) // 3600, -a.headroom))  # within the same hour: the most room
+
     def _best_other(self, name, current, allow_unknown=False):
-        """The other account with the most headroom. allow_unknown also accepts accounts whose
+        """The other account to move to (see _pick). allow_unknown also accepts accounts whose
         usage has not been read yet (after the known ones): a client just hit a limit, and
         trying one is better than stopping."""
         candidates = [a for a in self.accounts() if a.provider == name and a.id != current
                       and a.eligible and not a.status and (a.headroom > 0 or (allow_unknown and a.headroom < 0))]
-        return max(candidates, key=lambda a: a.headroom) if candidates else None
+        return self._pick(candidates)
 
     def resets_soon(self, account):
         """True when Claude's only used-up limit is the 5-hour one and it resets within
@@ -885,6 +902,28 @@ class LiveAccounts:
             self.notify("log", f"Jev compaction: ~{round(saved / 1000)}k tokens less for the new account to load")
         elif reason:
             self.notify("log", f"Jev compaction {'skipped' if outcome == 'skipped' else 'failed'}: {str(reason)[:200]}")
+        return True
+
+    def compacted_context(self, session):
+        """For the session's status line: what its last Jev compaction saved ({"saved", "at"}). The
+        status line takes it off the context Claude Code last reported, which stays the size from
+        before the compaction until the next reply. None when there was none."""
+        job = self.compactions.get(session or "")
+        if job is None or job["status"] != "done" or not job.get("saved"):
+            return None
+        return {"saved": job["saved"], "at": job.get("finishedAt") or job["at"]}
+
+    def compaction_started(self, session, job_id):
+        """The session's mod started a compaction of its own (`/jevcompact`): shown in its status
+        line like the ones before a swap, but nothing waits for it."""
+        if not session or not job_id:
+            return False
+        with self.lock:
+            job = self.compactions.get(session)
+            if job is not None and job["status"] in ("asked", "running") and time.time() - job["at"] < JEV_WAIT:
+                return False  # one before a swap is under way: that one is shown
+            self.compactions[session] = {"id": job_id, "status": "running", "at": time.time(), "tokens": None,
+                                         "afk": False, "answered": True, "manual": True}
         return True
 
     def compacting(self, session):
@@ -1016,7 +1055,7 @@ class LiveAccounts:
                           and a.eligible and (not a.status or a.status.startswith("Rate limited"))]
             if not candidates:
                 return None
-            best = max(candidates, key=lambda a: a.headroom)
+            best = self._pick(candidates)
             tried.add(best.id)
             entry = self.meta["accounts"].get(best.id) or {}
             if time.time() - entry.get("updatedAt", 0.0) > 300:
@@ -1038,7 +1077,7 @@ class LiveAccounts:
         return bool(spent) and all(w.get("resetsAt") and w["resetsAt"] <= now for w in spent)
 
     def auto_swap(self):
-        """Move off an account that has used up a limit, to the one with the most headroom."""
+        """Move off an account that has used up a limit, to the next one (see _pick)."""
         if not self.meta["autoSwap"]:
             return []
         moved = []
