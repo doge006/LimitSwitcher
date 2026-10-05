@@ -112,11 +112,19 @@ def window():
                  "    time.sleep(0.25)\n"
                  "shown = bool(found) and highlight.window_of(int(sys.argv[2]))\n"
                  "print(found, shown, flush=True)\n"
+                 "if not found:  # what there was to find\n"
+                 "    from account_switcher import processes\n"
+                 "    family, titles = processes.family(), {}\n"
+                 "    highlight.top_windows(titles)\n"
+                 "    hwnd, title = highlight.console_window(int(sys.argv[2]))\n"
+                 "    print('console', hwnd, repr(title), file=sys.stderr)\n"
+                 "    for top, (owner, text) in titles.items():\n"
+                 "        print('window', top, owner, family.get(owner), repr(text), file=sys.stderr)\n"
                  "time.sleep(highlight.SHOW_FOR + 0.5)\n")
         done = subprocess.run([sys.executable, "-c", probe, str(ROOT), str(process.pid)], capture_output=True, text=True,
                               timeout=60, creationflags=subprocess.DETACHED_PROCESS)
         found, _, shown = done.stdout.strip().partition(" ")
-        check(found not in ("", "None"), f"the window of a console process is found (pid {process.pid}, window {found}) {done.stderr.strip()}")
+        check(found not in ("", "None"), f"the window of a console process is found (pid {process.pid}, window {found})\n{done.stderr.strip()}")
         check(shown == "True", "it is pointed out (outline and flash)")
     finally:
         process.kill()
