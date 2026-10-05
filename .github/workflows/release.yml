@@ -118,6 +118,25 @@ jobs:
           name: LimitSwitcher-Setup
           path: build/LimitSwitcher-Setup.exe
           retention-days: 7
+      - name: Test builds only - the installer packed other ways, and the launcher alone, to compare antivirus verdicts
+        if: ${{ !inputs.publish }}
+        run: |
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          $version = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
+          New-Item -ItemType Directory -Force build\av | Out-Null
+          Copy-Item build\LimitSwitcher\LimitSwitcher.exe build\av\LimitSwitcher.exe
+          foreach ($v in @(@('zip', 'no'), @('lzma2/max', 'no'), @('none', 'no'))) {
+            $name = 'Setup-' + ($v[0] -replace '[^a-z0-9]', '') + '-solid' + $v[1]
+            & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path build\LimitSwitcher).Path)" "/O$((Resolve-Path build\av).Path)" "/F$name" "/DCompress=$($v[0])" "/DSolid=$($v[1])" scripts\LimitSwitcher.iss
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $name" }
+          }
+          Get-ChildItem build\av | ForEach-Object { '{0} {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
+      - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.publish }}
+        with:
+          name: av-variants
+          path: build/av
+          retention-days: 3
 
   macos:
     runs-on: macos-15  # Apple silicon (the Mac release is Apple silicon only)
