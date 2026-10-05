@@ -44,7 +44,10 @@ export type ToolCall = {
   /** Index of the user message holding the tool_result; null while in flight. */
   resultIndex: number | null
   resultText: string
+  /** The output's text length, plus its images counted as the characters their tokens would be (images.ts). */
   resultChars: number
+  /** Estimated tokens of the images in the output (a screenshot read from disk): 0 when it has none. */
+  imageTokens: number
   isError: boolean
   /** Never touched: in the first message, among the newest ones, or still in flight. */
   pinned: boolean

@@ -63,7 +63,8 @@ export function goalOf(messages: readonly Message[], explicit?: string, count = 
 
 function resultNote(call: ToolCall): string {
   if (call.resultIndex === null) return 'pending'
-  return `${call.isError ? 'error' : 'ok'}, ${call.resultChars} chars`
+  const size = call.imageTokens > 0 ? `${call.resultText.length} chars and an image (~${call.imageTokens} tokens)` : `${call.resultChars} chars`
+  return `${call.isError ? 'error' : 'ok'}, ${size}`
 }
 
 function callEntry(call: ToolCall, limits: StageLimits): Record<string, unknown> {

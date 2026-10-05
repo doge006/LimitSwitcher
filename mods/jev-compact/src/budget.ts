@@ -29,7 +29,13 @@ export function tighten(calls: readonly ToolCall[], decisions: Decision[], optio
     for (const d of steppable) {
       if (now <= target) break
       const call = byId.get(d.id)!
-      if (d.action === 'keep' && call.resultChars > window + NOTE_CHARS) {
+      if (d.action === 'keep' && call.imageTokens > 0) {
+        if (pass > 0) { // an image has no head and tail: it goes straight to a note, in the second pass
+          now -= Math.max(0, call.resultChars - NOTE_CHARS)
+          d.action = 'stub'
+          steps += 1
+        }
+      } else if (d.action === 'keep' && call.resultChars > window + NOTE_CHARS) {
         now -= call.resultChars - window - NOTE_CHARS
         d.action = 'trim'
         steps += 1

@@ -4,6 +4,7 @@
 // says so, so the model re-runs a tool instead of guessing what was there.
 
 import { factIndex, factsIn } from './facts.ts'
+import { imageTokensOf } from './images.ts'
 import type { Decision, Message, ToolCall, ToolResult, ToolUse } from './types.ts'
 
 export const NOTE_TAG = '[LimitSwitcher'
@@ -27,7 +28,10 @@ function held(names: readonly string[]): string {
 
 export function stubText(call: ToolCall, superseded: boolean, index: readonly string[] = []): string {
   const why = superseded ? 'the same file is read again later in this conversation' : 'it was judged no longer needed'
-  return `${NOTE_TAG} removed this ${call.tool} output (${call.resultChars} chars) before an account swap: ${why}.${superseded ? '' : held(index)} Re-run the tool before relying on its details.]`
+  const what = call.imageTokens > 0
+    ? `this ${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
+    : `this ${call.tool} output (${call.resultChars} chars)`
+  return `${NOTE_TAG} removed ${what} before an account swap: ${why}.${superseded ? '' : held(index)} Re-run the tool before relying on its details.]`
 }
 
 /** The middle of `text` replaced by a note (naming what it held), or `text` when there is nothing to cut. */
@@ -91,10 +95,14 @@ export function editsFor(
  * The transcript with the edits applied. A message nothing touched is the same object (its engine
  * handle included, so the engine keeps it whole); a changed one is rebuilt from its role, text and
  * tool blocks. The set of calls and results, and their order, never changes.
+ *
+ * The engine builds a rebuilt message's tool results from their text alone, so an image kept beside an
+ * output that changed would go with it: a message holding a kept image stays whole instead.
  */
 export function applyEdits(messages: readonly Message[], edits: ReadonlyMap<string, Edit>): Message[] {
   if (edits.size === 0) return [...messages]
   return messages.map((message) => {
+    if (message.toolResults?.some((r) => !edits.get(r.tool_use_id)?.result && imageTokensOf(r.result) > 0)) return message
     let changed = false
     const toolUses: ToolUse[] = message.toolUses.map((use) => {
       const input = edits.get(use.tool_use_id)?.input

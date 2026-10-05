@@ -2,6 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import { NOTE_TAG, shortenInput, trimText } from '../src/apply.ts'
 import { batchCalls, compact, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
+import { imageTokensOf } from '../src/images.ts'
 import { cheapToRedo } from '../src/kinds.ts'
 import { LONG_SESSION_TOKENS } from '../src/budget.ts'
 import { fold, lineKey } from '../src/dedupe.ts'
@@ -350,4 +351,62 @@ describe('budget mode', () => {
     expect(over.stats.tokensBefore).toBeGreaterThan(LONG_SESSION_TOKENS)
     expect(over.stats.budgetSteps).toBeGreaterThan(0)
   })
+})
+
+describe('images', () => {
+  // Read's stored record for a screenshot, as Claude Code hands it to a compaction
+  const shot = (w: number, h: number) => ({ type: 'image', file: { base64: 'iVBORw0KGgo'.repeat(50), type: 'image/png', dimensions: { displayWidth: w, displayHeight: h } } })
+  const seen = (id: string, record: unknown): Message =>
+    ({ role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: id, text: '', isError: false, result: record }], handle: `res-${id}` })
+  const shots = (): Message[] => [
+    user('Make the panel look right', 'h0'),
+    use('s1', 'Read', { file_path: '/shots/before.png' }), seen('s1', shot(1600, 900)),
+    use('s2', 'Read', { file_path: '/shots/after.png' }), seen('s2', shot(1600, 900)),
+    said('Better now.'), user('go on'), said('ok'), user('go on'), said('ok'), user('go on'), said('ok'), user('go on'), said('ok'),
+  ]
+
+  test('sized from their dimensions, at most ~1.15 megapixels; an API block or MCP image counts too', () => {
+    expect(imageTokensOf(shot(1000, 750))).toBe(1000)
+    expect(imageTokensOf(shot(4000, 3000))).toBe(1534) // scaled down by the API
+    expect(imageTokensOf({ content: [{ type: 'text', text: 'x' }, { type: 'image', source: { type: 'base64', data: 'abc' } }] })).toBe(1534)
+    expect(imageTokensOf({ type: 'image', data: 'abc', mimeType: 'image/png' })).toBe(1534)
+    expect(imageTokensOf({ type: 'text', text: 'no image' })).toBe(0)
+    expect(imageTokensOf({ type: 'image', file: { base64: '' } })).toBe(0)
+  })
+
+  test('an old screenshot is asked about and becomes a note when done with; the counts include it', async () => {
+    const jev = fakeJev((name) => (name === 'need_t1' ? 0.1 : 0.9))
+    const result = await compact(shots(), jev)
+    const question = JSON.stringify(jev.asked[0]!.questions)
+    expect(question).toContain('an image (~1534 tokens)')
+    const old = byLabel(result.messages, 's1')
+    expect(old.result).toBeUndefined() // the image goes with the record
+    expect(old.text).toContain('an image, ~1534 tokens')
+    expect(old.text).toContain('Re-run the tool')
+    expect(byLabel(result.messages, 's2').result).toEqual(shot(1600, 900)) // still needed: whole
+    expect(result.stats.stubbed).toBe(1)
+    expect(result.stats.tokensBefore - result.stats.tokensAfter).toBeGreaterThan(1400)
+  })
+
+  test('an image Jev is unsure about stays whole (it has no head and tail to keep)', async () => {
+    const result = await compact(shots(), fakeJev(() => 0.5))
+    expect(byLabel(result.messages, 's1').result).toEqual(shot(1600, 900))
+    expect(result.stats.trimmed).toBe(0)
+  })
+})
+
+test('a kept image beside an output that changed keeps its message whole (the engine rebuilds results from text)', async () => {
+  const shot = { type: 'image', file: { base64: 'iVBORw0KGgo'.repeat(50), dimensions: { displayWidth: 1600, displayHeight: 900 } } }
+  const both: Message = { role: 'user', text: '', toolUses: [], handle: 'res-pair', toolResults: [
+    { tool_use_id: 'l1', text: 'step ok\n'.repeat(800), isError: false },
+    { tool_use_id: 's1', text: '', isError: false, result: shot },
+  ] }
+  const messages: Message[] = [
+    user('Make the panel look right', 'h0'),
+    { role: 'assistant', text: '', toolUses: [{ tool_use_id: 'l1', tool: 'Bash', input: { command: 'npm run build' } }, { tool_use_id: 's1', tool: 'Read', input: { file_path: '/s.png' } }], handle: 'use-pair' },
+    both,
+    said('ok'), user('go on'), said('ok'), user('go on'), said('ok'), user('go on'), said('ok'), user('go on'), said('ok'),
+  ]
+  const result = await compact(messages, fakeJev((name) => (name === 'need_t1' ? 0.05 : 0.9)))
+  expect(result.messages[2]).toBe(both) // the same object, its handle with it
 })

@@ -24,7 +24,7 @@ import { askerOver } from '../src/openrouter.ts'
 import type { JevAsker, Message, ToolResult, ToolUse } from '../src/types.ts'
 
 type Block = { type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown>; tool_use_id?: string; content?: unknown; is_error?: boolean }
-type Row = { type?: string; subtype?: string; isSidechain?: boolean; isMeta?: boolean; message?: { id?: string; role?: string; content?: string | Block[]; usage?: Record<string, number> } }
+type Row = { type?: string; subtype?: string; isSidechain?: boolean; isMeta?: boolean; toolUseResult?: unknown; message?: { id?: string; role?: string; content?: string | Block[]; usage?: Record<string, number> } }
 
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content
@@ -68,7 +68,15 @@ export function messagesOf(jsonl: string): { messages: Message[]; contextTokens?
     lastAssistantId = undefined
     const blocks = Array.isArray(content) ? content : []
     const toolResults: ToolResult[] = blocks.filter((b) => b.type === 'tool_result')
-      .map((b) => ({ tool_use_id: b.tool_use_id ?? '', text: textOf(b.content), isError: b.is_error === true }))
+      .map((b) => {
+        const result: ToolResult = { tool_use_id: b.tool_use_id ?? '', text: textOf(b.content), isError: b.is_error === true }
+        // An image is in the stored record, as Claude Code hands it to a compaction (Read's has its size)
+        if (Array.isArray(b.content) && b.content.some((x: Block) => x.type === 'image')) {
+          const stored = row.toolUseResult as { type?: string } | undefined
+          result.result = stored?.type === 'image' ? stored : { content: b.content }
+        }
+        return result
+      })
     const message: Message = { role: 'user', text: textOf(content), toolUses: [] }
     if (toolResults.length > 0) message.toolResults = toolResults
     if (message.text || toolResults.length > 0) messages.push(message)

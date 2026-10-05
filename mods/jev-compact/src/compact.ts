@@ -82,14 +82,16 @@ export function batchCalls(calls: readonly ToolCall[], stateTokens: number, maxR
 
 /**
  * The action for one asked call from Jev's probability. Outputs cheap to get again (file reads and
- * searches) need a higher one to stay whole. A trim that would cut nothing keeps the output whole.
+ * searches) need a higher one to stay whole. A trim that would cut nothing keeps the output whole, and
+ * so does one of an image.
  */
 export function decide(call: ToolCall, need: number, options: CompactOptions): Decision {
   const base = { id: call.id, tool: call.tool, need, chars: pairChars(call) }
   const cheap = cheapToRedo(call) // a file read or search: one tool call gets it back
   if (need >= (cheap ? options.cheapKeepThreshold : options.keepThreshold)) return { ...base, action: 'keep' }
   if (need >= (cheap ? options.cheapStubThreshold : options.stubThreshold)) {
-    const fits = call.resultChars <= options.trimHeadChars + options.trimTailChars
+    // An image can't be cut to a head and tail: kept whole while Jev is unsure
+    const fits = call.imageTokens > 0 || call.resultChars <= options.trimHeadChars + options.trimTailChars
     return { ...base, action: fits ? 'keep' : 'trim' }
   }
   return { ...base, action: 'stub' }
