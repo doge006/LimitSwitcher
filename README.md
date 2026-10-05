@@ -192,6 +192,7 @@ In the full view, the gear opens Settings:
 - **Auto swap:** move to the account whose weekly limit resets first when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
 - **Jev compaction** (under the Claude Code Status mod, off by default): before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see below).
+- **Reset alerts** (on by default; needs the Claude Code Status mod): when every Claude (or every Codex) account has hit its limit, a toast in each open Claude Code session says which one has room again as soon as its limit resets (within about 30 seconds). Nothing shows while another account still has room, since Auto swap already uses it.
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
 - **Launch with Windows / macOS:** start in the tray when you sign in.
@@ -202,7 +203,7 @@ In the full view, the gear opens Settings:
 
 Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The mod is two plugins from this repository, installed together:
 
-- **limit-status** (`mods/limit-status`) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, and runs the Jev compaction below. LimitSwitcher's line itself is in Claude Code's status line (see below), where it can't be dismissed; installing the mod turns that on.
+- **limit-status** (`mods/limit-status`) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, runs the Jev compaction below, and shows the reset alerts (Settings) as a toast. LimitSwitcher's line itself is in Claude Code's status line (see below), where it can't be dismissed; installing the mod turns that on.
 - **jev-compact** (`mods/jev-compact`) is the compaction. It is a plugin of its own because Claude Code skips a plugin's own compaction hook when that plugin starts the compaction.
 
 Install it from **Settings → Claude Code Status mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the plugins where the app's files are. The row then shows **Active** while a session is reporting, **Installed** until one is, **Update** when only an older limit-status is there, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below (without Jev compaction).

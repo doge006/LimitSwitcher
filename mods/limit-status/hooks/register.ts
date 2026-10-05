@@ -9,6 +9,9 @@ import type { Register } from 'claude-code'
 // needs, so the new account (which has none of it cached) loads less. Claude Code skips a
 // plugin's own compaction hook when that plugin starts the compaction, so the two are separate.
 // `/jevcompact` runs the same compaction by hand (registered here for that reason too).
+//
+// And it shows the app's reset alerts as a toast: when every account of a provider had hit its
+// limit and one has room again, each open session hears of it on its next report.
 const EVERY = 30_000 // an idle session still reports now and then, and picks up a compaction asked for
 const SOON = [2_000, 5_000, 10_000, 20_000, 40_000] // after a turn that ended on an error (a usage limit): look sooner
 
@@ -25,6 +28,7 @@ type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
 const handled = new Set<string>() // compaction ids already run (the app keeps asking until it hears back)
+const toasted = new Set<string>() // reset alerts already shown in this session (the app offers each for a few minutes)
 
 async function appOf($: any, statePath: string): Promise<App | null> {
   if (!statePath) return null
@@ -58,6 +62,12 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
     const answer = await post($, app, '/api/statusline', {
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
     })
+    for (const alert of Array.isArray(answer?.alerts) ? answer.alerts : []) {
+      // Reset alerts (Settings): every account of a provider had hit its limit and one has room again
+      if (typeof alert?.id !== 'string' || typeof alert?.text !== 'string' || toasted.has(alert.id)) continue
+      toasted.add(alert.id)
+      $.ui.toast(alert.text)
+    }
     const id = answer?.compact?.id
     if (typeof id === 'string' && id && !handled.has(id)) {
       handled.add(id)

@@ -1,14 +1,10 @@
-The app offers it in Settings → **Update to 1.3.1** (or download below).
+The app offers it in Settings → **Update to 1.3.2** (or download below). To get the toast, use **Reinstall** on the Claude Code Status mod in Settings (or `/plugin update`), then `/reload-plugins` in open sessions.
 
-## Smoother animations (Windows)
+## New: reset alerts in Claude Code
 
-- **The full view animates at 63 frames a second** (every Windows timer tick) instead of about 32–38: cards rising in as it opens, and the hover fades over cards.
-- **The panel's hover fades and switches keep up at high scaling.** At 200% they ran at about 39 frames a second and now run at 63. The panel and the right-click menu now redraw only what changed in a frame, so a hover frame takes 3–8 ms instead of 8–25 ms.
-- **Less work in the background.** With the full view open, the app's CPU use measured 0.05% instead of 0.94%. Idle CPU and memory are unchanged, and peak memory while drawing is a few MB lower.
-
-Nothing looks different: animation timings and curves are the same, and frames are drawn pixel for pixel as before. The only exception is panel shape edges at 125%, 175% and 225% scaling, which can differ by under a quarter of a pixel.
-
-Separate accounts per window (new in 1.3.0, preview) is unchanged. See the [1.3.0 notes](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.0).
+- **When every Claude (or every Codex) account has hit its limit**, each open Claude Code session shows a toast as soon as one has room again: `⇄ LimitSwitcher · Claude has room again: work@example.com's limit has reset`. It names the account in use when that's the one that reset.
+- **Nothing shows while another account still has room**, since Auto swap already moves you there.
+- **On by default.** Settings → **Reset alerts** turns it off. It needs the Claude Code Status mod (limit-status 0.6.0), and a session hears of a reset on its next report, within about 30 seconds.
 
 ## Download
 

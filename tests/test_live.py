@@ -300,6 +300,51 @@ class LiveTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             m.remove(x.id)  # cannot remove the account in use
 
+    def test_reset_alert_is_offered_to_the_mod_once_a_used_up_provider_has_room(self):
+        controller = Controller(gateway=lambda notify: LiveGateway(notify, self.vault, self.providers, background=False))
+        try:
+            m = controller.gateway.manager
+            m.spacing = 0
+            self.api.claude_usage["at-a"] = claude_usage(100, 30)  # the only Claude account: used up
+            m.refresh(force=True)
+            mod = {"source": "mod", "session": "s"}
+            self.assertEqual(controller.alerts_for(mod), [])
+            self.api.claude_usage["at-a"] = claude_usage(0, 30)  # its 5-hour window reset
+            m.refresh(force=True)
+            alerts = controller.alerts_for(mod)
+            self.assertEqual(len(alerts), 1)
+            self.assertEqual(alerts[0]["text"], "⇄ LimitSwitcher · Claude has room again: a@example.com's limit has reset")
+            self.assertEqual(controller.alerts_for({"session": "s"}), [])  # only the mod toasts
+            # What the mod gets from the local API with its status line report
+            from account_switcher.web import make_server
+            from urllib.request import ProxyHandler, Request, build_opener
+            server = make_server(controller)
+            threading.Thread(target=server.serve_forever, daemon=True).start()
+            try:
+                base = server.hook_url[: -len("/api/afk")]
+                request = Request(base + "/api/statusline", data=json.dumps(mod).encode(), method="POST",
+                                  headers={"Authorization": "Bearer " + server.hook_token, "Content-Type": "application/json"})
+                with build_opener(ProxyHandler({})).open(request, timeout=5) as response:
+                    self.assertEqual(json.load(response)["alerts"], alerts)
+            finally:
+                server.shutdown()
+                server.server_close()
+            m.refresh(force=True)
+            self.assertEqual(controller.alerts_for(mod), alerts)  # nothing new: the same alert, once
+            with mock.patch("account_switcher.web.time.time", return_value=time.time() + 301):
+                self.assertEqual(controller.alerts_for(mod), [])  # offered for 5 minutes
+            # Switched off in Settings: no alert
+            controller.action("resetAlerts", {"on": False})
+            self.assertFalse(controller.snapshot()["resetAlerts"])
+            self.assertFalse(m.meta["resetAlerts"])
+            self.api.claude_usage["at-a"] = claude_usage(100, 30)
+            m.refresh(force=True)
+            self.api.claude_usage["at-a"] = claude_usage(0, 30)
+            m.refresh(force=True)
+            self.assertEqual(controller.alerts_for(mod), [])
+        finally:
+            controller.close()
+
     def test_controller_in_live_mode(self):
         controller = Controller(gateway=lambda notify: LiveGateway(notify, self.vault, self.providers, background=False))
         try:
