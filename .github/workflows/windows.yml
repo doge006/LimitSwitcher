@@ -35,6 +35,8 @@ jobs:
         run: Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitcher.pyw","--show" -WorkingDirectory $PWD
       - name: Smoke test
         run: .venv\Scripts\python.exe .github\win_smoke.py
+      - name: Separate accounts per window (the claude wrapper, links, finding a window, the tests)
+        run: .venv\Scripts\python.exe .github\win_perwindow.py
       - name: Updating replaces a copy it can't reach (its URL file is gone)
         run: |
           Start-Process -FilePath .venv\Scripts\pythonw.exe -ArgumentList "LimitSwitcher.pyw" -WorkingDirectory $PWD

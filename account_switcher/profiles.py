@@ -45,8 +45,12 @@ INFO = "window.json"
 PID_FILE = "window.pid"   # written by the macOS launcher script: the shell that becomes `claude`
 # Linked to ~/.claude, when there: everything but the login. settings.json carries LimitSwitcher's
 # own hook and status line too; they say which folder they run in (see web.py).
+# ide: the editors' lock files (/ide finds VS Code); file-history: /rewind's checkpoints, which must
+# outlive the window's folder for a session resumed elsewhere.
 SHARED = ("settings.json", "CLAUDE.md", "agents", "commands", "skills", "plugins", "output-styles",
-          "projects", "todos", "history.jsonl")
+          "projects", "todos", "history.jsonl", "keybindings.json", "ide", "file-history", "plans")
+SEED = ".claude.seed.json"  # the ~/.claude.json the profile started from: what the window changed goes back on removal
+KEEP_OWN = {"oauthAccount"}  # the profile's own login, never copied back
 
 
 def root(vault_root):
@@ -126,7 +130,8 @@ def _is_link(path):
 
 def _link(source, target):
     """A link at `target` to `source`: a symlink, else (Windows without Developer Mode) a junction
-    for a folder or a copy of a file. Returns how, for the log."""
+    for a folder or a hard link for a file (both need no rights), a copy only when the two are on
+    different drives. Returns how, for the log."""
     try:
         os.symlink(source, target, target_is_directory=source.is_dir())
         return "linked"
@@ -137,8 +142,12 @@ def _link(source, target):
         import _winapi
         _winapi.CreateJunction(str(source), str(target))
         return "junction"
-    shutil.copy2(source, target)
-    return "copied"
+    try:
+        os.link(source, target)
+        return "hard link"
+    except OSError:
+        shutil.copy2(source, target)
+        return "copied"
 
 
 def _seed(directory, home):
@@ -149,7 +158,9 @@ def _seed(directory, home):
     if not config.exists():
         base = _read_json(home / ".claude.json") or {}
         base.pop("oauthAccount", None)
-        atomic_write(config, json.dumps(base, indent=2).encode())
+        text = json.dumps(base, indent=2).encode()
+        atomic_write(config, text)
+        atomic_write(directory / SEED, text)
     done = []
     for name in SHARED:
         source, target = claude_home / name, directory / name
@@ -178,15 +189,59 @@ def create(vault, account_id, home=None, keychain=None, **window):
     directory = (root(vault.root) / (PREFIX + secrets.token_hex(4))).resolve()
     directory.mkdir(parents=True)
     _seed(directory, home)
-    set_info(directory, started=time.time(), **{k: v for k, v in window.items() if v is not None})
+    set_info(directory, started=time.time(), home=str(home), **{k: v for k, v in window.items() if v is not None})
     provider(directory, keychain).write_live(secret)
     return directory
+
+
+def _merge(main, seed, own):
+    """What the window changed in its .claude.json since `seed`, onto `main` (~/.claude.json now),
+    where the main copy hasn't changed that same thing since: folder trust and a folder's allowed
+    tools and MCP servers (per folder, under "projects"), and the rest key by key. Returns
+    whether anything changed."""
+    changed = False
+    for name, value in own.items():
+        if name in KEEP_OWN or value == seed.get(name):
+            continue
+        if name == "projects" and isinstance(value, dict) and isinstance(main.get(name, {}), dict):
+            before, now = seed.get(name) or {}, dict(main.get(name) or {})
+            for folder, entry in value.items():
+                if entry != before.get(folder) and now.get(folder) == before.get(folder):
+                    now[folder] = entry
+                    changed = True
+            main[name] = now
+        elif main.get(name) == seed.get(name):
+            main[name] = value
+            changed = True
+    return changed
+
+
+def keep_changes(directory, home=None):
+    """Before a profile goes: what its window changed in .claude.json (a folder trusted, an MCP
+    server added, a setting from /config) is written to ~/.claude.json, so it isn't lost."""
+    directory = Path(directory)
+    seed, own = _read_json(directory / SEED), _read_json(directory / ".claude.json")
+    if not isinstance(seed, dict) or not isinstance(own, dict):
+        return False
+    home = Path(home or info(directory).get("home") or Path.home())
+    path = home / ".claude.json"
+    main = _read_json(path)
+    if not isinstance(main, dict):
+        return False
+    if not _merge(main, seed, own):
+        return False
+    atomic_write(path, json.dumps(main, indent=2).encode())
+    return True
 
 
 def remove(directory, keychain=None):
     """Delete a profile (take its login back first: LiveAccounts.sync_profiles). The links go,
     never what they point at."""
     directory = Path(directory)
+    try:
+        keep_changes(directory)
+    except OSError:
+        pass  # never keeps the folder (and the account) from being freed
     provider(directory, keychain).forget()
     for name in SHARED:  # the links themselves; rmtree must never walk into ~/.claude
         path = directory / name

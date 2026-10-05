@@ -146,6 +146,36 @@ class MacAppShapeTests(unittest.TestCase):
 class FullViewProcessTest(unittest.TestCase):
     """The Mac full view's own process reaches the menu bar app only through its local API."""
 
+    def test_quitting_while_it_still_starts_ends_it_once_started(self):
+        """Quit right after opening the full view: Launch Services hands over the process only
+        later, and it must end then, not stay open with nothing behind it."""
+        from account_switcher.fullview_mac_app import Started
+
+        class App:
+            terminated = forced = False
+
+            def isTerminated(self):
+                return self.terminated
+
+            def terminate(self):
+                self.terminated = True
+
+            def forceTerminate(self):
+                self.forced = True
+
+        started = Started()
+        self.assertTrue(started.alive())  # still starting
+        started.close()
+        app = App()
+        started.started(app)
+        self.assertTrue(app.forced)
+        running = Started()
+        later = App()
+        running.started(later)
+        self.assertFalse(later.forced)
+        running.close()
+        self.assertTrue(later.terminated)
+
     def test_remote_state_and_actions(self):
         import threading
         from account_switcher.fullview_mac_app import Remote

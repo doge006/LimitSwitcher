@@ -196,3 +196,26 @@ class TrayTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogTests(unittest.TestCase):
+    def test_app_log_is_capped(self):
+        import logging
+        import tempfile
+        from unittest import mock
+        from account_switcher import tray
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict("os.environ", {"ACCOUNT_SWITCHER_HOME": folder}), \
+                mock.patch.object(tray, "LOG_LIMIT", 2000):
+            handler = tray.log_handler()
+            logger = logging.getLogger("account_switcher.test-cap")
+            logger.addHandler(handler)
+            logger.propagate = False
+            try:
+                for i in range(200):
+                    logger.warning("line %d %s", i, "x" * 40)
+            finally:
+                logger.removeHandler(handler)
+                handler.close()
+            files = sorted(os.listdir(folder))
+            self.assertEqual(files, ["app.log", "app.log.1"])
+            self.assertTrue(all(os.path.getsize(os.path.join(folder, f)) <= 2000 for f in files))

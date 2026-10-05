@@ -248,6 +248,7 @@ class Started:
 
     def __init__(self, popen=None):
         self.popen, self.app = popen, None  # app: its NSRunningApplication, once Launch Services has it
+        self.closing = False  # closed while still starting: it ends as soon as it has started
 
     def alive(self):
         if self.popen is not None:
@@ -255,10 +256,18 @@ class Started:
         return self.app is None or not self.app.isTerminated()  # None: still starting
 
     def close(self):
+        self.closing = True
         if self.popen is not None:
             self.popen.terminate()
         elif self.app is not None:
             self.app.terminate()
+
+    def started(self, app):
+        """Launch Services has started it (on its own thread). Closed before that (quit right after
+        opening it): it ends now, rather than staying open with nothing behind it."""
+        self.app = app
+        if self.closing and app is not None:
+            app.forceTerminate()
 
     def front(self):
         if self.app is not None:
@@ -289,7 +298,7 @@ def start(url):
     def done(app, error):
         if error is not None:
             log.warning("the full view couldn't start: %s", error)
-        started.app = app
+        started.started(app)
     NSWorkspace.sharedWorkspace().openApplicationAtURL_configuration_completionHandler_(
         bundle.bundleURL(), config, done)
     return started

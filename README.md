@@ -50,7 +50,7 @@ It lives in the menu bar (no Dock icon) and starts there when you log in; turn t
 Built to be barely noticeable:
 
 - **One small process.** Every window is native: no browser, no Electron. On Windows the app draws them itself; on macOS the full view is drawn with the system's own graphics, in a second process that exists only while its window is open (its memory goes back to macOS when you close it), and the menu bar panel uses the system's WebKit view, loaded only while it's open.
-- **It sleeps** until an account is due for a usage check (every few minutes for the one in use, less often for the rest) or something changes, and uses no CPU in between.
+- **It sleeps** until an account is due for a usage check or something changes, and uses no CPU in between. Claude accounts are checked about once a minute (the one in use follows Claude Code's own status line instead, with a check every 30 minutes), Codex accounts every 90 seconds in use and every 5 minutes otherwise. The connection to each service stays open between checks, so a check is under 1 KB in all rather than a new secure connection (several KB) every time.
 - **Windows exist only while they're open.** The panel, the menus and the full view are created when you open them and freed when you close them, and animation frames are drawn only while something moves.
 - **Checking usage doesn't touch your limits:** the usage endpoints it reads don't count against them.
 

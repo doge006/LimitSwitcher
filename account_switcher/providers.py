@@ -18,9 +18,10 @@ import time
 import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from . import tls
+from .connections import urlopen  # kept-open connections: a usage check is not a TLS handshake each time
 from .vault import atomic_write
 
 TIMEOUT = 15

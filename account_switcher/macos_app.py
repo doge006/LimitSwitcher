@@ -292,6 +292,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     def applicationShouldTerminate_(self, _app):
         """Every way of quitting (⌘Q, the Dock, the menus, logging out) ends here. Cocoa ends the
         process right after, so undo the Codex / Claude changes now."""
+        if self.full is not None and self.full.alive():
+            self.full.close()  # also when it was quit some other way than quit_ (still starting, too)
         try:
             self.cleanup()
         except Exception:
