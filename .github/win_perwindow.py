@@ -21,7 +21,7 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
-from account_switcher import highlight, profiles  # noqa: E402
+from account_switcher import profiles  # noqa: E402
 
 failures = []
 
