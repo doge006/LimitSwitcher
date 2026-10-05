@@ -74,7 +74,7 @@ SIGNED_OUT_AFTER = 300      # the client hasn't replaced a refused login in this
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 NEAR_RESET = 15 * 60     # seconds: a 5-hour limit that resets this soon is waited out, not swapped away from
 PENDING_TTL = 6 * 3600   # a continue nobody answered is forgotten (the hook gives up after this too)
-LARGE_CONTEXT = 400_000  # tokens (about 6% of a plan's 5-hour usage at ~10% per 700k): costly to load on an account that hasn't cached it
+LARGE_CONTEXT = 400_000  # tokens (about 7% of a Pro plan's 5-hour usage: 338k uncached was ~6%): costly to load on an account that hasn't cached it
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
                  "held. Re-run the tool before relying on exact details from one of them.")
@@ -992,7 +992,7 @@ class LiveAccounts:
         job = self.compactions.get(session or "")
         if job and job["status"] == "done" and job.get("saved") and now - job.get("finishedAt", 0) < JEV_SHOWN \
                 and round(job["saved"] / 1000) > 0:  # what it saved, for a little while after
-            groups.append([("Jev Compacted (saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens)", "dim")])
+            groups.append([("Jev saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good")])
         groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))

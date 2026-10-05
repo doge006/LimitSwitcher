@@ -856,7 +856,7 @@ class JevCompactionTests(unittest.TestCase):
         self.assertEqual(line.parts[0], {"t": "⇄", "c": "warn"})
         self.assertTrue(self.manager.compaction_done("s1", "hand-1", "done", 148_000))
         line = self.manager.statusline(None, "s1")
-        self.assertIn("⇄ LimitSwitcher · Jev Compacted (saved ~148k tokens) · ", line)
+        self.assertIn("⇄ LimitSwitcher · Jev saved ~148k · ", line)
         self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})
         self.assertEqual(self.manager.compacted_context("s1")["saved"], 148_000)
         self.assertNotEqual(self.manager.claude_limit("s1")["action"], "wait")  # a limit later is not held for it
@@ -873,12 +873,12 @@ class JevCompactionTests(unittest.TestCase):
         request = self.manager.compaction_request("s1")
         self.assertTrue(self.manager.compaction_done("s1", request["id"], "done", 120_000))
         line = self.manager.statusline(None, "s1")
-        self.assertIn("LimitSwitcher · Jev Compacted (saved ~120k tokens) · b@example.com", line)
+        self.assertIn("LimitSwitcher · Jev saved ~120k · b@example.com", line)
         self.assertEqual(line.parts[0], {"t": "⇄", "c": "good"})  # the icon is the normal green one
         self.assertIn({"t": "~120k", "c": "good"}, line.parts)
-        self.assertNotIn("Jev Compacted", self.manager.statusline(None, "s2"))  # only that session's line
+        self.assertNotIn("Jev saved", self.manager.statusline(None, "s2"))  # only that session's line
         self.manager.compactions["s1"]["finishedAt"] -= JEV_SHOWN + 1
-        self.assertNotIn("Jev Compacted", self.manager.statusline(None, "s1"))
+        self.assertNotIn("Jev saved", self.manager.statusline(None, "s1"))
 
     def test_end_to_end_through_the_local_api_and_the_hook(self):
         """The hook asks, the mod picks the compaction up from its status line report and reports

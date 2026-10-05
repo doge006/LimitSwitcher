@@ -143,7 +143,7 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
       saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
         ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
       outcome = 'done'
-      text = `Jev compacted: ~${Math.round(saved / 1000)}k tokens less to load`
+      text = `Jev saved ~${Math.round(saved / 1000)}k tokens`
     } else {
       outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       text = `No Jev compaction: ${skip}`
