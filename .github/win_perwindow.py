@@ -101,10 +101,13 @@ def links():
 
 def window():
     """Found from a process with no console of its own, as the app runs (pythonw): this script has
-    one, which a console window can't be looked up from."""
+    one, and a console window can't be looked up from a process that has one."""
     process = subprocess.Popen(["cmd.exe", "/k", "title Claude Code test window"], creationflags=subprocess.CREATE_NEW_CONSOLE)
     try:
-        probe = ("import sys, time; sys.path.insert(0, sys.argv[1]); from account_switcher import highlight\n"
+        # FreeConsole: a venv's python.exe starts the real one as its child, which gets a console of
+        # its own when its parent has none, so the probe lets go of it first.
+        probe = ("import ctypes, sys, time; ctypes.windll.kernel32.FreeConsole()\n"
+                 "sys.path.insert(0, sys.argv[1]); from account_switcher import highlight\n"
                  "found = None\n"
                  "for _ in range(40):\n"
                  "    found = highlight.find(int(sys.argv[2]))\n"
