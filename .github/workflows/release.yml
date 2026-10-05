@@ -144,7 +144,7 @@ jobs:
             if ($run.ExitCode -ne 0) { throw "$name did not run the app (exit $($run.ExitCode))" }
             Move-Item "build\LimitSwitcher\$name.exe" "build\av\$name.exe"
           }
-          foreach ($v in @(@('zip', 'no'))) {
+          foreach ($v in @(,@('zip', 'no'))) {  # the comma keeps a one-item list of pairs
             $name = 'Setup-' + ($v[0] -replace '[^a-z0-9]', '') + '-solid' + $v[1]
             & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path build\LimitSwitcher).Path)" "/O$((Resolve-Path build\av).Path)" "/F$name" "/DCompress=$($v[0])" "/DSolid=$($v[1])" scripts\LimitSwitcher.iss
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $name" }
