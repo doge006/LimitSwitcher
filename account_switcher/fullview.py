@@ -5,6 +5,7 @@ timers this asks for (a minute tick for "resets in", toast expiry, a switch time
 while the window is idle, and closing it frees every cached tile.
 """
 import calendar
+import json
 import math
 import re
 import time
@@ -127,6 +128,7 @@ class UI:
         self.signing_in = ()
         self.anchors = {}
         self.fades = {}            # what is animating right now: hover amounts, toggle positions, the spin
+        self.window = None         # the window picked in the Windows list (separate accounts per window)
 
 
 class FullView:
@@ -169,6 +171,8 @@ class FullView:
         ids = {a["id"] for a in state["accounts"]}
         if ui.confirm not in ids:
             ui.confirm = None
+        if ui.window not in {w["id"] for w in state.get("windows") or []}:
+            ui.window = None  # that window closed
         if ui.editing and ui.editing[0] not in ids and ui.editing[0] != JEV_KEY:
             ui.editing = None
         if ui.editing and ui.editing[0] == JEV_KEY and not (ui.menu == "settings" and state.get("jevCompact")):
@@ -263,6 +267,11 @@ class FullView:
                      ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"),
                      repr(sorted((state.get("update") or {}).items())))
             make = lambda: (vr.record_topbar if self.native else vr.draw_topbar)(state, w, self.scale, ui)
+        elif kind == "windows":
+            cache = (w, h, json.dumps([state.get("windows"), [(a["id"], a.get("label"), a.get("email")) for a in state.get("accounts") or []],
+                                       state.get("nameMode"), ui.window,
+                                       sorted((k, vr.quantize(v)) for k, v in ui.fades.items() if k.startswith("window:"))], default=str))
+            make = lambda: (vr.record_windows if self.native else vr.draw_windows)(state, w, h, self.scale, ui)
         elif kind == "group":
             cache = (w, data)
             make = lambda: (vr.record_group if self.native else vr.draw_group)(data, w, self.scale)
@@ -283,7 +292,7 @@ class FullView:
         moving = motion.step()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
         vr.CLOCK_24 = self.state.get("clock24")
-        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkSkipLarge", "waitNearReset", "jevCompact")}
+        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkSkipLarge", "waitNearReset", "jevCompact", "perWindow")}
         for key, on in prefs.items():
             motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
             ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
@@ -617,6 +626,8 @@ class FullView:
                 self.act("jevCompact", {"on": not state.get("jevCompact")})
             elif arg == "afkSkipLarge":
                 self.act("afkSkipLarge", {"on": not state.get("afkSkipLarge", True)})
+            elif arg == "perWindow":
+                self.act("perWindow", {"on": not state.get("perWindow")})
             elif arg == "launchAtLogin":
                 self.act("startup", {"on": not state.get("launchAtLogin")})
         elif kind == "mod":  # Settings: install the Claude Code mod
@@ -640,6 +651,16 @@ class FullView:
             self.host.set_timer("pending", 8000)
             if not self.act("swap", {"id": arg}):
                 ui.pending = None
+        elif kind == "openWindow":  # a Claude Code window that keeps this account
+            self.act(kind, {"id": arg})
+        elif kind == "window":  # the Windows list: pick a window (it's pointed out on screen), or unpick it
+            ui.window = None if ui.window == arg else arg
+            if ui.window:
+                self.act("highlightWindow", {"window": arg})
+        elif kind == "swapWindow":  # then an account for it: only that window moves
+            if ui.window:
+                self.act("swapWindow", {"window": ui.window, "id": arg})
+            ui.window = None
         elif kind == "remove":
             ui.confirm = arg
         elif kind == "remove-no":

@@ -277,6 +277,7 @@ class Integrations:
 
     def start(self):
         self.apply_afk()
+        self.apply_per_window()
         self.keep_claude_settings()
         threading.Thread(target=self.refresh_mod_config, daemon=True, name="mod-config").start()
         if codex_present(self.codex_home):
@@ -363,6 +364,10 @@ class Integrations:
                 self.proxy.close()
                 self.proxy = None
         try:
+            self.remove_wrapper()
+        except OSError as error:
+            log.warning("could not remove the claude wrapper: %s", error)
+        try:
             claude_hooks.uninstall(self.claude_root)
         except OSError as error:
             log.warning("could not remove the Claude hook: %s", error)
@@ -378,6 +383,31 @@ class Integrations:
             self.state_file.unlink()
         except OSError:
             pass
+
+    # ---------- separate accounts per window (profiles.py, window.py) ----------
+    def apply_per_window(self):
+        """While the setting is on and the app runs, `claude` in a new terminal is the wrapper, which
+        asks the app for a profile of its own. Off (or the app quits): the wrapper goes, and new windows
+        share the main login again; windows already open keep theirs until they close."""
+        from . import profiles
+        try:
+            if self.manager.meta.get("perWindow"):
+                folder = profiles.install_wrapper(self.root, claude_hooks._python(), self.state_file)
+                if sys.platform == "win32":
+                    if profiles.add_to_path(folder):
+                        self.manager.notify("log", "Separate accounts per window: open a new terminal to use it")
+                elif not profiles.on_path(folder):
+                    self.manager.notify("log", f"Separate accounts per window: put {folder} first on your PATH")
+            else:
+                self.remove_wrapper()
+        except (OSError, ValueError) as error:
+            log.warning("could not set up separate accounts per window: %s", error)
+            self.manager.notify("log", f"Couldn't set up separate accounts per window: {error}")
+
+    def remove_wrapper(self):
+        from . import profiles
+        profiles.add_to_path(profiles.wrapper_dir(self.root), add=False)
+        profiles.uninstall_wrapper(self.root)
 
     # ---------- AFK ----------
     def write_state(self, statusline=None):

@@ -179,7 +179,7 @@ class ModStateTests(unittest.TestCase):
         c.gateway.manager.lock = threading.RLock()
         c.gateway.manager.meta = {"modSeenAt": time.time()}
         c.statusline({"session": "s", "model": "Opus 5.5", "effort": "high"})
-        c.gateway.manager.statusline.assert_called_with(None, "s", model="Opus 5.5", effort="high")
+        c.gateway.manager.statusline.assert_called_with(None, "s", model="Opus 5.5", effort="high", config_dir=None)
 
     def test_an_older_mod_alone_asks_for_the_update(self):
         c = self.controller
