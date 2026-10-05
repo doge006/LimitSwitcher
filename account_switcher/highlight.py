@@ -103,7 +103,8 @@ if sys.platform == "win32":
         tops = top_windows(titles)
         if hwnd and title:  # a hidden pseudo console whose terminal doesn't own it: the terminal
             for top, (owner, text) in titles.items():  # window showing the console's title
-                if text == title and family.get(owner, (0, ""))[1] in CONSOLE_HOSTS:
+                # (an elevated one's tab reads "Administrator:  <title>")
+                if text.endswith(title) and family.get(owner, (0, ""))[1] in CONSOLE_HOSTS:
                     return top
         seen = set()
         while pid and pid not in seen:
