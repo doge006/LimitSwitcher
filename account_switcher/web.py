@@ -16,6 +16,7 @@ ASSETS = Path(__file__).with_name("static")
 UPDATE_EVERY = 2 * 3600   # seconds between update checks (the first is at launch)
 UPDATE_RETRY_AFTER = 300  # a check that couldn't reach GitHub is tried again after this, up to UPDATE_RETRIES times
 UPDATE_RETRIES = 3
+ALERT_FOR = 300          # seconds a reset alert is offered to Claude Code sessions (each toasts it once)
 
 
 def update_wait(ok, failures):
@@ -49,6 +50,10 @@ class Controller:
         self.jev_key_demo = False
         self.jev_compact = False  # compact a session with Jev before it goes on after a swap
         self.clock24 = None      # 24-hour clock: None follows the system
+        self.reset_alerts = True  # a toast in Claude Code when a provider has room again after every account ran out
+        self.room = {}    # provider -> whether any of its accounts had room, at the last change
+        self.alerts = []  # recent reset alerts for the mod to toast: {"id", "at", "text"}
+        self.alerts_total = 0
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
         self.closed = False
         if gateway is not None:
@@ -101,12 +106,49 @@ class Controller:
         threading.Thread(target=loop, daemon=True, name="update-check").start()
 
     def notify(self, kind, value):
+        if kind == "accounts":
+            self.check_resets()
         with self.condition:
             if kind == "log":
                 self.log_total += 1
                 self.log.append({"id": self.log_total, "at": time.time(), "text": str(value)})
             self.revision += 1
             self.condition.notify_all()
+
+    def check_resets(self):
+        """Reset alerts: when every account of a provider had hit its limit and one now has room
+        again, keep an alert for the Claude Code mod to show as a toast in each open session."""
+        router = getattr(getattr(self, "gateway", None), "router", None)
+        if router is None:
+            return
+        accounts = list(router.accounts)
+        room = {}
+        for account in accounts:
+            room[account.provider] = room.get(account.provider, False) or account.eligible
+        on = bool(self.gateway.manager.meta.get("resetAlerts", True)) if self.live else self.reset_alerts
+        active = dict(router.active)
+        views = [account_view(a, active.get(a.provider) == a.id) for a in accounts]
+        self.names(views)
+        now = time.time()
+        with self.condition:  # compared and kept in one step: two threads never both announce one reset
+            before, self.room = self.room, room
+            fresh = [p for p, has in room.items() if has and before.get(p) is False] if on else []
+            self.alerts = [a for a in self.alerts if now - a["at"] < ALERT_FOR]
+            for provider in fresh:
+                ready = [v for v in views if v["provider"] == provider and v["eligible"]]
+                view = next((v for v in ready if v["active"]), ready[0])
+                self.alerts_total += 1
+                self.alerts.append({"id": f"reset-{self.alerts_total}-{int(now)}", "at": now,
+                                    "text": f"⇄ LimitSwitcher · {provider.title()} has room again: {view['name']}'s limit has reset"})
+
+    def alerts_for(self, body):
+        """For a session's mod: the reset alerts of the last few minutes (it toasts each id once)."""
+        if body.get("source") != "mod":
+            return []
+        self.check_resets()  # a passed reset time frees an account without any new usage coming in
+        now = time.time()
+        with self.condition:
+            return [{"id": a["id"], "text": a["text"]} for a in self.alerts if now - a["at"] < ALERT_FOR]
 
     def names(self, accounts):
         """Add each account's name ("label") and, in name mode, show it instead of the email, so
@@ -170,6 +212,7 @@ class Controller:
                 "nameMode": name_mode,
                 "update": dict(self.update),
                 "clock24": self.clock_24(),
+                "resetAlerts": bool(self.gateway.manager.meta.get("resetAlerts", True)) if self.live else self.reset_alerts,
                 "mod": self.mod_state(),
                 "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
@@ -187,7 +230,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "swapWindow", "highlightWindow", "perWindow"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "swapWindow", "highlightWindow", "perWindow", "resetAlerts"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -254,6 +297,15 @@ class Controller:
                     self.gateway.manager.meta["afkSkipLarge"] = on
                     self.gateway.manager.save()
             self.afk_skip_large = on
+            self.notify("changed", None)
+            return
+        if action == "resetAlerts":  # a notification when a provider has room again; instant
+            on = bool(body.get("on"))
+            if self.live:
+                with self.gateway.manager.lock:
+                    self.gateway.manager.meta["resetAlerts"] = on
+                    self.gateway.manager.save()
+            self.reset_alerts = on
             self.notify("changed", None)
             return
         if action == "clock":  # 24-hour clock in the full view; instant
@@ -702,7 +754,8 @@ def make_server(controller, port=0):
                     self.respond(200, {"line": line, "parts": getattr(line, "parts", None),
                                        "rate_limits": controller.statusline_limits(body),
                                        "compact": controller.compaction_request(body),
-                                       "compacted": controller.compacted_context(body)})
+                                       "compacted": controller.compacted_context(body),
+                                       "alerts": controller.alerts_for(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return

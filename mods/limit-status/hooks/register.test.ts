@@ -10,7 +10,7 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[] } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -31,7 +31,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
     w.posts.push({ path, body })
     let answer: unknown = { ok: true }
     if (path === '/api/statusline') {
-      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null }
+      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [] }
       if (options.compact) asked = true
     }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
@@ -155,6 +155,20 @@ describe('limit-status', () => {
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
     expect(toasts).toEqual(['Jev compacted: ~30k tokens less to load'])
+  })
+
+  test('shows each reset alert from the app as a toast, once', { options: { statePath: STATE } }, async ($, on) => {
+    const text = '⇄ LimitSwitcher · Claude has room again: second@example.com\'s limit has reset'
+    world(on, { alerts: [{ id: 'reset-1', text }] })
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(e.text); return { value: undefined } })
+    await measure($)
+    await $.session.measure({
+      context: { window: 1_000_000, tokens: 200_000, percent: 20 },
+      rateLimits: [{ kind: 'five_hour', percentUsed: 10, resetsAt: '2026-10-02T22:00:00Z' }],
+      changed: ['rateLimits' as const],
+    })
+    expect(toasts).toEqual([text])
   })
 
   test('without LimitSwitcher running, nothing happens', { options: { statePath: STATE } }, async ($, on) => {

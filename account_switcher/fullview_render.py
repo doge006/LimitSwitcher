@@ -1027,6 +1027,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets f
             ("afk", "Auto resume", "Continue the session on another account"),
             ("afkSkipLarge", "Skip large sessions", "Auto resume leaves very large sessions alone"),
             ("waitNearReset", "Wait for a near reset", "No switch when the 5-hour limit resets within 15 min"),
+            ("resetAlerts", "Reset alerts", "A toast in Claude Code once a limit frees up"),
             ("nameMode", "Name mode", "Names instead of emails, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
