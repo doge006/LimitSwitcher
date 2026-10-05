@@ -5,6 +5,8 @@ Pure Pillow; no windowing. Shapes are drawn at 2x on an opaque canvas and downsa
 Everything is in logical pixels times `scale`.
 """
 from collections import OrderedDict
+import ctypes
+import difflib
 from functools import lru_cache
 import math
 import os
@@ -209,6 +211,7 @@ def text_mask(x, y, value, size, bold, scale, anchor):
 _probe = ImageDraw.Draw(Image.new("L", (1, 1)))
 
 
+@lru_cache(maxsize=1024)
 def text_w(value, size, bold=False):
     return font(size, bold, 1).getlength(value)
 
@@ -695,14 +698,45 @@ def paint(layout, width, height, scale):
     M, big = MARGIN, scale * SS
     full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
     mask, shadow = frame(width, height, scale)
-    canvas = Image.new("RGB", (round((width + 2 * M) * big), round((height + 2 * M) * big)), BG[:3])
-    d = ImageDraw.Draw(canvas, "RGBA")
+    # Exactly SS times the panel, so every device pixel is the mean of its own SS x SS block
+    # (at 125% an odd height used to be one row short, resized by a factor just under SS).
+    canvas = Image.new("RGB", (full[0] * SS, full[1] * SS), BG[:3])
+    _draw_shapes(ImageDraw.Draw(canvas, "RGBA"), layout.shapes, width, height, scale)
+    panel = canvas.reduce(SS)
+    # Images and text go on the opaque panel (so translucent text blends), then the
+    # rounded shape is cut and the result laid over the cached shadow.
+    _draw_top(panel, layout.images, layout.texts, scale)
+    panel = panel.convert("RGBA")
+    panel.putalpha(mask)
+    image = shadow.copy()
+    # Only the rounded edge blends with the shadow; inside it the result is the panel's own pixel.
+    # So blend the four edge strips and copy the middle straight across (tests check the result
+    # is identical to blending all of it).
+    edge = math.ceil((M + RADIUS) * scale) + 2
+    fw, fh = image.size
+    if fw > 2 * edge and fh > 2 * edge:
+        for box in ((0, 0, fw, edge), (0, fh - edge, fw, fh), (0, edge, edge, fh - edge), (fw - edge, edge, fw, fh - edge)):
+            image.alpha_composite(panel, dest=box[:2], source=box)
+        middle = (edge, edge, fw - edge, fh - edge)
+        image.paste(panel.crop(middle), middle[:2])
+    else:
+        image.alpha_composite(panel)
+    return image, _hits(layout)
+
+
+def _hits(layout):
+    return [((MARGIN + x, MARGIN + y, w, h), action) for (x, y, w, h), action in layout.hits]
+
+
+def _draw_shapes(d, shapes, width, height, scale):
+    """The shapes and the panel's border, at SS times the size (d draws on the big canvas)."""
+    M, big = MARGIN, scale * SS
 
     def P(v):
         return v * big
 
     line = max(1, round(P(1.4)))
-    for op in layout.shapes:
+    for op in shapes:
         kind = op[0]
         if kind == "rect":
             _, x, y, w, h, r, fill = op
@@ -753,49 +787,182 @@ def paint(layout, width, height, scale):
                     d.line((cx + r, cy - r, cx + r * .05, cy - r * .05), fill=fill, width=line)
                     d.line((cx - r * .05, cy - r * .7, cx + r * .05, cy - r * .05, cx + r * .7, cy + r * .05), fill=fill, width=line, joint="curve")
     d.rounded_rectangle((P(M), P(M), P(M + width) - 1, P(M + height) - 1), P(RADIUS), outline=BORDER, width=max(1, round(big)))
-    panel = canvas.reduce(SS) if canvas.size == (full[0] * SS, full[1] * SS) else canvas.resize(full, Image.Resampling.BOX)
-    # Images and text go on the opaque panel (so translucent text blends), then the
-    # rounded shape is cut and the result laid over the cached shadow.
-    for x, y, name, size, *faded in layout.images:
+
+
+def _draw_top(panel, images, texts, scale):
+    """Images, then text, on the panel at its final size."""
+    M = MARGIN
+    for x, y, name, size, *faded in images:
         icon = asset(name, round(size * scale))
         if faded and faded[0] < 1:  # swap slide: fading out or in
             icon = icon.copy()
             icon.putalpha(icon.getchannel("A").point(lambda v: round(v * max(0.0, faded[0]))))
         panel.paste(icon, (round((M + x) * scale), round((M + y) * scale)), icon)
     draw = ImageDraw.Draw(panel, "RGBA")
-    for x, y, value, size, bold, fill, anchor in layout.texts:
+    for x, y, value, size, bold, fill, anchor in texts:
         if len(fill) == 4 and fill[3] < 255:
             # Pillow ignores the ink's alpha for text, so fade by mixing with the panel colour.
             t = fill[3] / 255
             fill = tuple(round(BG[i] * (1 - t) + fill[i] * t) for i in range(3)) + (255,)
         draw_text(draw, ((M + x) * scale, (M + y) * scale), value, size, bold, scale, fill, anchor)
-    panel = panel.convert("RGBA")
-    panel.putalpha(mask)
-    image = shadow.copy()
-    # Only the rounded edge blends with the shadow; inside it the result is the panel's own pixel.
-    # So blend the four edge strips and copy the middle straight across (tests check the result
-    # is identical to blending all of it).
-    edge = math.ceil((M + RADIUS) * scale) + 2
-    fw, fh = image.size
-    if fw > 2 * edge and fh > 2 * edge:
-        for box in ((0, 0, fw, edge), (0, fh - edge, fw, fh), (0, edge, edge, fh - edge), (fw - edge, edge, fw, fh - edge)):
-            image.alpha_composite(panel, dest=box[:2], source=box)
-        middle = (edge, edge, fw - edge, fh - edge)
-        image.paste(panel.crop(middle), middle[:2])
-    else:
-        image.alpha_composite(panel)
-    return image, [((M + x, M + y, w, h), action) for (x, y, w, h), action in layout.hits]
 
 
-def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None, only=None):
+@lru_cache(maxsize=512)
+def _text_extent(value, size, bold, scale, anchor):
+    return font(size, bold, scale).getbbox(value, anchor=anchor)
+
+
+def _device_box(x0, y0, x1, y1, scale, pad=2):
+    """A logical box (panel coordinates, without the margin) as device px, with room to spare."""
+    M = MARGIN
+    return (math.floor((M + x0) * scale) - pad, math.floor((M + y0) * scale) - pad,
+            math.ceil((M + x1) * scale) + pad, math.ceil((M + y1) * scale) + pad)
+
+
+def _shape_box(op, scale):
+    kind = op[0]
+    if kind == "rect":
+        _, x, y, w, h, _, _ = op
+        return _device_box(min(x, x + w), min(y, y + h), max(x, x + w), max(y, y + h), scale)
+    if kind == "ellipse":
+        _, x1, y1, x2, y2, _ = op
+        return _device_box(min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2), scale)
+    _, cx, cy, r, _ = op  # icons: lines 1.4 px wide, the power symbol 1 px lower
+    return _device_box(cx - r - 3, cy - r - 3, cx + r + 3, cy + r + 3, scale)
+
+
+def _image_box(op, scale):
+    x, y, _, size = op[:4]
+    return _device_box(x, y, x + size, y + size, scale)
+
+
+def _text_box(op, scale):
+    x, y, value, size, bold, _, anchor = op
+    left, top, right, bottom = _text_extent(value, size, bold, scale, anchor)
+    px, py = (MARGIN + x) * scale, (MARGIN + y) * scale
+    return (math.floor(px + left) - 3, math.floor(py + top) - 3, math.ceil(px + right) + 3, math.ceil(py + bottom) + 3)
+
+
+def _changed(old, new, box, scale):
+    """Device boxes of what differs between two lists of drawing ops. Ops in both, in the same
+    order, draw the same pixels; only the inserted, removed and changed ones (old and new place)
+    need drawing again."""
+    if old == new:
+        return []
+    matcher = difflib.SequenceMatcher(None, old, new, autojunk=False)
+    out = []
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "equal":
+            out += [box(op, scale) for op in old[i1:i2]] + [box(op, scale) for op in new[j1:j2]]
+    return out
+
+
+def _merge(boxes, size):
+    """Boxes clipped to the image, overlapping ones merged."""
+    width, height = size
+    out = []
+    for x0, y0, x1, y1 in boxes:
+        box = [max(0, x0), max(0, y0), min(width, x1), min(height, y1)]
+        if box[0] >= box[2] or box[1] >= box[3]:
+            continue
+        merged = True
+        while merged:
+            merged = False
+            for other in out:
+                if box[0] <= other[2] and other[0] <= box[2] and box[1] <= other[3] and other[1] <= box[3]:
+                    out.remove(other)
+                    box = [min(box[0], other[0]), min(box[1], other[1]), max(box[2], other[2]), max(box[3], other[3])]
+                    merged = True
+                    break
+        out.append(box)
+    return [tuple(b) for b in out]
+
+
+def _overlaps(a, b):
+    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
+
+
+class Painter:
+    """paint() for one popup's frames, drawing again only what changed since its last frame: a
+    hover fade or a toggle changes one row, not the whole panel. Each changed area is rebuilt
+    from the background up with everything that touches it, in the same order, so the frame is
+    pixel for pixel what paint() draws (tests compare them). The two scratch canvases are kept
+    while the popup is open and dropped with the painter."""
+
+    def __init__(self):
+        self.last = None      # ((width, height, scale), shapes, images, texts) of the last frame
+        self.image = None     # the last frame
+        self.big = self.small = None
+        self.changed = None   # device boxes the last frame changed (None: all of it)
+        self.count = 0        # frames painted; `changed` is relative to frame count - 1
+
+    def paint(self, layout, width, height, scale):
+        M = MARGIN
+        full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
+        size = (full[0] * SS, full[1] * SS)
+        key = (width, height, scale)
+        shapes, images, texts = list(layout.shapes), list(layout.images), list(layout.texts)
+        boxes = None
+        if self.last and self.last[0] == key:
+            _, old_shapes, old_images, old_texts = self.last
+            boxes = _merge(_changed(old_shapes, shapes, _shape_box, scale) + _changed(old_images, images, _image_box, scale)
+                           + _changed(old_texts, texts, _text_box, scale), full)
+            if sum((b[2] - b[0]) * (b[3] - b[1]) for b in boxes) > 0.6 * full[0] * full[1]:
+                boxes = None  # most of it: one whole redraw is quicker
+        self.last = (key, shapes, images, texts)
+        self.count += 1
+        if boxes is None:
+            self.big = self.small = None  # let them go before a whole redraw makes its own
+            self.image, _ = paint(layout, width, height, scale)
+            self.changed = None
+            return self.image, _hits(layout)
+        image = self.image.copy()  # a new frame (the window compares frames by identity)
+        if boxes:
+            if self.big is None or self.big.size != size:
+                self.big, self.small = Image.new("RGB", size, BG[:3]), Image.new("RGB", full, BG[:3])
+            mask, shadow = frame(width, height, scale)
+            d = ImageDraw.Draw(self.big, "RGBA")
+            for box in boxes:
+                ss = tuple(v * SS for v in box)
+                self.big.paste(BG[:3], ss)
+                _draw_shapes(d, [op for op in shapes if _overlaps(_shape_box(op, scale), box)], width, height, scale)
+                self.small.paste(self.big.crop(ss).reduce(SS), box[:2])
+                _draw_top(self.small, [op for op in images if _overlaps(_image_box(op, scale), box)],
+                          [op for op in texts if _overlaps(_text_box(op, scale), box)], scale)
+                region = self.small.crop(box).convert("RGBA")
+                region.putalpha(mask.crop(box))
+                out = shadow.crop(box)
+                out.alpha_composite(region)
+                image.paste(out, box[:2])
+        self.image, self.changed = image, boxes
+        return image, _hits(layout)
+
+
+def write_bgra(image, address, boxes=None):
+    """Write an RGBA image as premultiplied BGRA (what a layered window shows) to memory at
+    `address`, rows of image.width * 4 bytes; with `boxes`, only those parts (device px)."""
+    if boxes is None:
+        data = image.convert("RGBa").tobytes("raw", "BGRa")
+        ctypes.memmove(address, data, len(data))
+        return
+    stride = image.width * 4
+    for x0, y0, x1, y1 in boxes:
+        data = image.crop((x0, y0, x1, y1)).convert("RGBa").tobytes("raw", "BGRa")
+        row = (x1 - x0) * 4
+        for i in range(y1 - y0):
+            ctypes.memmove(address + (y0 + i) * stride + x0 * 4, data[i * row:(i + 1) * row], row)
+
+
+def render(state, hover=None, scale=1.0, pending=None, pinned=False, fx=None, armed=None, compact=None, only=None, painter=None):
+    """(image, hits). With a Painter, only what changed since its last frame is drawn again."""
     layout, height = build(state, hover, pending, pinned, fx, armed, compact, only)
     compact = (state.get("compact") if compact is None else compact) and not only
-    return paint(layout, COMPACT_WIDTH if compact else WIDTH, height, scale)
+    return (painter.paint if painter else paint)(layout, COMPACT_WIDTH if compact else WIDTH, height, scale)
 
 
-def render_menu(items, hover=None, scale=1.0, fx=None):
+def render_menu(items, hover=None, scale=1.0, fx=None, painter=None):
     layout, height = build_menu(items, hover, fx)
-    return paint(layout, MENU_WIDTH, height, scale)
+    return (painter.paint if painter else paint)(layout, MENU_WIDTH, height, scale)
 
 
 def hit_test(hits, x, y):

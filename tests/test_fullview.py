@@ -238,6 +238,44 @@ class FullViewTests(unittest.TestCase):
         self.view.frame()
         self.assertIn("anim", self.host.timers)  # the hover fades in
 
+    def test_a_running_animation_timer_is_left_running(self):
+        """Windows' timer repeats; setting it again each frame restarted its wait, and frames
+        came every other timer tick (about 32 a second instead of 64)."""
+        sets = []
+        self.host.timers.pop("anim", None)
+        set_timer = self.host.set_timer
+        self.host.set_timer = lambda name, ms: (sets.append((name, ms)), set_timer(name, ms))
+        for _ in range(5):
+            self.view.frame()
+        self.assertEqual([s for s in sets if s[0] == "anim"], [("anim", fullview.ANIM_MS)])
+        self.assertLess(fullview.ANIM_MS, 15.625)  # Windows' timer tick
+        del self.host.timers["anim"]  # a host whose timers fire once (macOS, Linux): set again
+        self.view.frame()
+        self.assertIn("anim", self.host.timers)
+
+    def test_cards_drawn_along_their_edges_match_a_whole_blend(self):
+        """A card's border and its blend over the shadow are drawn only near its edges; the
+        result must be the same as blending all of it, in use, spent, hovered and at any scale."""
+        from PIL import Image
+        accounts = [account(1, "claude", active=True), account(2, "codex", eligible=False),
+                    account(3, "claude", status="rate limited")]
+        ui = fullview.UI()
+        for scale in (1.0, 1.25, 1.5, 2.0):
+            for data in accounts:
+                for fade in (0.0, 0.5, 1.0):
+                    ui.fades = {"card:" + data["id"]: fade}
+                    tile = vr.draw_card(data, 400, 300, scale, ui, False, True, False)
+                    m = round(vr.SHADOW * scale)
+                    body = Image.new("RGB", (round(400 * scale), round(300 * scale)), vr.SURFACE)
+                    _, _, border, spent = vr.card_content(vr.Canvas(body, scale, vr.SURFACE), data, 400, 300, ui, False, True, False)
+                    card = body.convert("RGBA")
+                    card.paste(border[:3], (0, 0), vr.ring_alpha(body.width, body.height, round(vr.RADIUS * scale),
+                                                                 max(1, round(scale)), border[3]))
+                    card.putalpha(vr.rr_alpha(body.width, body.height, round(vr.RADIUS * scale), 184 if spent else 255))
+                    whole = vr.shadow(400, 300, scale).copy()
+                    whole.alpha_composite(card, (m, m))
+                    self.assertEqual(tile.image.tobytes(), whole.tobytes(), (scale, data["id"], fade))
+
     def test_bars_fill_from_empty_then_follow_changes(self):
         motion = self.view.motion
         bar = ("bar", ("claude-2", "five_hour"))

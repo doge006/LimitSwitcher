@@ -506,12 +506,33 @@ def draw_card(account, w, h, scale, ui, name_mode, live, locked):
     hits, live_parts, border, spent = card_content(Canvas(body, scale, SURFACE), account, w, h, ui, name_mode, live, locked)
     # Shape: rounded card, border (accent when in use, stronger on hover), shadow, dimmed when spent
     card = body.convert("RGBA")
-    ring = ring_alpha(body.width, body.height, round(RADIUS * scale), max(1, round(scale)), border[3])
-    card.paste(border[:3], (0, 0), ring)
-    card.putalpha(rr_alpha(body.width, body.height, round(RADIUS * scale), 184 if spent else 255))  # .72 when spent
+    r, line = round(RADIUS * scale), max(1, round(scale))
+    ring = ring_alpha(body.width, body.height, r, line, border[3])
+    for box in edge_boxes(*body.size, r + line + 2):  # the ring is empty further in
+        card.paste(border[:3], box, ring.crop(box))
+    card.putalpha(rr_alpha(body.width, body.height, r, 184 if spent else 255))  # .72 when spent
     tile = shadow(w, h, scale).copy()
-    tile.alpha_composite(card, (m, m))
+    over_shadow(tile, card, m, None if spent else r + 2)
     return Tile(tile, hits, m, [part + (spent,) for part in live_parts])
+
+
+def edge_boxes(w, h, band):
+    """The strips `band` px wide along the four edges of a w x h image (all of it when they meet)."""
+    if 2 * band >= min(w, h):
+        return [(0, 0, w, h)]
+    return [(0, 0, w, band), (0, h - band, w, h), (0, band, band, h - band), (w - band, band, w, h - band)]
+
+
+def over_shadow(tile, card, m, band):
+    """tile.alpha_composite(card, (m, m)). With `band`, the card is opaque further in than that
+    from its edges: only those strips blend, and the middle is copied straight across (the same
+    pixels; tests compare them), which is most of a card's drawing time saved."""
+    boxes = edge_boxes(*card.size, band) if band else [(0, 0) + card.size]
+    for box in boxes:
+        tile.alpha_composite(card, (m + box[0], m + box[1]), box)
+    if len(boxes) > 1:
+        middle = (band, band, card.width - band, card.height - band)
+        tile.paste(card.crop(middle), (m + band, m + band))
 
 
 def record_card(account, w, h, scale, ui, name_mode, live, locked):
