@@ -111,11 +111,20 @@ def measure_panel(flyout_module, controller, scale):
 
     panel = Panel(tray)
     panel.pinned = True  # stays open on a desktop where it can't keep focus
-    opening = Recorder(panel, "_tick")
+    ticks = Recorder(panel, "_tick")
     steps = Recorder(panel, "fx_step")
+    opens, closes = [], []
+    for _ in range(4):  # open and close a few times: each is only about ten frames
+        panel.open()
+        pump(0.4)
+        opens.append(cadence(ticks.take()))
+        panel.close()
+        pump(0.3)
+        closes.append(cadence(ticks.take()))
     panel.open()
     pump(0.4)
-    result = {"open": cadence(opening.take())}
+    ticks.take()
+    result = {"open": merge(opens), "close": merge(closes)}
     steps.take()
     hovers = []
     actions = [action for _, action in panel.hits if action.startswith(("swap:", "toggle:"))]
@@ -188,7 +197,7 @@ def measure(root):
 def rows(data):
     out = []
     for scale, parts in data["panel"].items():
-        for motion, label in (("open", "open animation"), ("hover", "hover fades")):
+        for motion, label in (("open", "open animation"), ("close", "close animation"), ("hover", "hover fades")):
             out.append((f"Panel {label} @{round(float(scale) * 100)}%", parts.get(motion)))
     for scale, parts in data["full_view"].items():
         for motion, label in (("rise", "cards rising in"), ("hover", "hover fades")):

@@ -886,20 +886,17 @@ class Painter:
     """paint() for one popup's frames, drawing again only what changed since its last frame: a
     hover fade or a toggle changes one row, not the whole panel. Each changed area is rebuilt
     from the background up with everything that touches it, in the same order, so the frame is
-    pixel for pixel what paint() draws (tests compare them). The two scratch canvases are kept
-    while the popup is open and dropped with the painter."""
+    pixel for pixel what paint() draws (tests compare them)."""
 
     def __init__(self):
         self.last = None      # ((width, height, scale), shapes, images, texts) of the last frame
         self.image = None     # the last frame
-        self.big = self.small = None
         self.changed = None   # device boxes the last frame changed (None: all of it)
         self.count = 0        # frames painted; `changed` is relative to frame count - 1
 
     def paint(self, layout, width, height, scale):
         M = MARGIN
         full = (round((width + 2 * M) * scale), round((height + 2 * M) * scale))
-        size = (full[0] * SS, full[1] * SS)
         key = (width, height, scale)
         shapes, images, texts = list(layout.shapes), list(layout.images), list(layout.texts)
         boxes = None
@@ -912,24 +909,28 @@ class Painter:
         self.last = (key, shapes, images, texts)
         self.count += 1
         if boxes is None:
-            self.big = self.small = None  # let them go before a whole redraw makes its own
+            self.image = None  # let it go before a whole redraw makes the next
             self.image, _ = paint(layout, width, height, scale)
             self.changed = None
             return self.image, _hits(layout)
         image = self.image.copy()  # a new frame (the window compares frames by identity)
         if boxes:
-            if self.big is None or self.big.size != size:
-                self.big, self.small = Image.new("RGB", size, BG[:3]), Image.new("RGB", full, BG[:3])
+            # Scratch canvases at the frame's own coordinates, only as tall as the lowest change
+            # and not cleared: each changed box is filled before it is drawn, and nothing outside
+            # the boxes is read (memory is only touched where something is drawn).
+            bottom = max(b[3] for b in boxes)
+            big = Image.new("RGB", (full[0] * SS, bottom * SS), None)
+            small = Image.new("RGB", (full[0], bottom), None)
             mask, shadow = frame(width, height, scale)
-            d = ImageDraw.Draw(self.big, "RGBA")
+            d = ImageDraw.Draw(big, "RGBA")
             for box in boxes:
                 ss = tuple(v * SS for v in box)
-                self.big.paste(BG[:3], ss)
+                big.paste(BG[:3], ss)
                 _draw_shapes(d, [op for op in shapes if _overlaps(_shape_box(op, scale), box)], width, height, scale)
-                self.small.paste(self.big.crop(ss).reduce(SS), box[:2])
-                _draw_top(self.small, [op for op in images if _overlaps(_image_box(op, scale), box)],
+                small.paste(big.crop(ss).reduce(SS), box[:2])
+                _draw_top(small, [op for op in images if _overlaps(_image_box(op, scale), box)],
                           [op for op in texts if _overlaps(_text_box(op, scale), box)], scale)
-                region = self.small.crop(box).convert("RGBA")
+                region = small.crop(box).convert("RGBA")
                 region.putalpha(mask.crop(box))
                 out = shadow.crop(box)
                 out.alpha_composite(region)
