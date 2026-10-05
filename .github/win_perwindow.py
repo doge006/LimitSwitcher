@@ -118,6 +118,10 @@ def window():
                  "    highlight.top_windows(titles)\n"
                  "    hwnd, title = highlight.console_window(int(sys.argv[2]))\n"
                  "    print('console', hwnd, repr(title), file=sys.stderr)\n"
+                 "    import ctypes\n"
+                 "    k = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+                 "    print('own console', k.GetConsoleWindow(), 'attach', k.AttachConsole(int(sys.argv[2])), 'error', ctypes.get_last_error(), file=sys.stderr)\n"
+                 "    k.FreeConsole()\n"
                  "    for top, (owner, text) in titles.items():\n"
                  "        print('window', top, owner, family.get(owner), repr(text), file=sys.stderr)\n"
                  "time.sleep(highlight.SHOW_FOR + 0.5)\n")
