@@ -221,6 +221,21 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(source.read_text().endswith("\n"))
 
 
+class SignatureTests(unittest.TestCase):
+    def test_a_new_login_is_seen_even_with_the_same_file_time(self):
+        """Windows keeps file times to about 15 ms: two logins written close together can share one."""
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            claude = Claude(home=home, keychain=False)
+            claude_login(home, "uuid-b", "b@example.com", "at-b", "rt-b")
+            before = claude.signature()
+            stamps = [os.stat(path).st_mtime_ns for path in (claude.credentials_file, claude.config_file)]
+            claude_login(home, "uuid-c", "c@example.com", "at-c", "rt-c")
+            for path, stamp in zip((claude.credentials_file, claude.config_file), stamps):
+                os.utime(path, ns=(stamp, stamp))
+            self.assertNotEqual(claude.signature(), before)
+
+
 class WrapperTests(unittest.TestCase):
     def test_interactive_windows_only(self):
         self.assertTrue(wrapper.interactive([]))
