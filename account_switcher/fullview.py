@@ -132,6 +132,9 @@ class UI:
         self.anchors = {}
         self.fades = {}            # what is animating right now: hover amounts, toggle positions, the spin
         self.window = None         # the window picked in the Windows list (separate accounts per window)
+        self.window_number = None  # its number ("Window 2"), for the cards' "Use in Window 2"
+        self.per_window = False    # the setting is on: cards offer "New window"
+        self.own_windows = 0       # how many windows have an account of their own (the main account is shared by the rest)
 
 
 class FullView:
@@ -158,6 +161,7 @@ class FullView:
         self.changed = None        # device boxes the last frame changed (None: all of it), for the host
         self.had_overlays = False
         self.take_log(state)
+        self.ui.per_window, self.ui.own_windows = bool(state.get("perWindow")), len(state.get("windows") or [])
         try:
             controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
         except (RuntimeError, ValueError):
@@ -174,8 +178,9 @@ class FullView:
         ids = {a["id"] for a in state["accounts"]}
         if ui.confirm not in ids:
             ui.confirm = None
-        if ui.window not in {w["id"] for w in state.get("windows") or []}:
-            ui.window = None  # that window closed
+        windows = state.get("windows") or []
+        ui.per_window, ui.own_windows = bool(state.get("perWindow")), len(windows)
+        self.pick_window(ui.window)  # None when that window closed
         if ui.editing and ui.editing[0] not in ids and ui.editing[0] != JEV_KEY:
             ui.editing = None
         if ui.editing and ui.editing[0] == JEV_KEY and not (ui.menu == "settings" and state.get("jevCompact")):
@@ -271,7 +276,8 @@ class FullView:
                      repr(sorted((state.get("update") or {}).items())))
             make = lambda: (vr.record_topbar if self.native else vr.draw_topbar)(state, w, self.scale, ui)
         elif kind == "windows":
-            cache = (w, h, json.dumps([state.get("windows"), [(a["id"], a.get("label"), a.get("email")) for a in state.get("accounts") or []],
+            cache = (w, h, json.dumps([state.get("windows"), state.get("perWindow"), vr.free_for_window(state),
+                                       [(a["id"], a.get("label"), a.get("email")) for a in state.get("accounts") or []],
                                        state.get("nameMode"), ui.window,
                                        sorted((k, vr.quantize(v)) for k, v in ui.fades.items() if k.startswith("window:"))], default=str))
             make = lambda: (vr.record_windows if self.native else vr.draw_windows)(state, w, h, self.scale, ui)
@@ -665,13 +671,13 @@ class FullView:
         elif kind == "openWindow":  # a Claude Code window that keeps this account
             self.act(kind, {"id": arg})
         elif kind == "window":  # the Windows list: pick a window (it's pointed out on screen), or unpick it
-            ui.window = None if ui.window == arg else arg
+            self.pick_window(None if ui.window == arg else arg)
             if ui.window:
                 self.act("highlightWindow", {"window": arg})
         elif kind == "swapWindow":  # then an account for it: only that window moves
             if ui.window:
                 self.act("swapWindow", {"window": ui.window, "id": arg})
-            ui.window = None
+            self.pick_window(None)
         elif kind == "remove":
             ui.confirm = arg
         elif kind == "remove-no":
@@ -794,6 +800,15 @@ class FullView:
             ui.menu = ui.editor = ui.confirm = None
             ui.jev_confirm = False
             self.host.invalidate()
+        elif name == "escape" and ui.window:  # a picked window: unpicked
+            self.pick_window(None)
+            self.host.invalidate()
+
+    def pick_window(self, window_id):
+        """The window picked in the Windows list (None: none, or it has closed), and its number."""
+        window = next((w for w in self.state.get("windows") or [] if w["id"] == window_id), None)
+        self.ui.window = window["id"] if window else None
+        self.ui.window_number = window.get("number") if window else None
 
     def char(self, value):
         ui = self.ui
