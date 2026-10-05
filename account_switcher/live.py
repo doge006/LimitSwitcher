@@ -763,14 +763,14 @@ class LiveAccounts:
                     if entry.get("status", "").startswith("Rate limited"):
                         entry["status"] = ""  # live numbers: the API's rate limit no longer matters
         compacting = bool(session) and self.compacting(session)
-        # While Jev compacts the icon turns yellow and "Jev compacting…" follows the app's name.
+        # While Jev compacts the icon turns yellow and "Jev Compacting…" follows the app's name.
         groups = [[("⇄", "warn" if compacting else "good"), (" ", None), ("LimitSwitcher", "dim")]]
         if compacting:
-            groups.append([("Jev compacting…", "warn")])
+            groups.append([("Jev Compacting…", "warn")])
         job = self.compactions.get(session or "")
         if job and job["status"] == "done" and job.get("saved") and now - job.get("finishedAt", 0) < JEV_SHOWN \
                 and round(job["saved"] / 1000) > 0:  # what it saved, for a little while after
-            groups.append([("Jev compacted ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens saved", "dim")])
+            groups.append([("Jev Compacted (saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens)", "dim")])
         groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))
@@ -905,12 +905,26 @@ class LiveAccounts:
         return True
 
     def compacted_context(self, session):
-        """For the session's status line: its context after a Jev compaction ({"tokens", "at"}),
-        which Claude Code itself reports only after the next reply. None when there was none."""
+        """For the session's status line: what its last Jev compaction saved ({"saved", "at"}). The
+        status line takes it off the context Claude Code last reported, which stays the size from
+        before the compaction until the next reply. None when there was none."""
         job = self.compactions.get(session or "")
-        if job is None or job["status"] != "done" or not job.get("saved") or not isinstance(job.get("tokens"), int):
+        if job is None or job["status"] != "done" or not job.get("saved"):
             return None
-        return {"tokens": max(0, job["tokens"] - job["saved"]), "at": job.get("finishedAt") or job["at"]}
+        return {"saved": job["saved"], "at": job.get("finishedAt") or job["at"]}
+
+    def compaction_started(self, session, job_id):
+        """The session's mod started a compaction of its own (`/jevcompact`): shown in its status
+        line like the ones before a swap, but nothing waits for it."""
+        if not session or not job_id:
+            return False
+        with self.lock:
+            job = self.compactions.get(session)
+            if job is not None and job["status"] in ("asked", "running") and time.time() - job["at"] < JEV_WAIT:
+                return False  # one before a swap is under way: that one is shown
+            self.compactions[session] = {"id": job_id, "status": "running", "at": time.time(), "tokens": None,
+                                         "afk": False, "answered": True, "manual": True}
+        return True
 
     def compacting(self, session):
         job = self.compactions.get(session or "")

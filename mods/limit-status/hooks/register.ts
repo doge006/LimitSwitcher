@@ -73,9 +73,9 @@ async function poll($: any, statePath: string): Promise<void> {
   await report($, statePath, rateLimits)
 }
 
-/** Runs the compaction, retrying as the app's rule says, then tells the app how it went. */
+/** Runs the compaction, retrying as the app's rule says, then tells the app how it went. What it
+ * is doing shows in the app's own line in the status bar ("Jev Compacting…", then what it saved). */
 async function compactFor($: any, statePath: string, session: string, id: string, attempt: number, busy: number): Promise<void> {
-  $.ui.status(`⇄ LimitSwitcher · Jev compacting…${attempt > 1 ? ` (try ${attempt} of ${TRIES})` : ''}`)
   let skip: string | undefined
   let saved = 0
   try {
@@ -93,15 +93,10 @@ async function compactFor($: any, statePath: string, session: string, id: string
     skip = `the session is busy (${error instanceof Error ? error.message : String(error)})`
   }
   if (skip !== undefined && skip.startsWith(FAILED) && attempt < TRIES) {
-    $.ui.status(`⇄ LimitSwitcher · Jev failed, trying again in ${RETRY_AFTER / 1000} s`)
     $.clock.after(RETRY_AFTER, () => compactFor($, statePath, session, id, attempt + 1, 1))
     return
   }
   const outcome = skip === undefined ? 'done' : skip.startsWith(FAILED) ? 'failed' : 'skipped'
-  $.ui.status(outcome === 'done'
-    ? `⇄ LimitSwitcher · Jev compacted: ~${Math.round(saved / 1000)}k tokens less to load`
-    : `⇄ LimitSwitcher · no Jev compaction (${skip}); swapping without it`)
-  $.clock.after(15_000, () => $.ui.status(undefined))
   const app = await appOf($, statePath)
   if (!app) return
   try {
@@ -111,17 +106,50 @@ async function compactFor($: any, statePath: string, session: string, id: string
   }
 }
 
-/** `/jevcompact`: the same compaction by hand, once, in the session it is typed in. */
-async function compactByHand($: any): Promise<string> {
+/** `/jevcompact`: the same compaction by hand, once, in the session it is typed in. The app is told
+ * when it starts and how it went, so its line in the status bar shows it like one before a swap.
+ * Returns what to say, and whether the app showed it (then nothing else needs to). */
+async function compactByHand($: any, statePath: string): Promise<{ text: string; shown: boolean }> {
+  const app = await appOf($, statePath)
+  const id = `hand-${Date.now().toString(36)}`
+  let session = ''
+  let shown = false
+  if (app) {
+    try {
+      session = String(await $.session.id())
+      shown = (await post($, app, '/api/compaction', { session, id, outcome: 'running' }))?.ok === true
+    } catch {
+      // the app is busy: the toast says how it went
+    }
+  }
+  let text: string
+  let outcome = 'skipped'
+  let saved = 0
+  let skip: string | undefined
   try {
     const result = await $.session.compact({ instructions: MARKER })
-    if (result.skip !== undefined) return `No Jev compaction: ${result.skip}`
-    const saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
-      ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
-    return `Jev compacted: ~${Math.round(saved / 1000)}k tokens less to load`
+    skip = result.skip
+    if (skip === undefined) {
+      saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
+        ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
+      outcome = 'done'
+      text = `Jev compacted: ~${Math.round(saved / 1000)}k tokens less to load`
+    } else {
+      outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
+      text = `No Jev compaction: ${skip}`
+    }
   } catch (error) {
-    return `No Jev compaction: ${error instanceof Error ? error.message : String(error)}`
+    skip = error instanceof Error ? error.message : String(error)
+    text = `No Jev compaction: ${skip}`
   }
+  if (app && shown) {
+    try {
+      await post($, app, '/api/compaction', { session, id, outcome, saved, ...(skip ? { reason: skip.slice(0, 300) } : {}) })
+    } catch {
+      // the app stops showing it on its own
+    }
+  }
+  return { text, shown: shown && outcome === 'done' }
 }
 
 export const register: Register = (on, options) => {
@@ -139,14 +167,12 @@ export const register: Register = (on, options) => {
   })
 
   // The engine refuses a compaction under the command's own hook: it starts right after, outside
-  // this dispatch, and says how it went in the status line and a toast.
+  // this dispatch. LimitSwitcher's line in the status bar shows it; a toast only says what that
+  // line could not (no app running, or no compaction).
   on('command.run', { command: 'jevcompact' }, async $ => {
     $.clock.after(0, async () => {
-      $.ui.status('⇄ LimitSwitcher · Jev compacting…')
-      const text = await compactByHand($)
-      $.ui.status(`⇄ LimitSwitcher · ${text}`)
-      $.ui.toast(text)
-      $.clock.after(15_000, () => $.ui.status(undefined))
+      const { text, shown } = await compactByHand($, statePath)
+      if (!shown) $.ui.toast(text)
     })
     return { text: 'Jev compacting…' }
   })

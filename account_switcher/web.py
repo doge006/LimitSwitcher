@@ -530,6 +530,12 @@ class Controller:
         """A session's mod finished (or gave up on) the compaction it was asked for."""
         if not self.live:
             return False
+        if body.get("outcome") == "running":  # one the session started itself (/jevcompact)
+            started = self.gateway.manager.compaction_started(str(body.get("session") or "")[:100] or None,
+                                                              str(body.get("id") or "")[:40])
+            if started:
+                self.notify("changed", None)
+            return started
         saved = body.get("saved") if type(body.get("saved")) is int else None
         done = self.gateway.manager.compaction_done(str(body.get("session") or "")[:100], str(body.get("id") or ""),
                                                     str(body.get("outcome") or ""), saved, body.get("reason"))
@@ -647,7 +653,7 @@ def make_server(controller, port=0):
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return
-            if self.path == "/api/compaction":  # the mod: a Jev compaction it was asked for is done
+            if self.path == "/api/compaction":  # the mod: a Jev compaction started by hand, or one it ran is done
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
                     self.respond(403, {"error": "Forbidden"})

@@ -97,7 +97,7 @@ def report(state, data, cache=None):
         shown = (paint(parts) if parts else line) if line else None
         remember(cache, shown)
         compacted = answer.get("compacted")
-        compacted = compacted if isinstance(compacted, dict) and _number(compacted.get("tokens")) and _number(compacted.get("at")) else None
+        compacted = compacted if isinstance(compacted, dict) and _number(compacted.get("saved")) and _number(compacted.get("at")) else None
         return shown, limits if isinstance(limits, dict) else None, compacted
     except (OSError, ValueError, KeyError, TypeError, IndexError):
         return recall(cache), None, None  # the app is busy or gone: the last line for a moment, not a blank one
@@ -251,8 +251,8 @@ def paint_context(text):
 def session_context(path, data, compacted):
     """The ctx text for this run. Claude Code's own figures while it has new ones; its last ones
     while it sends none (a usage limit, a compaction: until the next reply), however long that is;
-    and once a Jev compaction shrank the session, the size after it, until a reply brings a newer
-    figure. The session's file keeps the text, its figure, and since when that figure stands."""
+    and once a Jev compaction shrank the session, that size less what Jev saved, until a reply
+    brings a newer figure. The session's file keeps the text, its figure, and since when that figure stands."""
     try:
         with open(path, encoding="utf-8") as handle:
             saved = loads(handle.read()) if path else None
@@ -274,8 +274,10 @@ def session_context(path, data, compacted):
         text, size, since = saved["text"], saved.get("size"), saved.get("since")
     else:
         text, size, since = None, None, None
-    if compacted and (since is None or not _number(since) or compacted["at"] > since):
-        tokens = compacted["tokens"]
+    used = figures[0] if figures else (saved or {}).get("used")
+    if compacted and _number(used) and _number(since) and compacted["at"] > since:
+        # Claude Code still reports the size from before the compaction: less what Jev saved
+        tokens = max(0, used - compacted["saved"])
         size = size or (saved or {}).get("size")
         return context_text(tokens, 100 - tokens * 100 / size if _number(size) and size > 0 else None)
     return text
