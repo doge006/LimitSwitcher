@@ -53,22 +53,27 @@ jobs:
           sleep 8
           python3 - <<'PY'
           import json, os, subprocess, time
-          # Off by default: turn it on as the Settings switch does (the app installs it at once).
-          import urllib.request
-          url = open(os.path.expanduser("~/Library/Application Support/LimitSwitcher/running.url")).read().strip()
-          base, token = url.split("/#token=")
-          request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
-                                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
-          urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10).read()
-          settings = {}
-          for _ in range(40):
+          # The app's line goes around a status line the person already has (or comes with the
+          # Status mod): give Claude Code one, and the app (which checks settings.json every 20 s)
+          # wraps it in its own.
+          path = os.path.expanduser("~/.claude/settings.json")
+          os.makedirs(os.path.dirname(path), exist_ok=True)
+          try:
+              settings = json.load(open(path))
+          except (OSError, ValueError):
+              settings = {}
+          settings["statusLine"] = {"type": "command", "command": "echo ci-own-line"}
+          json.dump(settings, open(path, "w"))
+          for _ in range(240):
               try:
-                  settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+                  settings = json.load(open(path))
               except (OSError, ValueError):
                   settings = {}
-              if "statusLine" in settings:
+              if "account_switcher_statusline" in str(settings.get("statusLine")):
                   break
               time.sleep(0.25)
+          else:
+              raise SystemExit("the app did not take over the status line: " + json.dumps(settings.get("statusLine")))
           command = settings["statusLine"]["command"]
           print("command:", command)
           sample = json.dumps({"session_id": "ci", "rate_limits": {"five_hour": {"used_percentage": 12, "resets_at": time.time() + 3600}}})
@@ -141,22 +146,27 @@ jobs:
           sleep 8
           python3 - <<'PY'
           import json, os, subprocess, time
-          # Off by default: turn it on as the Settings switch does (the app installs it at once).
-          import urllib.request
-          url = open(os.path.expanduser("~/Library/Application Support/LimitSwitcher/running.url")).read().strip()
-          base, token = url.split("/#token=")
-          request = urllib.request.Request(base + "/api/statusline", data=b'{"on": true}', method="POST",
-                                           headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
-          urllib.request.build_opener(urllib.request.ProxyHandler({})).open(request, timeout=10).read()
-          settings = {}
-          for _ in range(40):
+          # The app's line goes around a status line the person already has (or comes with the
+          # Status mod): give Claude Code one, and the app (which checks settings.json every 20 s)
+          # wraps it in its own.
+          path = os.path.expanduser("~/.claude/settings.json")
+          os.makedirs(os.path.dirname(path), exist_ok=True)
+          try:
+              settings = json.load(open(path))
+          except (OSError, ValueError):
+              settings = {}
+          settings["statusLine"] = {"type": "command", "command": "echo ci-own-line"}
+          json.dump(settings, open(path, "w"))
+          for _ in range(240):
               try:
-                  settings = json.load(open(os.path.expanduser("~/.claude/settings.json")))
+                  settings = json.load(open(path))
               except (OSError, ValueError):
                   settings = {}
-              if "statusLine" in settings:
+              if "account_switcher_statusline" in str(settings.get("statusLine")):
                   break
               time.sleep(0.25)
+          else:
+              raise SystemExit("the app did not take over the status line: " + json.dumps(settings.get("statusLine")))
           command = settings["statusLine"]["command"]
           print("command:", command)
           assert "/Applications/LimitSwitcher.app/" in command, "not the bundle's Python"
