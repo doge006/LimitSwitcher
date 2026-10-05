@@ -183,6 +183,56 @@ class FullViewTests(unittest.TestCase):
         self.click("remove-yes:claude-2")
         self.assertIn(("remove", {"id": "claude-2"}), self.controller.calls)
 
+    def hover_card(self, account_id):
+        item = next(i for i in self.view.items if i[1] == "card:" + account_id)
+        self.view.mouse_move(item[2] + 30, item[3] + 60 - self.view.scroll)
+        self.view.frame()
+        self.view.motion.settle()
+        self.view.frame()
+
+    def hits(self, prefix):
+        return [h[1] for h in self.view.page_hits if h[1].startswith(prefix)]
+
+    def test_new_window_only_with_separate_accounts_per_window_on(self):
+        self.hover_card("claude-2")
+        self.assertIn("remove:claude-2", self.hits("remove:"))
+        self.assertEqual(self.hits("openWindow:"), [])  # the setting is off: no per-window button on any card
+        self.view.set_state(state(perWindow=True))
+        self.view.frame()
+        self.hover_card("claude-2")
+        self.assertEqual(self.hits("openWindow:"), ["openWindow:claude-2"])
+        self.click("openWindow:claude-2")
+        self.assertIn(("openWindow", {"id": "claude-2"}), self.controller.calls)
+
+    def test_windows_list_says_how_to_start_when_on_and_empty(self):
+        self.assertFalse(any(i[0] == "windows" for i in self.view.items))  # off: nothing about windows
+        self.view.set_state(state(perWindow=True))
+        self.view.frame()
+        self.assertTrue(any(i[0] == "windows" for i in self.view.items))
+        self.assertIn("run claude", " ".join(vr.no_window_lines(state(perWindow=True), 900)))
+        taken = state(perWindow=True, accounts=[account(1, "claude", active=True), account(2, "claude", eligible=False)])
+        self.assertIn("in use", " ".join(vr.no_window_lines(taken, 900)))
+
+    def test_pick_a_window_then_an_account_for_it(self):
+        windows = [{"id": "window-0000000a", "number": 1, "accountId": "claude-3", "cwd": "/x/proj", "model": "Opus"}]
+        accounts = [account(1, "claude", active=True), account(2, "claude"), account(3, "claude", pinned=True, window=1),
+                    account(1, "codex", active=True)]
+        self.view.set_state(state(perWindow=True, windows=windows, accounts=accounts))
+        self.view.frame()
+        self.assertEqual(self.hits("swapWindow:"), [])
+        self.click("window:window-0000000a")
+        self.assertEqual(self.view.ui.window_number, 1)
+        self.assertIn(("highlightWindow", {"window": "window-0000000a"}), self.controller.calls)
+        self.assertEqual(self.hits("swapWindow:"), ["swapWindow:claude-2"])  # not the main account, its own, or Codex
+        self.view.key("escape")  # changed my mind
+        self.view.frame()
+        self.assertIsNone(self.view.ui.window)
+        self.assertEqual(self.hits("swapWindow:"), [])
+        self.click("window:window-0000000a")
+        self.click("swapWindow:claude-2")
+        self.assertIn(("swapWindow", {"window": "window-0000000a", "id": "claude-2"}), self.controller.calls)
+        self.assertIsNone(self.view.ui.window)
+
     def test_rename_in_name_mode(self):
         self.view.set_state(state(nameMode=True))
         self.view.frame()

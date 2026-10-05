@@ -446,8 +446,10 @@ def layout(state, width):
     card_w = (inner - (cols - 1) * GAP) / cols
     name_mode = bool(state.get("nameMode"))
     windows = state.get("windows") or []
-    if windows:  # separate accounts per window: the open windows, above the accounts
-        h = windows_height(windows)
+    if windows or (state.get("perWindow") and state.get("mode") == "live"):
+        # separate accounts per window: the open windows, above the accounts (with the setting on and
+        # none open yet, a line saying how to get one)
+        h = windows_height(windows, len(no_window_lines(state, inner)))
         items.append(("windows", "windows", left, y, inner, h, None))
         y += h + 26
     for provider, title, caption in PROVIDERS:
@@ -494,7 +496,8 @@ def card_key(account, ui, name_mode, live, locked):
     editing = ui.editing if ui.editing and ui.editing[0] == aid else None
     fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
     return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
-                       name_mode, live, locked, CLOCK_24, int(time.time() // 60), getattr(ui, "window", None)],
+                       name_mode, live, locked, CLOCK_24, int(time.time() // 60), getattr(ui, "window", None),
+                       getattr(ui, "window_number", None), getattr(ui, "per_window", False), getattr(ui, "own_windows", 0)],
                       sort_keys=True, default=str)
 
 
@@ -670,6 +673,13 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
     else:
         status = account.get("status") or ""
         relogin = live and any(s in status.lower() for s in ("sign in", "expired", "missing"))
+        # can open a window of its own (only offered while "Separate accounts per window" is on)
+        own = live and provider == "claude" and getattr(ui, "per_window", False) and not active and not account.get("pinned")
+        # a window picked in the Windows list: the button gives it this account ("Use in Window 2")
+        number = getattr(ui, "window_number", None)
+        pick = getattr(ui, "window", None) and provider == "claude" and eligible and not active and not account.get("pinned")
+        pick = (f"Use in Window {number}" if number else "Use in window") if pick else None
+        bw = max(124, text_w(pick, 13, True) + 24) if pick else 124
         if relogin:
             signing = provider in (ui.signing_in or ())
             label = "Login expired · Sign in again"
@@ -685,26 +695,29 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 # the whole sentence when there is room, else shorter ones: never cut off mid-word
                 hints = [status] if status else [f"Numbers from {ago(age)} ago · checking", f"{ago(age)} ago · checking", f"{ago(age)} old"]
             else:  # what the account is doing, and how old its numbers are
-                parts = ["Used by all sessions"] if active else [] if eligible else ["Waiting for reset"]
+                main = "Shared by other windows" if getattr(ui, "own_windows", 0) else "Used by all sessions"
+                parts = [main] if active else [] if eligible else ["Waiting for reset"]
                 updated = (f"Updated {ago(age)} ago" if age >= 60 else "Updated now") if live and account.get("updated_at") else None
                 hints = [" · ".join(parts + [updated] if updated else parts)]
                 if updated:
                     hints += [" · ".join(parts + [updated.replace("Updated ", "")]), updated]
-            own = live and provider == "claude" and not active and not account.get("pinned")  # can have a window of its own
-            room = w - 36 - 124 - (0 if active else 96) - (96 if own else 0)  # the in-use card has no Remove button to leave room for
-            c.text(18, fy + 21, best_fit(hints, 12, room), 12, WARN if status and not account.get("pinned") else FAINT)
-        bw, bx = 124, w - 18 - 124
+            room = w - 36 - bw - (0 if active else 96)  # the in-use card has no Remove button to leave room for
+            hint = best_fit(hints, 12, room)
+            color = WARN if status and not account.get("pinned") else FAINT
+            if own and text_w(hint, 12) > room - 96:  # "New window" fades in over it on hover: the hint fades out
+                color = mixc(color, SURFACE, card_t)
+            c.text(18, fy + 21, hint, 12, color)
+        bx = w - 18 - bw
         pinned = account.get("pinned")
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
         elif pinned:  # a window of its own has it: never in a second place (one copy of a login)
-            c.text(bx + bw / 2, fy + 16, f"In window {account.get('window') or '?'}", 13, accent, True, anchor="mm")
-        elif getattr(ui, "window", None) and provider == "claude" and eligible:
-            # a window is picked (separate accounts per window): this account goes to that window only
+            c.text(bx + bw / 2, fy + 16, f"In Window {account.get('window') or '?'}", 13, accent, True, anchor="mm")
+        elif pick:  # a window is picked (separate accounts per window): this account goes to that window only
             t = 0.0 if locked else a("swapWindow")
             fill = mixc(accent, blend((255, 255, 255), accent, .1), t)
             c.rect(bx, fy - t, bw, 32, 8, fill + (255,))
-            c.text(bx + bw / 2, fy + 16 - t, "Use in window", 13, ON_ACCENT, True, anchor="mm", bg=fill)
+            c.text(bx + bw / 2, fy + 16 - t, pick, 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
                 hit(bx, fy, bw, 32, "swapWindow")
         elif switching:
@@ -728,9 +741,9 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
                 if not locked and card_t >= .5:
                     hit(rx, fy, 80, 32, "remove")
-                if provider == "claude":  # a Claude Code window that keeps this account
+                if own:  # a new Claude Code window that keeps this account
                     rx -= 6 + 90
-                    quiet_button(c, rx, fy, 90, "Own window", a("openWindow"), card_t)
+                    quiet_button(c, rx, fy, 90, "New window", a("openWindow"), card_t)
                     if not locked and card_t >= .5:
                         hit(rx, fy, 90, 32, "openWindow")
 
@@ -875,8 +888,28 @@ def group_content(c, data, w):
 WINDOW_ROW_H = 40
 
 
-def windows_height(windows):
+def windows_height(windows, lines=1):
+    if not windows:  # none yet: a box saying how to get one
+        return GROUP_HEAD_H + 12 + max(WINDOW_ROW_H, 22 + 18 * lines)
     return GROUP_HEAD_H + 12 + len(windows) * (WINDOW_ROW_H + 8) - 8
+
+
+def no_window_lines(state, w):
+    """With the setting on and no window yet: what to do (or why a new window would share the main account),
+    wrapped to the Windows list's width w."""
+    if state.get("windows"):
+        return []
+    if free_for_window(state):
+        text = "Open a new terminal and run claude: it starts on an account no other window is using, and shows up here."
+    else:
+        text = "Every Claude account is in use, so new windows share the main one. Add an account to give each its own."
+    return wrap(text, 12.5, w - 32)
+
+
+def free_for_window(state):
+    """How many Claude accounts a new window could start on: used nowhere else, under their limits."""
+    return sum(1 for a in state.get("accounts") or [] if a["provider"] == "claude" and not a.get("active")
+               and not a.get("pinned") and a.get("eligible", True) and not a.get("status"))
 
 
 def draw_windows(state, w, h, scale, ui):
@@ -891,17 +924,34 @@ def record_windows(state, w, h, scale, ui):
 
 def windows_content(c, state, w, ui):
     """Separate accounts per window: each open window with its account. A click picks a window (the app
-    points it out on screen); the account cards then offer "Use in window" for that window alone."""
+    points it out on screen); the account cards then offer "Use in Window N" for that window alone.
+    With the setting on and no window yet, one line says how to get one."""
     windows = state.get("windows") or []
     accounts = {a["id"]: a for a in state.get("accounts") or []}
     picked = getattr(ui, "window", None)
     accent = ACCENT["claude"]
     c.text(2, 22, "Windows", 15, TEXT, True)
-    c.text(2 + text_w("Windows", 15, True) + 10, 22, f"{len(windows)} with an account of their own", 12, MUTED)
-    caption = "Now pick an account below for this window" if picked else "Click a window to point it out"
-    c.text(w - 2, 22, caption, 12, accent if picked else FAINT, anchor="rs")
+    if windows:
+        n = len(windows)
+        # the setting is off: these are left from when it was on; new ones share the main account
+        caption = f"{n} {'' if state.get('perWindow') else 'still '}on {'its' if n == 1 else 'their'} own account"
+    else:
+        caption = "Each new Claude Code terminal gets its own account"
+    c.text(2 + text_w("Windows", 15, True) + 10, 22, caption, 12, MUTED)
+    if windows:
+        number = getattr(ui, "window_number", None)
+        hint = f"Now pick an account for Window {number} below" if picked else "Click a window to change its account"
+        c.text(w - 2, 22, hint, 12, accent if picked else FAINT, anchor="rs")
     hits = []
     y = GROUP_HEAD_H + 12
+    if not windows:  # the setting is on, nothing open yet: what to do, or why it can't happen
+        lines = no_window_lines(state, w)
+        box_h = max(WINDOW_ROW_H, 22 + 18 * len(lines))
+        c.outline(0, y, w, box_h, 9, LINE_STRONG)
+        top = y + box_h / 2 - 9 * (len(lines) - 1)
+        for i, line in enumerate(lines):
+            c.text(16, top + 18 * i, line, 12.5, MUTED, anchor="lm")
+        return hits
     for window in windows:
         action = "window:" + window["id"]
         on = picked == window["id"]
@@ -1032,7 +1082,8 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets f
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
-PER_WINDOW = ("perWindow", "Separate accounts per window", "Each new Claude Code window gets an account of its own")
+PER_WINDOW = ("perWindow", "Separate accounts per window",
+              "Each new Claude Code terminal starts on an account no other window is using. Open windows stay as they are.")
 ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"
