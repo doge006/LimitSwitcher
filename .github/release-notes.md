@@ -1,11 +1,18 @@
-The app offers it in Settings → **Update to 1.3.4** (or download below).
+The app offers it in Settings → **Update to 1.3.5** (or download below).
 
-## Separate accounts per window, easier to follow
+## Jev compaction drops old screenshots too
 
-- **Fixed:** with the setting off, hovering a Claude account showed a button for opening a window of its own. That button (now **New window**) only appears while the setting is on, and the account's "Updated" note is no longer cut down to "now" to make room for it.
-- **Turning it on now shows what to do next.** A Windows box above the accounts says: open a new terminal and run `claude`, and that window starts on an account no other window is using. If every account is already in use, it says new windows will share the main one.
-- **Moving one window to another account:** click the window ("Click a window to change its account"), then **Use in Window 1** on the account you want. Esc cancels.
-- **Clearer wording:** the main account says "Shared by other windows" once some windows have their own, and the setting's description says what it does: "Each new Claude Code terminal starts on an account no other window is using. Open windows stay as they are."
+- **Old screenshots and other images are now judged too.** Before, Jev never saw the images in a session's old tool outputs, so a session full of screenshots kept every one through each swap. Now one Jev is done with becomes a short note, and one it is unsure about stays. On a real session with 187 screenshots, each swap had 56k to 107k fewer tokens to load, with no facts lost.
+- **The extra trimming for long sessions ("budget mode") now starts above 333k tokens** instead of 250k. Below that, the normal pass loses fewer facts.
+- **A shorter status line:** after a compaction it says `Jev saved ~120k` (the real number), so the line fits a normal window.
+
+To get the Jev changes, click Settings → Claude Code Status mod → **Reinstall** (it updates the mod), then run `/reload-plugins` in any open session.
+
+## Fixes
+
+- **Two sessions on one account hitting its limit together:** the second one now goes on with the first on the new account. Before, it waited for the old account's reset, which could be hours.
+- **The same when the app's background check switched first:** the session no longer waits for a reset.
+- **A window with its own account** now gets the Jev compaction when it is switched at its limit, like the main login.
 
 ## Download
 
