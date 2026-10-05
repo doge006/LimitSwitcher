@@ -17,7 +17,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import time
 from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -101,17 +100,24 @@ def links():
 
 
 def window():
+    """Found from a process with no console of its own, as the app runs (pythonw): this script has
+    one, which a console window can't be looked up from."""
     process = subprocess.Popen(["cmd.exe", "/k", "title Claude Code test window"], creationflags=subprocess.CREATE_NEW_CONSOLE)
     try:
-        found = None
-        for _ in range(40):
-            found = highlight.find(process.pid)
-            if found:
-                break
-            time.sleep(0.25)
-        check(bool(found), f"the window of a console process is found (pid {process.pid}, window {found})")
-        check(highlight.window_of(process.pid), "it is pointed out (outline and flash)")
-        time.sleep(highlight.SHOW_FOR + 0.5)
+        probe = ("import sys, time; sys.path.insert(0, sys.argv[1]); from account_switcher import highlight\n"
+                 "found = None\n"
+                 "for _ in range(40):\n"
+                 "    found = highlight.find(int(sys.argv[2]))\n"
+                 "    if found: break\n"
+                 "    time.sleep(0.25)\n"
+                 "shown = bool(found) and highlight.window_of(int(sys.argv[2]))\n"
+                 "print(found, shown, flush=True)\n"
+                 "time.sleep(highlight.SHOW_FOR + 0.5)\n")
+        done = subprocess.run([sys.executable, "-c", probe, str(ROOT), str(process.pid)], capture_output=True, text=True,
+                              timeout=60, creationflags=subprocess.DETACHED_PROCESS)
+        found, _, shown = done.stdout.strip().partition(" ")
+        check(found not in ("", "None"), f"the window of a console process is found (pid {process.pid}, window {found}) {done.stderr.strip()}")
+        check(shown == "True", "it is pointed out (outline and flash)")
     finally:
         process.kill()
 
