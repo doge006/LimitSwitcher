@@ -170,6 +170,25 @@ class TrayTests(unittest.TestCase):
         finally:
             self.server.shutdown()
 
+    def test_shutdown_asked_while_starting_quits_once_up(self):
+        # tray.main: the URL file is written before the tray exists, and a quit asked for in
+        # between (an update right after opening the app) is kept until the tray is up.
+        server = make_server(self.controller)
+        try:
+            server.quit_asked = threading.Event()
+            server.quit = server.quit_asked.set
+            server.quit()
+
+            class RunIcon(FakeIcon):
+                def run(self, setup):
+                    setup(self)
+            tray_ = tray.Tray(self.controller, server, icon_factory=RunIcon)
+            self.assertFalse(tray_.icon.stopped)
+            tray_.run()
+            self.assertTrue(tray_.icon.stopped)
+        finally:
+            server.server_close()
+
     def test_opening_again_shows_the_running_copy(self):
         from account_switcher.tray import show_running
         thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": .1}, daemon=True)

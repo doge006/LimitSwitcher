@@ -86,7 +86,8 @@ done
 # Wait for every LimitSwitcher process to end (the full view has its own, which closes with the
 # app); a full view window still open after 10 s is closed so the app can be replaced.
 for _ in $(seq 1 40); do
-  pgrep -f '/Contents/MacOS/LimitSwitch' >/dev/null 2>&1 || break
+  # By name too: macOS can hide a process's arguments (and so its path) while it is ending.
+  pgrep -f '/Contents/MacOS/LimitSwitch' >/dev/null 2>&1 || pgrep -x LimitSwitcher >/dev/null 2>&1 || break
   sleep 0.25
 done
 pkill -f 'LimitSwitcher --full-view' >/dev/null 2>&1 || true

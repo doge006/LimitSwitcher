@@ -125,7 +125,26 @@ jobs:
           $version = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
           New-Item -ItemType Directory -Force build\av | Out-Null
           Copy-Item build\LimitSwitcher\LimitSwitcher.exe build\av\LimitSwitcher.exe
-          foreach ($v in @(@('zip', 'no'), @('lzma2/max', 'no'), @('none', 'no'))) {
+          # The launcher built other ways; each must start the app (--quit: no copy running, exits 0).
+          $libs = (python -c "import sys, os; print(os.path.join(sys.base_prefix, 'libs'))").Trim()
+          $pydll = (Get-ChildItem build\LimitSwitcher\runtime -Filter 'python3?*.dll' | Where-Object Name -ne 'python3.dll' | Select-Object -First 1).Name
+          $pylib = $pydll -replace '\.dll$', '.lib'
+          foreach ($v in @(@('plain', '/DPLAIN_DETAILS', ''), @('manifest', '/DWITH_MANIFEST', ''),
+                           @('linked', '/DWITH_MANIFEST', 'linked'), @('linked-nomanifest', '', 'linked'))) {
+            $name = 'Launcher-' + $v[0]
+            $defs = @(); if ($v[1]) { $defs += $v[1] }
+            rc /nologo /i build $defs /fo build\av-launcher.res scripts\win_launcher.rc
+            if ($LASTEXITCODE -ne 0) { throw "rc failed for $name" }
+            $extra = @(); $link = @()
+            if ($v[2]) { $extra = @('/DLINKED_PYTHON'); $link = @("/LIBPATH:$libs", $pylib, 'delayimp.lib', "/DELAYLOAD:$pydll") }
+            cl /nologo /O2 /W3 /DUNICODE /D_UNICODE $extra scripts\win_launcher.c build\av-launcher.res /Fobuild\ "/Febuild\LimitSwitcher\$name.exe" `
+              /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib $link
+            if ($LASTEXITCODE -ne 0) { throw "cl failed for $name" }
+            $run = Start-Process "build\LimitSwitcher\$name.exe" -ArgumentList '--quit' -Wait -PassThru
+            if ($run.ExitCode -ne 0) { throw "$name did not run the app (exit $($run.ExitCode))" }
+            Move-Item "build\LimitSwitcher\$name.exe" "build\av\$name.exe"
+          }
+          foreach ($v in @(@('zip', 'no'))) {
             $name = 'Setup-' + ($v[0] -replace '[^a-z0-9]', '') + '-solid' + $v[1]
             & $iscc /Qp "/DAppVersion=$version" "/DSourceDir=$((Resolve-Path build\LimitSwitcher).Path)" "/O$((Resolve-Path build\av).Path)" "/F$name" "/DCompress=$($v[0])" "/DSolid=$($v[1])" scripts\LimitSwitcher.iss
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed for $name" }

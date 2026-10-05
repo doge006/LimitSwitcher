@@ -382,6 +382,8 @@ class Tray:
             threading.Thread(target=self.watch, daemon=True).start()
             if open_now:
                 self.open_full_view()
+            if getattr(self.server, "quit_asked", None) is not None and self.server.quit_asked.is_set():
+                self.quit()
         from .memory import trim_soon
         trim_soon(30)  # after start-up (imports, first usage fetch) has settled
         self.icon.run(setup=setup)
@@ -432,6 +434,10 @@ def main(argv=None):
     profiler = start_profiler()  # only with LIMITSWITCH_PROFILE set (a development tool)
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
+    # A quit asked for before the tray or menu bar is up (an update right after opening the app) is
+    # kept and done once it is; stopping only the server would leave the app running without one.
+    server.quit_asked = threading.Event()
+    server.quit = server.quit_asked.set
     write_url_file(args.url_file, server.launch_url)
     if args.url_file:
         write_url_file(user_url_file(), server.launch_url)

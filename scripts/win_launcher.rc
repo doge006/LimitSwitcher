@@ -8,6 +8,9 @@
 #endif
 
 1 ICON "account_switcher\\static\\assets\\switcher.ico"
+#ifdef WITH_MANIFEST
+1 24 "scripts\\win_launcher.manifest"  /* RT_MANIFEST: runs as the user, Windows 10 and later */
+#endif
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION VERSION_NUMBERS
@@ -19,9 +22,13 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
+#ifndef PLAIN_DETAILS
             VALUE "CompanyName", "doge006"
+#endif
             VALUE "FileDescription", "LimitSwitcher"
+#ifndef PLAIN_DETAILS
             VALUE "LegalCopyright", "Copyright (c) doge006, MIT License"
+#endif
             VALUE "ProductName", "LimitSwitcher"
             VALUE "InternalName", "LimitSwitcher"
             VALUE "OriginalFilename", "LimitSwitcher.exe"
