@@ -18,9 +18,10 @@ import time
 import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from . import tls
+from .connections import urlopen  # kept-open connections: a usage check is not a TLS handshake each time
 from .vault import atomic_write
 
 TIMEOUT = 15
@@ -107,6 +108,18 @@ def _read_json(path):
 def _mtime(path):
     try:
         return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
+def _fingerprint(path):
+    """Whether a small login file changed: its time, size and contents. Windows keeps file times
+    to about 15 ms, so two writes close together (a switch, then Claude Code renewing) can leave
+    the same time behind."""
+    try:
+        with open(path, "rb") as handle:
+            data = handle.read(65537)
+        return os.stat(path).st_mtime_ns, len(data), hashlib.sha256(data).hexdigest()[:16]
     except OSError:
         return None
 
@@ -293,7 +306,7 @@ class Claude:
         if self.keychain:
             text = self._credentials_text() or ""
             return hashlib.sha256(text.encode()).hexdigest(), _mtime(self.config_file)
-        return _mtime(self.credentials_file), _mtime(self.config_file)
+        return _fingerprint(self.credentials_file), _mtime(self.config_file)
 
     def read_live(self):
         credentials, config = self._credentials(), _read_json(self.config_file)
@@ -473,7 +486,7 @@ class Codex:
         self.auth_file = self.codex_home / "auth.json"
 
     def signature(self):
-        return (_mtime(self.auth_file),)
+        return (_fingerprint(self.auth_file),)
 
     def read_live(self):
         auth = _read_json(self.auth_file)

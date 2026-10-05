@@ -46,40 +46,51 @@ if sys.platform == "win32":
         return bool(hwnd) and bool(u.IsWindowVisible(hwnd))
 
     def console_window(pid):
-        """The console window `pid` runs in, or None. Needs this process to have no console of its own
-        (the app runs as pythonw)."""
+        """(The console window `pid` runs in, its title), or (None, ""). Needs this process to have no
+        console of its own (the app runs as pythonw)."""
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.GetConsoleWindow.restype = wintypes.HWND
         if kernel32.GetConsoleWindow():
-            return None  # started from a console (a source copy): attaching would leave it
+            return None, ""  # started from a console (a source copy): attaching would leave it
         with _lock:
             if not kernel32.AttachConsole(pid):
-                return None
+                return None, ""
             try:
-                return kernel32.GetConsoleWindow()
+                title = ctypes.create_unicode_buffer(512)
+                kernel32.GetConsoleTitleW(title, len(title))
+                return kernel32.GetConsoleWindow(), title.value
             finally:
                 kernel32.FreeConsole()
 
-    def top_windows():
-        """{pid: first visible top-level window with a title}."""
+    def top_windows(titles=None):
+        """{pid: first visible top-level window with a title}; with a dict `titles`, it also gets
+        {hwnd: (pid, title)} for every such window."""
         u = _user32()
         found = {}
         EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
         def each(hwnd, _):
-            if u.IsWindowVisible(hwnd) and u.GetWindowTextLengthW(hwnd) > 0 and not u.GetWindow(hwnd, 4):  # GW_OWNER
+            length = u.GetWindowTextLengthW(hwnd)
+            if u.IsWindowVisible(hwnd) and length > 0 and not u.GetWindow(hwnd, 4):  # GW_OWNER
                 owner = wintypes.DWORD()
                 u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
                 found.setdefault(owner.value, hwnd)
+                if titles is not None:
+                    text = ctypes.create_unicode_buffer(length + 1)
+                    u.GetWindowTextW(hwnd, text, length + 1)
+                    titles[hwnd] = (owner.value, text.value)
             return True
         u.EnumWindows(EnumProc(each), 0)
         return found
+
+    # The programs that draw a console's window when it isn't a classic one of its own.
+    CONSOLE_HOSTS = {"windowsterminal", "openconsole", "conhost"}
 
     def find(pid):
         u = _user32()
         u.GetWindow.restype = wintypes.HWND
         u.GetAncestor.restype = wintypes.HWND
-        hwnd = console_window(pid)
+        hwnd, title = console_window(pid)
         if hwnd:
             if _visible(hwnd):
                 return hwnd
@@ -88,7 +99,13 @@ if sys.platform == "win32":
                     return owner
         from . import processes
         family = processes.family()
-        tops = top_windows()
+        titles = {}
+        tops = top_windows(titles)
+        if hwnd and title:  # a hidden pseudo console whose terminal doesn't own it: the terminal
+            for top, (owner, text) in titles.items():  # window showing the console's title
+                # (an elevated one's tab reads "Administrator:  <title>")
+                if text.endswith(title) and family.get(owner, (0, ""))[1] in CONSOLE_HOSTS:
+                    return top
         seen = set()
         while pid and pid not in seen:
             seen.add(pid)

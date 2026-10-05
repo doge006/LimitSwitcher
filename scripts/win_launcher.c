@@ -44,8 +44,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command, int s
         fail(L"LimitSwitcher couldn't start: its Python runtime is missing. Install LimitSwitcher again.");
         return 1;
     }
-    SetDllDirectoryW(runtime); /* Python's own DLLs (vcruntime, _ctypes, ...) */
-    HMODULE python = LoadLibraryExW(dll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+    /* Python's own DLLs (vcruntime, ...) are found next to it: LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR.
+       Not SetDllDirectoryW(runtime) for the whole process: with it, Microsoft Defender's
+       machine-learning check took this exe for a trojan (Wacatac!ml, on VirusTotal; without it, no
+       engine flags it). */
+    HMODULE python = LoadLibraryExW(dll, NULL, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
     PyMain py_main = python ? (PyMain)GetProcAddress(python, "Py_Main") : NULL;
     if (!py_main) {
         fail(L"LimitSwitcher couldn't start: its Python runtime could not be loaded. Install LimitSwitcher again.");

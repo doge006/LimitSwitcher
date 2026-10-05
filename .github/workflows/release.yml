@@ -136,23 +136,25 @@ jobs:
       - name: Install with the README's command (from this build's DMG), run it, install again over it
         run: |
           mkdir -p ~/.codex
+          log="$HOME/Library/Application Support/LimitSwitcher/app.log"
+          fail() { echo "FAIL $1"; echo "-- processes:"; pgrep -fl LimitSwitch || true; echo "-- app.log:"; tail -n 60 "$log" 2>/dev/null || true; exit 1; }
           bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           url="$HOME/Library/Application Support/LimitSwitcher/running.url"
           for i in $(seq 1 80); do [ -f "$url" ] && break; sleep 0.25; done
-          [ -f "$url" ] || { cat "$HOME/Library/Application Support/LimitSwitcher/app.log"; exit 1; }
+          [ -f "$url" ] || fail "the app did not start"
           before=$(cat "$url")
           pgrep -fl MacOS/LimitSwitcher
           bash scripts/install-mac.sh --dmg build/LimitSwitcher-AppleSilicon.dmg
           for i in $(seq 1 80); do [ -f "$url" ] && [ "$(cat "$url")" != "$before" ] && break; sleep 0.25; done
-          [ "$(cat "$url")" != "$before" ] || { echo "the app did not start again after the update"; exit 1; }
-          [ "$(pgrep -fl MacOS/LimitSwitcher | grep -vc -- --full-view)" = 1 ] || { echo "not exactly one copy running"; exit 1; }
+          [ -f "$url" ] && [ "$(cat "$url")" != "$before" ] || fail "the app did not start again after the update"
+          [ "$(pgrep -fl MacOS/LimitSwitcher | grep -vc -- --full-view)" = 1 ] || fail "not exactly one copy running"
           for i in $(seq 1 40); do grep -q account-switcher ~/.codex/config.toml 2>/dev/null && break; sleep 0.25; done
-          grep -q account-switcher ~/.codex/config.toml || { echo "Codex is not routed while running"; exit 1; }
+          grep -q account-switcher ~/.codex/config.toml || fail "Codex is not routed while running"
           /Applications/LimitSwitcher.app/Contents/Resources/runtime/bin/python3 -B \
             /Applications/LimitSwitcher.app/Contents/Resources/app/LimitSwitcher.pyw --quit
           for i in $(seq 1 40); do pgrep -f MacOS/LimitSwitcher >/dev/null || break; sleep 0.25; done  # the full view closes too
-          ! pgrep -fl MacOS/LimitSwitcher || { echo "quit left it running"; exit 1; }
-          ! grep -q account-switcher ~/.codex/config.toml || { echo "quit left Codex routed"; exit 1; }
+          ! pgrep -fl MacOS/LimitSwitcher || fail "quit left it running"
+          ! grep -q account-switcher ~/.codex/config.toml || fail "quit left Codex routed"
           codesign --verify --deep --strict /Applications/LimitSwitcher.app
           echo "PASS installed, updated in place and quit cleanly"
       - uses: actions/upload-artifact@v4

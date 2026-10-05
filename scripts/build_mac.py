@@ -40,6 +40,7 @@ WHEELS = {"arm64": "macosx_11_0_arm64", "x86_64": "macosx_11_0_x86_64"}
 # Not used on macOS (Tk is only for Linux's full view), removed to keep the download small.
 UNUSED = ["include", "share", "lib/pkgconfig", "lib/itcl*", "lib/thread*", "lib/tcl*", "lib/tk*",
           "lib/libtcl*", "lib/libtk*"]
+UNUSED_PACKAGES = ["PyObjCTest", "pip", "pip-*.dist-info"]
 UNUSED_STDLIB = ["test", "idlelib", "ensurepip", "turtledemo", "tkinter", "lib2to3", "pydoc_data",
                  "config-*", "lib-dynload/_tkinter*"]
 
@@ -97,6 +98,11 @@ def main():
     run(sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--no-compile",
         "--only-binary=:all:", "--platform", WHEELS[args.arch], "--python-version", PYTHON, "--implementation", "cp",
         "--target", stdlib / "site-packages", "-r", ROOT / "requirements-native.txt")
+    # Shipped with them but never run by the app: PyObjC's own test suite (15 MB) and pip (11 MB,
+    # from the Python build; updates come as a whole new DMG).
+    for pattern in UNUSED_PACKAGES:
+        for path in (stdlib / "site-packages").glob(pattern):
+            shutil.rmtree(path) if path.is_dir() else path.unlink()
 
     # 2. The app itself, and .pyc files for everything (checked by hash, not by file time).
     code = resources / "app"

@@ -76,6 +76,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `account_switcher/fullview.py` + `fullview_render.py`: the full view (behaviour and Pillow drawing), shown by `fullview_win.py` (Win32), `fullview_mac.py` (AppKit) and `fullview_tk.py` (Linux, Tk).
 - `account_switcher/live.py`: real accounts (import, usage refresh, switching, auto swap, Auto resume decisions, add/remove).
 - `account_switcher/providers.py`: Claude Code / Codex login files and usage APIs.
+- `account_switcher/connections.py`: the usage APIs' HTTPS connections, kept open between checks (and TLS sessions resumed).
 - `account_switcher/codex_proxy.py` + `codex_config.py`: the Codex router and the config lines that point Codex at it.
 - `account_switcher/claude_hooks.py`, `afk_hook.py`, `statusline.py`: the Claude Code hook (Auto resume) and status line.
 - `mods/limit-status` + `mods/jev-compact` + `.claude-plugin/marketplace.json` + `account_switcher/mod.py`: the optional Claude Code mod (live usage; the Jev compaction before a swapped session goes on), and the app's install/status of it. The swap side of the compaction is `claude_limit` in `live.py` (the hook's answer waits for it). Each plugin has its own tests: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/<name>`; `mods/jev-compact/bench/bench.ts` measures the compaction on saved transcripts.

@@ -31,16 +31,19 @@ Get-ChildItem -LiteralPath (Join-Path $app 'account_switcher') -Recurse -Directo
 Copy-Item -LiteralPath LimitSwitcher.pyw, README.md, LICENSE, THIRD-PARTY-NOTICES.txt -Destination $app
 
 # 4. LimitSwitcher.exe: runs the bundled Python in its own process (Task Manager shows LimitSwitcher),
-#    with the app icon and version details.
+#    with the app icon and file details.
 $version = (python -c "import sys; sys.path.insert(0, '.'); from account_switcher.version import VERSION; print(VERSION)").Trim()
-$numbers = (($version.Split('.') + @('0', '0', '0', '0'))[0..3]) -join ','
-Set-Content -LiteralPath (Join-Path $Out 'version.h') -Encoding ascii `
-    -Value @("#define VERSION_TEXT `"$version`"", "#define VERSION_NUMBERS $numbers")
-rc /nologo /i $Out /fo (Join-Path $Out 'launcher.res') scripts\win_launcher.rc
+rc /nologo /fo (Join-Path $Out 'launcher.res') scripts\win_launcher.rc
 if ($LASTEXITCODE -ne 0) { throw 'rc failed' }
-cl /nologo /O2 /W3 /DUNICODE /D_UNICODE scripts\win_launcher.c (Join-Path $Out 'launcher.res') `
-    /Fo"$Out\\" /Fe"$app\LimitSwitcher.exe" /link /SUBSYSTEM:WINDOWS user32.lib shell32.lib
+cl /nologo /O2 /W3 /DUNICODE /D_UNICODE /Brepro scripts\win_launcher.c (Join-Path $Out 'launcher.res') `
+    /Fo"$Out\\" /Fe"$app\LimitSwitcher.exe" /link /SUBSYSTEM:WINDOWS /Brepro user32.lib shell32.lib
 if (-not (Test-Path -LiteralPath (Join-Path $app 'LimitSwitcher.exe'))) { throw 'the launcher did not build' }
+# The same exe every release (win_launcher.rc): say so when it has changed, since antivirus vendors
+# then see a new file (scripts\win_launcher.sha256 is the one they were sent).
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath (Join-Path $app 'LimitSwitcher.exe')).Hash.ToLower()
+$known = (Get-Content -LiteralPath scripts\win_launcher.sha256 -ErrorAction SilentlyContinue | Select-Object -First 1)
+if ($known -and $hash -eq $known.Trim()) { Write-Host "LimitSwitcher.exe is the known build ($hash)" }
+else { Write-Host "::warning::LimitSwitcher.exe is a new build ($hash, known: $known): antivirus vendors see a new file" }
 Remove-Item -LiteralPath (Join-Path $Out 'launcher.res'), (Join-Path $Out 'win_launcher.obj') -ErrorAction SilentlyContinue
 
 # 5. The installer (scripts\LimitSwitcher.iss).

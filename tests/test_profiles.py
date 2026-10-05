@@ -161,6 +161,80 @@ class ProfileTests(unittest.TestCase):
         self.assertFalse(self.account("b@example.com").pinned)
         self.assertEqual(self.m.windows(), [])
 
+    def close_window(self, directory):
+        ended = subprocess.Popen([sys.executable, "-c", "pass"])
+        ended.wait()
+        profiles.set_info(directory, pid=ended.pid, started=time.time() - live_module.WINDOW_GRACE - 1)
+        self.m.sync_live()
+        self.assertFalse(directory.exists())
+
+    def test_what_a_window_changed_in_its_config_is_kept_when_it_closes(self):
+        main = self.home / ".claude.json"
+        start = json.loads(main.read_text())
+        start["projects"] = {"/work/old": {"hasTrustDialogAccepted": True}, "/work/mine": {"allowedTools": []}}
+        main.write_text(json.dumps(start))
+        directory = self.m.open_profile(self.account("b@example.com").id)
+        own = json.loads((directory / ".claude.json").read_text())
+        own["projects"]["/work/new"] = {"hasTrustDialogAccepted": True}       # trusted in the window
+        own["projects"]["/work/mine"] = {"allowedTools": ["Bash(ls)"]}        # changed in both: main wins
+        own["mcpServers"] = {"docs": {"command": "docs-server"}}               # added in the window
+        own["theme"] = "light"                                                 # changed in both: main wins
+        (directory / ".claude.json").write_text(json.dumps(own))
+        now = json.loads(main.read_text())
+        now["projects"]["/work/mine"] = {"allowedTools": ["Read"]}
+        now["theme"] = "dark-daltonized"
+        main.write_text(json.dumps(now))
+        self.close_window(directory)
+        after = json.loads(main.read_text())
+        self.assertEqual(after["projects"]["/work/new"], {"hasTrustDialogAccepted": True})
+        self.assertEqual(after["projects"]["/work/old"], {"hasTrustDialogAccepted": True})
+        self.assertEqual(after["projects"]["/work/mine"], {"allowedTools": ["Read"]})
+        self.assertEqual(after["mcpServers"], {"docs": {"command": "docs-server"}})
+        self.assertEqual(after["theme"], "dark-daltonized")
+        self.assertEqual(after["oauthAccount"]["emailAddress"], "a@example.com")  # never the window's login
+        self.assertEqual(self.main_login(), "a@example.com")
+
+    def test_editor_connections_rewind_checkpoints_and_keybindings_are_shared(self):
+        claude = self.home / ".claude"
+        for name in ("ide", "file-history"):
+            (claude / name).mkdir()
+        (claude / "keybindings.json").write_text("[]")
+        directory = self.m.open_profile(self.account("b@example.com").id)
+        for name in ("ide", "file-history", "keybindings.json"):
+            self.assertTrue((directory / name).is_symlink(), name)
+        (directory / "file-history" / "checkpoint").write_text("x")  # written from the window
+        self.close_window(directory)
+        self.assertEqual((claude / "file-history" / "checkpoint").read_text(), "x")  # outlives the window
+
+    def test_windows_without_symlinks_shares_files_by_hard_link(self):
+        import types
+        source, target = self.home / ".claude" / "settings.json", Path(self.tmp.name) / "settings.json"
+
+        def refuse(*args, **kwargs):
+            raise OSError("A required privilege is not held by the client")
+        with mock.patch.object(profiles.os, "symlink", refuse), \
+                mock.patch.object(profiles, "sys", types.SimpleNamespace(platform="win32")):
+            self.assertEqual(profiles._link(source, target), "hard link")
+        self.assertTrue(os.path.samefile(source, target))  # one file: a change in either is in both
+        with open(target, "a", encoding="utf-8") as handle:
+            handle.write("\n")
+        self.assertTrue(source.read_text().endswith("\n"))
+
+
+class SignatureTests(unittest.TestCase):
+    def test_a_new_login_is_seen_even_with_the_same_file_time(self):
+        """Windows keeps file times to about 15 ms: two logins written close together can share one."""
+        with tempfile.TemporaryDirectory() as folder:
+            home = Path(folder)
+            claude = Claude(home=home, keychain=False)
+            claude_login(home, "uuid-b", "b@example.com", "at-b", "rt-b")
+            before = claude.signature()
+            stamps = [os.stat(path).st_mtime_ns for path in (claude.credentials_file, claude.config_file)]
+            claude_login(home, "uuid-c", "c@example.com", "at-c", "rt-c")
+            for path, stamp in zip((claude.credentials_file, claude.config_file), stamps):
+                os.utime(path, ns=(stamp, stamp))
+            self.assertNotEqual(claude.signature(), before)
+
 
 class WrapperTests(unittest.TestCase):
     def test_interactive_windows_only(self):

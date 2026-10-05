@@ -207,7 +207,9 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
         self.server.show = lambda: AppHelper.callAfter(self.showFullView_, None)  # opened again (Spotlight, Finder)
         self.refresh()
         threading.Thread(target=self.watch, daemon=True).start()
-        if self.open_now:
+        if getattr(self.server, "quit_asked", None) is not None and self.server.quit_asked.is_set():
+            AppHelper.callAfter(self.quit_, None)  # asked to quit while starting (see tray.main)
+        elif self.open_now:
             self.showFullView_(None)
         AppHelper.callLater(4, self.check_status_item)
         AppHelper.callLater(30, self.trim_regularly)
@@ -292,6 +294,8 @@ class MenuBarApp(NSObject, protocols=protocols("NSWindowDelegate")):
     def applicationShouldTerminate_(self, _app):
         """Every way of quitting (⌘Q, the Dock, the menus, logging out) ends here. Cocoa ends the
         process right after, so undo the Codex / Claude changes now."""
+        if self.full is not None and self.full.alive():
+            self.full.close()  # also when it was quit some other way than quit_ (still starting, too)
         try:
             self.cleanup()
         except Exception:

@@ -14,6 +14,15 @@
 #ifndef SourceDir
   #define SourceDir "..\build\LimitSwitcher"
 #endif
+; How the files are packed: zip, not solid. Packed with LZMA2 as one block, the installer was
+; flagged by three or four antivirus engines' heuristics on VirusTotal (1.3.2, 1.3.3 test builds);
+; packed this way, by none of those.
+#ifndef Compress
+  #define Compress "zip"
+#endif
+#ifndef Solid
+  #define Solid "no"
+#endif
 
 [Setup]
 AppId={{6B1E0C54-3F7A-4D2B-9E8C-5A1F2D7B4C90}
@@ -21,9 +30,9 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher=doge006
-AppPublisherURL=https://github.com/doge006/LimitSwitch
-AppSupportURL=https://github.com/doge006/LimitSwitch/issues
-AppUpdatesURL=https://github.com/doge006/LimitSwitch/releases
+AppPublisherURL=https://github.com/doge006/LimitSwitcher
+AppSupportURL=https://github.com/doge006/LimitSwitcher/issues
+AppUpdatesURL=https://github.com/doge006/LimitSwitcher/releases
 DefaultDirName={localappdata}\Programs\{#AppName}
 DisableDirPage=no
 DisableProgramGroupPage=yes
@@ -40,8 +49,15 @@ SetupIconFile=..\account_switcher\static\assets\switcher.ico
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 WizardStyle=modern
-Compression=lzma2/max
-SolidCompression=yes
+Compression={#Compress}
+SolidCompression={#Solid}
+; Who made it and what it is, in the installer's own file properties
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
+VersionInfoProductName={#AppName}
+VersionInfoDescription={#AppName} Setup
+VersionInfoCompany=doge006
+VersionInfoCopyright=Copyright (c) doge006, MIT License
 ; The app is closed with --quit first (it puts Codex's and Claude Code's settings back); this
 ; only catches a copy that did not answer.
 CloseApplications=yes

@@ -1,11 +1,9 @@
 #include <winver.h>
-#include "version.h"  /* written by build_windows.ps1 */
-#ifndef VERSION_TEXT
-#define VERSION_TEXT "0.0.0"
-#endif
-#ifndef VERSION_NUMBERS
-#define VERSION_NUMBERS 0,0,0,0
-#endif
+/* No release number here, and the build is reproducible (/Brepro): the exe is the same file in every
+   release, so an antivirus vendor that has cleared it once (Microsoft's machine-learning check took
+   new builds for a trojan) needn't clear it again. Its number changes only when this launcher does. */
+#define VERSION_TEXT "1.0"
+#define VERSION_NUMBERS 1,0,0,0
 
 1 ICON "account_switcher\\static\\assets\\switcher.ico"
 
@@ -19,7 +17,9 @@ BEGIN
     BEGIN
         BLOCK "040904b0"
         BEGIN
+            VALUE "CompanyName", "doge006"
             VALUE "FileDescription", "LimitSwitcher"
+            VALUE "LegalCopyright", "Copyright (c) doge006, MIT License"
             VALUE "ProductName", "LimitSwitcher"
             VALUE "InternalName", "LimitSwitcher"
             VALUE "OriginalFilename", "LimitSwitcher.exe"
