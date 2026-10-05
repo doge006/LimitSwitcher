@@ -74,7 +74,7 @@ SIGNED_OUT_AFTER = 300      # the client hasn't replaced a refused login in this
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 NEAR_RESET = 15 * 60     # seconds: a 5-hour limit that resets this soon is waited out, not swapped away from
 PENDING_TTL = 6 * 3600   # a continue nobody answered is forgotten (the hook gives up after this too)
-LARGE_CONTEXT = 400_000  # tokens (about 6% of a plan's 5-hour usage at ~10% per 700k): costly to load on an account that hasn't cached it
+LARGE_CONTEXT = 400_000  # tokens (about 6% of a Pro plan's 5-hour usage: 338k loaded uncached was ~5%): costly to load on an account that hasn't cached it
 AFK_NOTE = "The usage limit was reached, so the session moved to another account. Continue exactly where you left off."
 AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
                  "held. Re-run the tool before relying on exact details from one of them.")
@@ -82,6 +82,7 @@ JEV_WAIT = 240           # seconds a session's Jev compaction may take (3 tries 
 STATUS_SYNC = 3.0        # seconds between a status line's look at the login files (it reports every second; on macOS that reads the Keychain)
 JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
+MOVED_RECENTLY = 120     # seconds: a limit reported this soon after an automatic switch was the old account's
 MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
 MIN_ROOM = 5            # percent: an account with less left than this is only moved to when none has more
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
@@ -188,6 +189,7 @@ class LiveAccounts:
         self.status_synced = 0.0  # when a status line report last looked at the login files
         self.mod_sessions = {}   # Claude session -> when its limit-status mod last reported
         self.compactions = {}    # Claude session -> its Jev compaction before a swap (see claude_limit)
+        self.auto_moved = {}     # provider -> (account moved to, when): the last automatic switch
         self.signatures = {}
         self.last_refresh = 0.0
         self.last_manual = 0.0
@@ -452,6 +454,9 @@ class LiveAccounts:
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
         if not auto:
             return {"action": "stop"}
+        answer = self._compaction_answer(session)  # the window was switched and is being compacted
+        if answer is not None:
+            return answer
         now = time.time()
         state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
         state["continues"] = [t for t in state["continues"] if now - t < 600]
@@ -467,7 +472,7 @@ class LiveAccounts:
             self.notify("log", "A window hit its usage limit and no other account is free")
             return {"action": "stop"}
         self.swap_window(window, best.id, reason="auto")
-        return self._after_swap(session, tokens, afk, now)
+        return self._start_compaction(session, tokens, afk, now) or self._after_swap(session, tokens, afk, now)
 
     def adopt(self, provider, login, source="the official client (signed in or renewed there)"):
         """Store (or update) a login; returns its account id."""
@@ -738,6 +743,8 @@ class LiveAccounts:
             if name in self.routed:
                 self.meta["selected"][name] = account_id
             self.save()
+        if reason == "auto":
+            self.auto_moved[name] = (account_id, time.time())
         self.on_swap(name)
         if reason == "quiet":
             return
@@ -992,7 +999,7 @@ class LiveAccounts:
         job = self.compactions.get(session or "")
         if job and job["status"] == "done" and job.get("saved") and now - job.get("finishedAt", 0) < JEV_SHOWN \
                 and round(job["saved"] / 1000) > 0:  # what it saved, for a little while after
-            groups.append([("Jev Compacted (saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good"), (" tokens)", "dim")])
+            groups.append([("Jev saved ", "dim"), (f"~{round(job['saved'] / 1000)}k", "good")])
         groups.append([(self.shown_name(account_id), "dim")])
         if model:  # "Opus 5.5 (high)": what the session runs on, as Claude Code reports it
             groups.append([(model[:40], None)] + ([(" ", None), (f"({effort[:12]})", "dim")] if effort else []))
@@ -1181,29 +1188,48 @@ class LiveAccounts:
                                                       (session or "?")[:8], answer.get("action"))
         return answer
 
+    def _compaction_answer(self, session):
+        """While a swapped session is compacted: the hook's answer (wait, then go on once it is done).
+        None when no compaction is waiting for this session."""
+        job = self.compactions.get(session or "?")
+        if job is None or job.get("answered"):
+            return None
+        now = time.time()
+        if job["status"] in ("asked", "running"):
+            if now - job["at"] < JEV_WAIT:
+                return {"action": "wait", "seconds": 3}
+            job.update(status="failed", reason="it took too long")
+            self.notify("log", "Jev compaction took too long: the session goes on without it")
+        if not job.get("restamped"):
+            # The compaction rewrote the transcript: the hook must not take that for the session
+            # having gone on by itself, so it looks at the transcript afresh before continuing
+            job["restamped"] = True
+            return {"action": "wait", "seconds": 1, "restamp": True}
+        job["answered"] = True
+        tokens = job["tokens"]
+        if isinstance(tokens, int) and job.get("saved"):
+            tokens = max(0, tokens - job["saved"])
+        return self._after_swap(session, tokens, job["afk"], now, compacted=job["status"] == "done")
+
+    def _start_compaction(self, session, tokens, afk, now):
+        """The account was just swapped: compact the session with Jev before it goes on, when that is
+        on. The new account has none of the session cached: shrink what it will load first. Jev does
+        it, not Claude, so it works on a used-up account; the swap itself can't wait for it and
+        needn't (the background check may swap any moment), the session can. None when not wanted."""
+        if not self.jev_wanted(session, now):
+            return None
+        self.compactions[session] = {"id": secrets.token_hex(8), "status": "asked", "at": now,
+                                     "tokens": tokens, "afk": afk}
+        self.notify("log", "Compacting the session with Jev before it goes on")
+        return {"action": "wait", "seconds": 3}
+
     def _claude_limit(self, session, tokens=None):
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
         if not (afk or auto):
             return {"action": "stop"}
-        job = self.compactions.get(session or "?")
-        if job is not None and not job.get("answered"):
-            # The account was swapped and the session is being compacted: it goes on once that is done
-            now = time.time()
-            if job["status"] in ("asked", "running"):
-                if now - job["at"] < JEV_WAIT:
-                    return {"action": "wait", "seconds": 3}
-                job.update(status="failed", reason="it took too long")
-                self.notify("log", "Jev compaction took too long: the session goes on without it")
-            if not job.get("restamped"):
-                # The compaction rewrote the transcript: the hook must not take that for the session
-                # having gone on by itself, so it looks at the transcript afresh before continuing
-                job["restamped"] = True
-                return {"action": "wait", "seconds": 1, "restamp": True}
-            job["answered"] = True
-            tokens = job["tokens"]
-            if isinstance(tokens, int) and job.get("saved"):
-                tokens = max(0, tokens - job["saved"])
-            return self._after_swap(session, tokens, job["afk"], now, compacted=job["status"] == "done")
+        answer = self._compaction_answer(session)  # the account was swapped and the session is being compacted
+        if answer is not None:
+            return answer
         pending = self.pending_resumes.get(session or "?")
         if pending is not None:  # a large session the user was asked about
             now = pending["seen"] = time.time()
@@ -1230,6 +1256,13 @@ class LiveAccounts:
             return {"action": "stop"}
         if len(state["continues"]) >= 3 or len(self.afk_continues) >= 6:  # something keeps failing: do not loop
             return {"action": "wait", "seconds": 900}
+        moved = self.auto_moved.get("claude")
+        if auto and moved and moved[0] == current and now - moved[1] < MOVED_RECENTLY \
+                and next((a.eligible for a in self.accounts() if a.id == current), False):
+            # The account was just switched (another session's limit, or the background check) and
+            # this session's turn had gone out on the old one: it goes on with the others, rather than
+            # taking the limit for the new account's or waiting for the old one's reset.
+            return self._start_compaction(session, tokens, afk, now) or self._after_swap(session, tokens, afk, now)
         before = (self.meta["accounts"].get(current) or {}).get("apiAt")
         self.refresh(only=current)  # fresh numbers for the account that just hit its limit
         if (self.meta["accounts"].get(current) or {}).get("apiAt") == before:
@@ -1243,15 +1276,7 @@ class LiveAccounts:
         best = self.confirmed_other("claude", current) if auto and not hold else None
         if best is not None:
             self.swap(best.id, reason="auto")
-            if self.jev_wanted(session, now):
-                # The new account has none of the session cached: shrink what it will load first. Jev
-                # does it, not Claude, so it works on a used-up account; the swap itself can't wait
-                # for it and needn't (the background check may swap any moment), the session can.
-                self.compactions[session] = {"id": secrets.token_hex(8), "status": "asked", "at": now,
-                                             "tokens": tokens, "afk": afk}
-                self.notify("log", "Compacting the session with Jev before it goes on")
-                return {"action": "wait", "seconds": 3}
-            return self._after_swap(session, tokens, afk, now)
+            return self._start_compaction(session, tokens, afk, now) or self._after_swap(session, tokens, afk, now)
         if afk and self.meta.get("afkSkipLarge", True) and isinstance(tokens, int) and tokens >= LARGE_CONTEXT:
             afk = False  # waiting for the reset would also load the whole session uncached: not by itself
         if not afk:

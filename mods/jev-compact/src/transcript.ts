@@ -1,3 +1,4 @@
+import { imageCharsOf, imageTokensOf } from './images.ts'
 import type { Message, ToolCall, ToolResult } from './types.ts'
 
 /**
@@ -17,6 +18,7 @@ export function collectToolCalls(messages: readonly Message[], preserveRecentMes
     for (const use of message.toolUses) {
       const found = results.get(use.tool_use_id)
       const resultText = found?.result.text ?? use.text ?? ''
+      const stored = found ? found.result.result : use.result
       calls.push({
         id: `t${calls.length + 1}`,
         tool_use_id: use.tool_use_id,
@@ -25,7 +27,8 @@ export function collectToolCalls(messages: readonly Message[], preserveRecentMes
         useIndex: index,
         resultIndex: found?.index ?? null,
         resultText,
-        resultChars: resultText.length,
+        resultChars: resultText.length + imageCharsOf(stored),
+        imageTokens: imageTokensOf(stored),
         isError: found?.result.isError ?? use.isError ?? false,
         pinned: index === 0 || index >= recentFrom || found === undefined || found.index >= recentFrom,
       })

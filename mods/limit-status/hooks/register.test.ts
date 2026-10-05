@@ -154,7 +154,7 @@ describe('limit-status', () => {
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
-    expect(toasts).toEqual(['Jev compacted: ~30k tokens less to load'])
+    expect(toasts).toEqual(['Jev saved ~30k tokens'])
   })
 
   test('shows each reset alert from the app as a toast, once', { options: { statePath: STATE } }, async ($, on) => {

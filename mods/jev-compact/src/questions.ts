@@ -19,11 +19,14 @@ export function questionName(call: ToolCall): string {
 export function questionFor(call: ToolCall): JevQuestions {
   const input = maskSecrets(abridge(JSON.stringify(call.input).replace(/\s+/g, ' '), 300))
   const output = maskSecrets(abridge(call.resultText.replace(/\s+/g, ' ').trim(), 500))
+  const shown = call.imageTokens > 0
+    ? `Its output is an image (~${call.imageTokens} tokens) the assistant looked at${output ? `, with this text: ${output}` : ''}`
+    : `Its output (${call.resultChars} chars), abridged: ${output}`
   return {
     [questionName(call)]: {
       type: 'noul',
       instructions:
-        `Tool call ${call.id}: ${call.tool} ${input}\nIts output (${call.resultChars} chars), abridged: ${output}\n\n` +
+        `Tool call ${call.id}: ${call.tool} ${input}\n${shown}\n\n` +
         'This output is still useful for the rest of the task: it is the current view of code or data the assistant ' +
         'is still working on, or holds facts it will need again.',
       criteria: {
