@@ -7,13 +7,7 @@
 #include <shellapi.h>
 #include <wchar.h>
 
-#ifdef LINKED_PYTHON
-/* Linked against python3XX.lib and delay-loaded (/DELAYLOAD): the DLL is loaded at the first call,
-   once SetDllDirectoryW points at runtime\. */
-__declspec(dllimport) int __cdecl Py_Main(int, wchar_t **);
-#else
 typedef int (__cdecl *PyMain)(int, wchar_t **);
-#endif
 
 static void fail(const wchar_t *text) {
     MessageBoxW(NULL, text, L"LimitSwitcher", MB_ICONERROR);
@@ -51,16 +45,12 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command, int s
         return 1;
     }
     SetDllDirectoryW(runtime); /* Python's own DLLs (vcruntime, _ctypes, ...) */
-#ifdef LINKED_PYTHON
-    (void)dll;
-#else
     HMODULE python = LoadLibraryExW(dll, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     PyMain py_main = python ? (PyMain)GetProcAddress(python, "Py_Main") : NULL;
     if (!py_main) {
         fail(L"LimitSwitcher couldn't start: its Python runtime could not be loaded. Install LimitSwitcher again.");
         return 1;
     }
-#endif
     /* argv: this exe, the script, then this exe's own arguments. */
     int count = 0;
     wchar_t **given = CommandLineToArgvW(GetCommandLineW(), &count);
@@ -71,9 +61,5 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE previous, PWSTR command, int s
     argv[1] = script;
     for (int i = 1; i < count; i++) argv[i + 1] = given[i];
     AllowSetForegroundWindow(ASFW_ANY); /* a second launch may bring the running copy's window up */
-#ifdef LINKED_PYTHON
-    return Py_Main(count + 1, argv);
-#else
     return py_main(count + 1, argv);
-#endif
 }

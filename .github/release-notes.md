@@ -14,6 +14,7 @@ The app offers it in Settings → **Update to 1.3.3** (or download below).
 - **Closing the app while it is still starting** (an update right after opening it) now closes it once it is up. Before, it kept running without its dashboard, and on macOS the update could end with no copy running.
 - **macOS:** the app is 26 MB smaller. It no longer ships PyObjC's test suite or pip, which it never used.
 - **Windows:** a login written within about 15 ms of the previous one (a switch, then Claude Code renewing it) is no longer missed. Windows keeps file times only that precisely, so the app now also compares the file's contents. Found by the first run of the per-window tests on Windows.
+- **Windows:** the installer is packed differently, so fewer antivirus engines mistake it for malware. On VirusTotal, the heuristic flags from Skyhigh, Kingsoft, Cylance and APEX on 1.3.2's installer are gone.
 - **`app.log` is capped at 1 MB**, with one older copy kept.
 
 ## Download

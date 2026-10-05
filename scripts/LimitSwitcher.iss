@@ -14,13 +14,14 @@
 #ifndef SourceDir
   #define SourceDir "..\build\LimitSwitcher"
 #endif
-; How the files are packed (the Release workflow's test builds try others: some antivirus engines
-; judge an installer by how it's packed)
+; How the files are packed: zip, not solid. Packed with LZMA2 as one block, the installer was
+; flagged by three or four antivirus engines' heuristics on VirusTotal (1.3.2, 1.3.3 test builds);
+; packed this way, by none of those.
 #ifndef Compress
-  #define Compress "lzma2/max"
+  #define Compress "zip"
 #endif
 #ifndef Solid
-  #define Solid "yes"
+  #define Solid "no"
 #endif
 
 [Setup]
