@@ -9,7 +9,7 @@ import type { CompactOptions, Decision, ToolCall } from './types.ts'
 // Long sessions get it by themselves: above this estimated conversation size, keep this share. Measured
 // on a 731k-token session (smaller / facts lost): default 58% / 16; keep 40% 61% / 20; keep 35% 63% / 25;
 // keep 30% 64% / 36 (the rest is protected: text, the newest messages, errors, the notes themselves).
-export const LONG_SESSION_TOKENS = 250_000
+export const LONG_SESSION_TOKENS = 333_000
 export const LONG_TARGET = 0.35
 export const AGE_WEIGHT = 0.2   // the oldest output counts as this much less needed than the newest
 const NOTE_CHARS = 250          // a note's usual length, its index aside

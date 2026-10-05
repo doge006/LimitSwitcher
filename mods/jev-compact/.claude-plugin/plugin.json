@@ -1,6 +1,6 @@
 {
   "name": "jev-compact",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Before LimitSwitcher swaps a Claude Code session to another account, shrinks the tool outputs it no longer needs with TypeSafe's Jev (through OpenRouter), so the new account loads less. Everything else stays verbatim; no Claude usage.",
   "author": {
     "name": "doge006",

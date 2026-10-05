@@ -141,6 +141,29 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(self.main_login(), "a@example.com")
         self.assertEqual(self.m.profile_account(None, "win-1"), self.account("c@example.com").id)  # the mod follows the switch
 
+    def test_a_window_switched_at_its_limit_is_compacted_with_jev_first(self):
+        from account_switcher.web import Controller
+        directory = self.m.open_profile(self.account("b@example.com").id)
+        self.m.profile_account(str(directory), "win-1")
+        self.m.meta.update(afk=True, jevCompact=True, jevModInstalled=True)
+        self.m.note_mod_session("win-1")
+        self.api.claude_usage["at-b"] = claude_usage(100, 50)
+        controller = Controller.__new__(Controller)
+        controller.live, controller.gateway, controller.notify = True, mock.Mock(manager=self.m), lambda *_: None
+        limit = {"provider": "claude", "session": "win-1", "configDir": str(directory)}
+        with mock.patch("account_switcher.mod.jev_key_present", return_value=True):
+            self.assertEqual(controller.afk_limit(limit), {"action": "wait", "seconds": 3})
+            self.assertEqual(Claude(config_dir=directory, keychain=False).read_live().email, "c@example.com")  # switched already
+            self.assertEqual(controller.afk_limit(limit), {"action": "wait", "seconds": 3})  # not taken for c's limit
+            request = self.m.compaction_request("win-1")
+            self.assertTrue(self.m.compaction_done("win-1", request["id"], "done", 90_000))
+            self.assertEqual(controller.afk_limit(limit), {"action": "wait", "seconds": 1, "restamp": True})
+            answer = controller.afk_limit(limit)
+        self.assertEqual(answer["action"], "continue")
+        self.assertIn("shortened", answer["message"])
+        self.assertEqual(Claude(config_dir=directory, keychain=False).read_live().email, "c@example.com")  # no second switch
+        self.assertEqual(self.main_login(), "a@example.com")
+
     def test_the_wrapper_gets_a_free_account_when_the_setting_is_on(self):
         self.assertIsNone(self.m.allocate_window(os.getpid(), "/work/app"))  # setting off
         self.m.meta["perWindow"] = True

@@ -3,6 +3,7 @@ import { describe, expect, test } from 'claude-code/testing'
 import { NOTE_TAG, shortenInput, trimText } from '../src/apply.ts'
 import { batchCalls, compact, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
 import { cheapToRedo } from '../src/kinds.ts'
+import { LONG_SESSION_TOKENS } from '../src/budget.ts'
 import { fold, lineKey } from '../src/dedupe.ts'
 import { parseResponse } from '../src/openrouter.ts'
 import { maskSecrets } from '../src/secrets.ts'
@@ -341,5 +342,12 @@ describe('budget mode', () => {
   test('only long sessions get it by themselves', async () => {
     const short = await compact(long(6), fakeJev(() => 0.9))
     expect(short.stats.budgetSteps).toBe(0)
+    const under = await compact(long(210), fakeJev(() => 0.9)) // ~305k tokens
+    expect(under.stats.tokensBefore).toBeLessThan(LONG_SESSION_TOKENS)
+    expect(under.stats.tokensBefore).toBeGreaterThan(280_000)
+    expect(under.stats.budgetSteps).toBe(0)
+    const over = await compact(long(250), fakeJev(() => 0.9)) // ~363k tokens
+    expect(over.stats.tokensBefore).toBeGreaterThan(LONG_SESSION_TOKENS)
+    expect(over.stats.budgetSteps).toBeGreaterThan(0)
   })
 })

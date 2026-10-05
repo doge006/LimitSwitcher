@@ -18,7 +18,7 @@ os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 from account_switcher import afk_hook, claude_hooks, codex_config, mod
 from account_switcher.codex_proxy import CodexProxy, ThreadState
 from account_switcher.integrations import Integrations, RoutedAccounts
-from account_switcher.live import JEV_SHOWN, LiveAccounts, LiveGateway
+from account_switcher.live import JEV_SHOWN, MOVED_RECENTLY, LiveAccounts, LiveGateway
 from account_switcher.providers import Claude, Codex
 from account_switcher.vault import Vault
 from account_switcher.web import Controller, make_server
@@ -527,6 +527,30 @@ class AfkTests(unittest.TestCase):
             t.join()
         self.assertEqual(sum(1 for a in answers if a["action"] == "continue"), 2)  # one per session at most
         self.assertLessEqual(len(self.manager.afk_continues), 2)
+
+    def test_a_second_session_on_the_same_account_goes_on_with_the_first(self):
+        """Two sessions hit the limit of the account they share: the first moves the app to b, the
+        second (its turn went out on a) goes on there too, without a second switch or a wait."""
+        self.gateway.set_afk(True)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.manager.claude_limit("s2")["action"], "continue")
+        self.assertEqual(self.claude.read_live().email, "b@example.com")
+        b = next(a for a in self.manager.accounts() if a.email == "b@example.com")
+        self.assertTrue(b.eligible)  # not taken for used up
+
+    def test_a_limit_after_the_background_check_switched_goes_on(self):
+        self.gateway.set_afk(True)
+        self.assertEqual(len(self.manager.auto_swap()), 1)  # a is used up: the background check moves first
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertEqual(self.claude.read_live().email, "b@example.com")
+
+    def test_a_limit_long_after_a_switch_is_the_new_accounts_own(self):
+        self.gateway.set_afk(True)
+        self.manager.auto_swap()
+        account, at = self.manager.auto_moved["claude"]
+        self.manager.auto_moved["claude"] = (account, at - MOVED_RECENTLY - 1)
+        self.api.claude_usage["at-b"] = claude_usage(100, 10, reset_in=3600)
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "wait")  # b is used up now too: wait for a reset
 
     def test_a_continued_turn_that_fails_at_once_is_not_continued_again(self):
         self.gateway.set_afk(True)
