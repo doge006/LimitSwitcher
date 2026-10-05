@@ -154,6 +154,7 @@ class Controller:
         accounts = [account_view(a, active.get(a.provider) == a.id) for a in router.accounts]
         name_mode = self.names(accounts)
         auto_swap = router.auto_swap
+        windows = self.gateway.manager.windows() if self.live else []  # outside the lock, like the accounts
         with self.condition:
             return {
                 "revision": self.revision,
@@ -175,6 +176,8 @@ class Controller:
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
                 "jevKey": self.jev_key_source(),
+                "perWindow": bool(self.gateway.manager.meta.get("perWindow")) if self.live else False,
+                "windows": windows,
                 "launchAtLogin": bool(self.gateway.manager.meta.get("startWithWindows", True)) if self.live else False,
                 "busy": self.pending,
                 "log": list(self.log),
@@ -184,7 +187,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "closeWindow"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "swapWindow", "highlightWindow", "perWindow"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -197,6 +200,27 @@ class Controller:
             if self.live and isinstance(body.get("session"), str):
                 self.gateway.manager.resume_decision(body["session"], bool(body.get("approve")))
             self.notify("changed", None)
+            return
+        if action == "perWindow":  # Settings: separate accounts per window (the `claude` wrapper)
+            if not self.live:
+                raise ValueError("Separate accounts per window needs real-account mode")
+            on = bool(body.get("on"))
+            threading.Thread(target=self.gateway.set_per_window, args=(on,), daemon=True).start()
+            with self.gateway.manager.lock:
+                self.gateway.manager.meta["perWindow"] = on  # shown at once; the wrapper follows
+            self.notify("changed", None)
+            return
+        if action == "highlightWindow":  # first click on a window: point it out on screen; instant
+            if self.live and isinstance(body.get("window"), str):
+                window = body["window"]
+
+                def point():
+                    try:
+                        if not self.gateway.manager.highlight_window(window):
+                            self.notify("log", "Couldn't find that window on screen")
+                    except (ValueError, OSError) as error:
+                        self.notify("log", str(error))
+                threading.Thread(target=point, daemon=True).start()
             return
         if action == "waitNearReset":  # don't switch away from a 5-hour limit that resets within 15 minutes
             on = bool(body.get("on"))
@@ -308,11 +332,13 @@ class Controller:
                 raise ValueError("Date must be a timestamp or null")
             self.gateway.manager.set_subscription(body.get("id"), at, bool(body.get("ends")))
             return
-        if action in {"add", "remove", "openWindow", "closeWindow"} and not self.live:
+        if action in {"add", "remove", "openWindow", "swapWindow"} and not self.live:
             raise ValueError("Adding and removing accounts needs real-account mode")
         if action == "add" and body.get("provider") not in {"claude", "codex"}:
             raise ValueError("Choose Claude or Codex")
-        if action in {"swap", "remove", "openWindow", "closeWindow"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
+        if action == "swapWindow" and not isinstance(body.get("window"), str):
+            raise ValueError("Which window?")
+        if action in {"swap", "remove", "openWindow", "swapWindow"} and body.get("id") not in {a.id for a in self.gateway.router.accounts}:
             raise ValueError("Unknown account")
         if action == "preferences" and (type(body.get("afk")) is not bool or type(body.get("autoSwap")) is not bool):
             raise ValueError("Preferences must be booleans")
@@ -343,8 +369,8 @@ class Controller:
                     self.gateway.manager.remove(body["id"])
                 elif action == "openWindow":  # a Claude Code window that keeps this account (profiles.py)
                     self.gateway.manager.open_profile(body["id"])
-                elif action == "closeWindow":
-                    self.gateway.manager.close_profile(body["id"])
+                elif action == "swapWindow":  # second click: only that window moves to this account
+                    self.gateway.manager.swap_window(body["window"], body["id"])
                 elif action == "reset":
                     self.gateway.reset()  # the refresh button: fetch usage now (demo: fresh sample accounts)
                     if not self.live:
@@ -555,12 +581,29 @@ class Controller:
         if not self.live or body.get("provider") != "claude":
             return {"action": "stop"}
         config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
-        if self.gateway.manager.profile_account(config_dir, str(body.get("session") or "")[:100] or None):
-            return {"action": "stop"}  # a window with its own account: its limit stays there (profiles.py)
+        manager = self.gateway.manager
+        session = str(body.get("session") or "")[:100] or None
+        own = manager.profile_account(config_dir, session)
+        if own:  # a window with its own account: only that window moves (profiles.py)
+            with manager.afk_lock:
+                answer = manager.window_limit(own, session, body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
+            self.notify("changed", None)
+            return answer
         answer = self.gateway.manager.claude_limit(
             str(body.get("session") or "")[:100], body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
         self.notify("changed", None)
         return answer
+
+    def window_start(self, body):
+        """The `claude` wrapper starts a window: the profile it should use, if any (profiles.py)."""
+        if not self.live:
+            return {"configDir": None}
+        pid = body.get("pid") if type(body.get("pid")) is int else None
+        cwd = body.get("cwd")[:500] if isinstance(body.get("cwd"), str) else None
+        directory = self.gateway.manager.allocate_window(pid, cwd)
+        if directory is not None:
+            self.notify("changed", None)
+        return {"configDir": str(directory) if directory else None}
 
     def close(self):
         with self.condition:
@@ -674,6 +717,18 @@ def make_server(controller, port=0):
                     self.respond(200, {"ok": controller.compaction_done(body if isinstance(body, dict) else {})})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"ok": False, "error": str(error)})
+                return
+            if self.path == "/api/window":  # the `claude` wrapper (window.py), with the hook's narrow token
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, controller.window_start(body if isinstance(body, dict) else {}))
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"configDir": None, "error": str(error)})
                 return
             if self.path == "/api/afk":  # the Claude Code AFK hook, with its own narrow token
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

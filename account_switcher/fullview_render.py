@@ -445,6 +445,11 @@ def layout(state, width):
         return items, y + 170 + PAD
     card_w = (inner - (cols - 1) * GAP) / cols
     name_mode = bool(state.get("nameMode"))
+    windows = state.get("windows") or []
+    if windows:  # separate accounts per window: the open windows, above the accounts
+        h = windows_height(windows)
+        items.append(("windows", "windows", left, y, inner, h, None))
+        y += h + 26
     for provider, title, caption in PROVIDERS:
         group = [a for a in accounts if a["provider"] == provider]
         if not group:
@@ -489,7 +494,8 @@ def card_key(account, ui, name_mode, live, locked):
     editing = ui.editing if ui.editing and ui.editing[0] == aid else None
     fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
     return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
-                       name_mode, live, locked, CLOCK_24, int(time.time() // 60)], sort_keys=True, default=str)
+                       name_mode, live, locked, CLOCK_24, int(time.time() // 60), getattr(ui, "window", None)],
+                      sort_keys=True, default=str)
 
 
 def draw_card(account, w, h, scale, ui, name_mode, live, locked):
@@ -663,20 +669,23 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hints = [" · ".join(parts + [updated] if updated else parts)]
                 if updated:
                     hints += [" · ".join(parts + [updated.replace("Updated ", "")]), updated]
-            own = live and provider == "claude" and not active  # can have a window of its own (profiles.py)
+            own = live and provider == "claude" and not active and not account.get("pinned")  # can have a window of its own
             room = w - 36 - 124 - (0 if active else 96) - (96 if own else 0)  # the in-use card has no Remove button to leave room for
             c.text(18, fy + 21, best_fit(hints, 12, room), 12, WARN if status and not account.get("pinned") else FAINT)
         bw, bx = 124, w - 18 - 124
         pinned = account.get("pinned")
         if active and not switching:
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
-        elif pinned:  # its own window has it: another window on it, never a swap (one copy of a login)
-            t = 0.0 if locked else a("openWindow")
+        elif pinned:  # a window of its own has it: never in a second place (one copy of a login)
+            c.text(bx + bw / 2, fy + 16, f"In window {account.get('window') or '?'}", 13, accent, True, anchor="mm")
+        elif getattr(ui, "window", None) and provider == "claude" and eligible:
+            # a window is picked (separate accounts per window): this account goes to that window only
+            t = 0.0 if locked else a("swapWindow")
             fill = mixc(accent, blend((255, 255, 255), accent, .1), t)
-            c.rect(bx, fy, bw, 32, 8, fill + (255,))
-            c.text(bx + bw / 2, fy + 16, "New window", 13, ON_ACCENT, True, anchor="mm", bg=fill)
+            c.rect(bx, fy - t, bw, 32, 8, fill + (255,))
+            c.text(bx + bw / 2, fy + 16 - t, "Use in window", 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
-                hit(bx, fy, bw, 32, "openWindow")
+                hit(bx, fy, bw, 32, "swapWindow")
         elif switching:
             c.rect(bx, fy, bw, 32, 8, accent + (230,))
             c.text(bx + bw / 2, fy + 16, "Switching…", 13, ON_ACCENT, True, anchor="mm", bg=over(SURFACE, accent + (230,)))
@@ -694,11 +703,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hit(bx, fy, bw, 32, "swap")
         if live and not active and not switching and card_t > 0:  # Remove fades in while the card is hovered
             rx = bx - 6 - 80
-            if pinned:  # gives the account back to the other windows (deletes its profile)
-                quiet_button(c, rx, fy, 80, "Give back", a("closeWindow"), card_t)
-                if not locked and card_t >= .5:
-                    hit(rx, fy, 80, 32, "closeWindow")
-            else:
+            if not pinned:
                 quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
                 if not locked and card_t >= .5:
                     hit(rx, fy, 80, 32, "remove")
@@ -846,6 +851,60 @@ def group_content(c, data, w):
         c.text(w - 2, 22, caption, 12, FAINT, anchor="rs")
 
 
+WINDOW_ROW_H = 40
+
+
+def windows_height(windows):
+    return GROUP_HEAD_H + 12 + len(windows) * (WINDOW_ROW_H + 8) - 8
+
+
+def draw_windows(state, w, h, scale, ui):
+    image = Image.new("RGBA", (round(w * scale), round(h * scale)), (0, 0, 0, 0))
+    return Tile(image, windows_content(Canvas(image, scale, BG), state, w, ui))
+
+
+def record_windows(state, w, h, scale, ui):
+    c = Recorder(scale, BG)
+    return Tile(None, windows_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(h * scale)))
+
+
+def windows_content(c, state, w, ui):
+    """Separate accounts per window: each open window with its account. A click picks a window (the app
+    points it out on screen); the account cards then offer "Use in window" for that window alone."""
+    windows = state.get("windows") or []
+    accounts = {a["id"]: a for a in state.get("accounts") or []}
+    picked = getattr(ui, "window", None)
+    accent = ACCENT["claude"]
+    c.text(2, 22, "Windows", 15, TEXT, True)
+    c.text(2 + text_w("Windows", 15, True) + 10, 22, f"{len(windows)} with an account of their own", 12, MUTED)
+    caption = "Now pick an account below for this window" if picked else "Click a window to point it out"
+    c.text(w - 2, 22, caption, 12, accent if picked else FAINT, anchor="rs")
+    hits = []
+    y = GROUP_HEAD_H + 12
+    for window in windows:
+        action = "window:" + window["id"]
+        on = picked == window["id"]
+        hot = quantize(ui.fades.get(action, 0.0))
+        base = mixc(SURFACE, SURFACE_2, max(hot, 1.0 if on else 0.0))
+        c.rect(0, y, w, WINDOW_ROW_H, 9, base + (255,))
+        c.outline(0, y, w, WINDOW_ROW_H, 9, (accent + (200,)) if on else mixc(LINE, LINE_STRONG, hot))
+        mid = y + WINDOW_ROW_H / 2
+        title = f"Window {window['number']}"
+        c.text(16, mid, title, 13, TEXT, True, anchor="lm", bg=base)
+        folder = (window.get("cwd") or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+        detail = " · ".join(p for p in (folder, window.get("model")) if p)
+        account = accounts.get(window.get("accountId"))
+        who = display_name(account) if account else "No account"
+        who_w = text_w(who, 13, True)
+        if detail:
+            c.text(16 + text_w(title, 13, True) + 10, mid, fit(detail, 12, False, w - 60 - text_w(title, 13, True) - who_w),
+                   12, MUTED, anchor="lm", bg=base)
+        c.text(w - 16, mid, who, 13, accent if account else FAINT, True, anchor="rm", bg=base)
+        hits.append(((0, y, w, WINDOW_ROW_H), action, "hand"))
+        y += WINDOW_ROW_H + 8
+    return hits
+
+
 EMPTY_H = 170
 
 
@@ -951,6 +1010,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets f
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
 
+PER_WINDOW = ("perWindow", "Separate accounts per window", "Each new Claude Code window gets an account of its own")
 ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"
@@ -1014,6 +1074,8 @@ def jev_key_field(c, ui, state, x, y, w, hits):
 def settings_menu(image, scale, state, ui, x, y, prefs):
     w = SETTINGS_W
     rows = list(SETTINGS)
+    if state.get("mode") == "live":
+        rows.append(PER_WINDOW)
     if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
         rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
                      "Start in the tray at sign-in"))

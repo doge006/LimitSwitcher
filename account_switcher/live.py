@@ -58,6 +58,7 @@ PROVIDER_INTERVALS = {"claude": (60, 60)}   # (in use, near a limit) when not li
 # limit slows an account down, at most 3x (IDLE_PACE_CAP).
 PROVIDER_IDLE = {"claude": 60}
 IDLE_PACE_CAP = 3
+WINDOW_GRACE = 90  # a window's profile is never retired in its first moments (its pid may not be known yet)
 UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
 LIVE_FRESH = 900            # status line data this recent counts as live
 LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
@@ -199,6 +200,8 @@ class LiveAccounts:
         self.profile_dirs = {}        # folder (normalized) -> account id its login belongs to
         self.profile_signatures = {}  # folder -> its login's signature, as for the official files
         self.profile_sessions = {}    # Claude session -> account id, for sessions in a profile window
+        self.profile_paths = {}       # folder (normalized) -> (window id, folder)
+        self.window_reports = {}      # folder (normalized) -> {"model", "session", "at"} from its status line
 
     # ---------- account list ----------
     def accounts(self):
@@ -206,6 +209,7 @@ class LiveAccounts:
             rows = []
             now = time.time()
             pinned = self.pinned
+            numbers = {w["accountId"]: w["number"] for w in self.windows()} if pinned else {}
             for account_id, m in self.meta["accounts"].items():
                 status = m.get("status", "")
                 if status.startswith("Rate limited") and m.get("backoffUntil", 0.0) > now:
@@ -213,13 +217,13 @@ class LiveAccounts:
                     status = f"Rate limited by {m['provider'].title()} · retrying at " + \
                         clock_text(m["backoffUntil"], self.meta.get("clock24"))
                 if not status and account_id in pinned:
-                    status = "In its own window"
+                    status = f"In window {numbers.get(account_id, '?')}"
                 rows.append(Account(account_id, m["provider"], m.get("email") or m["identity"], 0, 0, 0, 0,
                                     plan=m.get("plan", ""), email=m.get("email", ""),
                                     usage=project(m.get("usage") or [], now),
                                     status=status, updated_at=m.get("updatedAt", 0.0),
                                     subscription=subscription_view(m), credits=m.get("credits"),
-                                    pinned=account_id in pinned))
+                                    pinned=account_id in pinned, window=numbers.get(account_id, 0)))
             order = {"claude": 0, "codex": 1}
             return sorted(rows, key=lambda a: (order.get(a.provider, 9), a.email or a.alias))
 
@@ -264,88 +268,208 @@ class LiveAccounts:
                 self.save()
         return changed
 
+    # ---------- separate accounts per window (profiles.py) ----------
     @property
     def pinned(self):
-        """Accounts held by a profile window: never switched to, never renewed here."""
-        return set(self.profile_dirs.values())
+        """Accounts held by a window of their own: never switched to elsewhere, never renewed here."""
+        return {a for a in self.profile_dirs.values() if a}
+
+    def _keychain(self):
+        return getattr(self.providers.get("claude"), "keychain", None)
 
     def sync_profiles(self):
-        """Take over each profile's newest login (Claude Code renews it in the window)."""
-        claude = self.providers.get("claude")
-        if claude is None:
+        """Take over each profile's newest login (Claude Code renews it in the window), and retire the
+        profiles whose window has closed: their login goes back to the saved copy, the account is free."""
+        if self.providers.get("claude") is None:
             return False
         changed = False
-        found = profiles.existing(self.vault.root)
         seen = set()
-        for directory in found.values():
-            key = os.path.normcase(str(directory))
+        now = time.time()
+        for name, directory in profiles.existing(self.vault.root).items():
+            key = profiles.key(directory)
             seen.add(key)
-            provider = profiles.provider(directory, getattr(claude, "keychain", None))
+            self.profile_paths[key] = (name, directory)
+            provider = profiles.provider(directory, self._keychain())
             signature = provider.signature()
-            if self.profile_signatures.get(key) == signature and key in self.profile_dirs:
-                continue
-            self.profile_signatures[key] = signature
-            login = provider.read_live()
-            if login is None:
-                changed |= self.profile_dirs.pop(key, None) is not None
-                continue
-            account_id = self.adopt("claude", login, source="its own window (a LimitSwitcher profile)")
-            if self.profile_dirs.get(key) != account_id:
-                self.profile_dirs[key] = account_id
+            if self.profile_signatures.get(key) != signature or key not in self.profile_dirs:
+                self.profile_signatures[key] = signature
+                login = provider.read_live()
+                account_id = self.adopt("claude", login, source=f"its own window ({name})") if login else None
+                if self.profile_dirs.get(key, "?") != account_id:
+                    self.profile_dirs[key] = account_id
+                    changed = True
+            window = profiles.info(directory)
+            if window.get("how") == "manual":
+                continue  # `profiles env`: kept until removed by hand
+            pid = window.get("pid")
+            if now - float(window.get("started") or 0) > WINDOW_GRACE and not profiles.alive(pid):
+                logging.getLogger("account_switcher").warning("window %s closed: its profile goes", name)
+                profiles.remove(directory, self._keychain())
+                seen.discard(key)
                 changed = True
-        for key in set(self.profile_dirs) - seen:  # the profile was removed
-            del self.profile_dirs[key]
+        for key in set(self.profile_dirs) - seen:  # removed: the account is free again
+            self.profile_dirs.pop(key, None)
             self.profile_signatures.pop(key, None)
+            self.profile_paths.pop(key, None)
+            self.window_reports.pop(key, None)
             changed = True
         return changed
 
     def profile_account(self, config_dir, session=None):
-        """The account of the profile window a hook or status line runs in (it sends its
-        CLAUDE_CONFIG_DIR), else None. Sessions are remembered, for reports that can't say (the mod)."""
-        if config_dir:
-            try:
-                key = os.path.normcase(os.path.realpath(str(config_dir)))
-            except (OSError, ValueError):
-                key = None
-            account_id = self.profile_dirs.get(key)
-            if account_id is None and key and any(profiles.same_folder(key, d) for d in profiles.existing(self.vault.root).values()):
-                self.sync_live(force=True)  # a profile opened since the last look
-                account_id = self.profile_dirs.get(key)
-            if account_id and session:
-                with self.lock:
-                    self.profile_sessions[session] = account_id
-                    if len(self.profile_sessions) > 200:
-                        self.profile_sessions.pop(next(iter(self.profile_sessions)))
-            return account_id
-        return self.profile_sessions.get(session) if session else None
+        """The account of the window a hook or status line runs in (it sends its CLAUDE_CONFIG_DIR),
+        else None. Sessions are remembered, for reports that can't say (the mod)."""
+        if not config_dir:
+            return self.profile_sessions.get(session) if session else None
+        try:
+            key = profiles.key(config_dir)
+        except (OSError, ValueError):
+            return None
+        if key not in self.profile_dirs and key.startswith(profiles.key(profiles.root(self.vault.root))):
+            self.sync_live(force=True)  # a profile made since the last look
+        account_id = self.profile_dirs.get(key)
+        if account_id and session:
+            with self.lock:
+                self.profile_sessions[session] = account_id
+                if len(self.profile_sessions) > 200:
+                    self.profile_sessions.pop(next(iter(self.profile_sessions)))
+        return account_id
 
-    def close_profile(self, account_id):
-        """Give the account back to the rest of the machine: its profile goes (close its windows first)."""
+    def window_of(self, account_id):
+        """The window id (window-...) holding this account, or None."""
+        key = next((k for k, a in self.profile_dirs.items() if a == account_id), None)
+        return self.profile_paths.get(key, (None,))[0] if key else None
+
+    def windows(self):
+        """The open windows that have a profile, oldest first, for the full view: [{"id", "number",
+        "accountId", "cwd", "model", "session"}]."""
+        rows = []
         with self.lock:
-            self.sync_live(force=True)  # its newest tokens first
-            removed = profiles.remove(self.vault, account_id, keychain=getattr(self.providers.get("claude"), "keychain", None))
+            for key, (name, directory) in self.profile_paths.items():
+                window = profiles.info(directory)
+                report = self.window_reports.get(key) or {}
+                rows.append({"id": name, "accountId": self.profile_dirs.get(key), "cwd": window.get("cwd") or "",
+                             "started": float(window.get("started") or 0), "model": report.get("model"),
+                             "session": report.get("session"), "how": window.get("how")})
+        rows.sort(key=lambda r: r["started"])
+        for number, row in enumerate(rows, 1):
+            row["number"] = number
+        return rows
+
+    def free_accounts(self):
+        """Claude accounts in use nowhere (not the main login, not another window) and usable."""
+        pinned = self.pinned
+        main = {self.live_ids.get("claude"), self.active.get("claude")}
+        return [a for a in self.accounts() if a.provider == "claude" and a.id not in pinned and a.id not in main
+                and a.eligible and not a.status]
+
+    def _check_free(self, account_id):
+        entry = self.meta["accounts"].get(account_id)
+        if entry is None or entry["provider"] != "claude":
+            raise ValueError("Only a Claude account can be used in a window of its own")
+        if account_id in self.pinned:
+            raise RuntimeError(f"{self.shown_name(account_id)} is already in use in another window")
+        if account_id in (self.live_ids.get("claude"), self.active.get("claude")):
+            raise RuntimeError(f"{self.shown_name(account_id)} is the account every other window uses; "
+                               "one copy of its login would be signed out")
+
+    def allocate_window(self, pid, cwd=None):
+        """The `claude` wrapper (window.py) starts a new window: a profile for it on a free account, or
+        None (it then shares the main login)."""
+        if not self.meta.get("perWindow"):
+            return None
+        with self.lock:
             self.sync_live(force=True)
-        if removed:
-            self.notify("log", f"{self.shown_name(account_id)} no longer has its own window")
+            best = self._pick([a for a in self.free_accounts() if a.headroom != 0])
+            if best is None:
+                self.notify("log", "New Claude Code window shares the main account: no other account is free")
+                return None
+            directory = profiles.create(self.vault, best.id, keychain=self._keychain(), pid=pid, cwd=cwd, how="wrapper")
+            self.sync_live(force=True)
+        self.notify("log", f"New Claude Code window on {self.shown_name(best.id)}")
         self.notify("accounts", None)
-        return removed
+        return directory
 
     def open_profile(self, account_id):
-        """A new Claude Code window on this account only (profiles.py)."""
+        """"Own window" on a card: a new terminal running Claude Code on this account only."""
         with self.lock:
             self.sync_live(force=True)
-            live = self.live_ids.get("claude")
-            entry = self.meta["accounts"].get(account_id)
-            if entry is None:
-                raise ValueError("Unknown account")
-            live_identity = self.meta["accounts"].get(live, {}).get("identity") if live else None
-            directory = profiles.prepare(self.vault, account_id, live_identity=live_identity,
-                                         keychain=getattr(self.providers.get("claude"), "keychain", None))
+            self._check_free(account_id)
+            directory = profiles.create(self.vault, account_id, keychain=self._keychain(), how="terminal")
             self.sync_live(force=True)
-        profiles.open_window(directory, f"Claude Code · {self.shown_name(account_id)}")
+        try:
+            profiles.open_window(directory, f"Claude Code · {self.shown_name(account_id)}")
+        except Exception:
+            with self.lock:
+                profiles.remove(directory, self._keychain())
+                self.sync_live(force=True)
+            raise
         self.notify("log", f"Opened a Claude Code window on {self.shown_name(account_id)}")
         self.notify("accounts", None)
         return directory
+
+    def swap_window(self, window_id, account_id, reason="manual"):
+        """Move one window to another account: only its profile's login changes (Claude Code picks
+        it up on its next request). The outgoing login's newest tokens are saved first."""
+        with self.lock:
+            path = next((p for p in self.profile_paths.values() if p[0] == window_id), None)
+            if path is None:
+                raise ValueError("That window has closed")
+            directory = path[1]
+            key = profiles.key(directory)
+            if self.profile_dirs.get(key) == account_id:
+                return
+            self._check_free(account_id)
+            secret = self.vault.read_secret(account_id)
+            if secret is None:
+                raise RuntimeError("This account's saved login is missing; sign in again")
+            provider = profiles.provider(directory, self._keychain())
+            with provider.locked():  # a renewal in the window finishes first, and none starts during the switch
+                self.profile_signatures.pop(key, None)
+                self.sync_live(force=True)  # the outgoing account's newest tokens
+                before = provider.read_live()
+                provider.write_live(secret)
+                after = provider.read_live()
+                if after is None or after.identity != self.meta["accounts"][account_id]["identity"]:
+                    if before is not None:
+                        provider.write_live(before.secret)
+                    raise RuntimeError("Switch could not be verified; the window's previous login was restored")
+                self.profile_signatures[key] = provider.signature()
+                self.profile_dirs[key] = account_id
+            self.save()
+        number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
+        self.notify("log", f"Window {number} now uses {self.shown_name(account_id)}" + (" (automatic)" if reason != "manual" else ""))
+        self.notify("accounts", None)
+
+    def highlight_window(self, window_id):
+        """Point the window out on screen (Windows: an outline around it, and its taskbar button flashes)."""
+        path = next((p for p in self.profile_paths.values() if p[0] == window_id), None)
+        if path is None:
+            raise ValueError("That window has closed")
+        from . import highlight
+        return highlight.window_of(profiles.info(path[1]).get("pid"), flash=True)
+
+    def window_limit(self, account_id, session, tokens=None):
+        """A turn in a window of its own ended on a usage limit: Auto swap moves that window alone to a
+        free account (Auto resume then continues it); with none free it stops there."""
+        afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
+        if not auto:
+            return {"action": "stop"}
+        now = time.time()
+        state = self.afk_sessions.setdefault(session or "?", {"continues": [], "waiting": False})
+        state["continues"] = [t for t in state["continues"] if now - t < 600]
+        if state["continues"] and now - state["continues"][-1] < 90:
+            return {"action": "stop"}  # the same limit again right after continuing: no loop
+        before = (self.meta["accounts"].get(account_id) or {}).get("apiAt")
+        self.refresh(only=account_id)
+        if (self.meta["accounts"].get(account_id) or {}).get("apiAt") == before:
+            self.mark_used_up(account_id)
+        window = self.window_of(account_id)
+        best = self._pick([a for a in self.free_accounts() if a.headroom != 0])
+        if window is None or best is None:
+            self.notify("log", "A window hit its usage limit and no other account is free")
+            return {"action": "stop"}
+        self.swap_window(window, best.id, reason="auto")
+        return self._after_swap(session, tokens, afk, now)
 
     def adopt(self, provider, login, source="the official client (signed in or renewed there)"):
         """Store (or update) a login; returns its account id."""
@@ -826,6 +950,8 @@ class LiveAccounts:
         own = self.profile_account(config_dir, session)  # a profile window: its own account's numbers
         if own is not None:
             account_id = own
+            if config_dir:
+                self.window_reports[profiles.key(config_dir)] = {"model": model, "session": session, "at": now}
         entry = self.meta["accounts"].get(account_id) if account_id else None
         if entry is None:
             return None
@@ -1417,6 +1543,14 @@ class LiveGateway:
             self.manager.last_manual = time.monotonic()
             self.force = True
         self.wake.set()
+
+    def set_per_window(self, enabled):
+        """The setting "Separate accounts per window": the `claude` wrapper goes in place (or away)."""
+        with self.manager.lock:
+            self.manager.meta["perWindow"] = bool(enabled)
+            self.manager.save()
+        if self.integrations:
+            self.integrations.apply_per_window()
 
     def set_afk(self, enabled):
         with self.manager.lock:
