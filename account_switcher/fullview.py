@@ -65,6 +65,9 @@ def merge_boxes(boxes, size):
     return [tuple(b) for b in out]
 
 
+ANIM_MS = 15  # between animation frames: under Windows' timer tick (15.6 ms), so one frame per tick
+
+
 def ease(p):
     """The web's ease-out (no overshoot)."""
     return 1 - (1 - p) ** 3
@@ -351,8 +354,14 @@ class FullView:
         return image
 
     def animate(self, moving):
+        """Frames keep coming while something moves. A running timer is left alone: on Windows it
+        repeats by itself, and setting it again after each frame would start its wait over, so
+        frames came a frame's drawing time plus 16 ms apart, which Windows' 15.6 ms timer tick
+        rounds up to every other tick (32 a second). 15 ms keeps it on every tick (64 a second).
+        The macOS and Linux hosts' timers fire once, so they are set again here each frame."""
         if moving or self.motion.runs:
-            self.host.set_timer("anim", 16)
+            if not self.host.has_timer("anim"):
+                self.host.set_timer("anim", ANIM_MS)
         else:
             self.host.kill_timer("anim")
 

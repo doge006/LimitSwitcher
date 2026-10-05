@@ -107,6 +107,49 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertIn("Sign in again", [t[2] for t in layout.texts])
         self.assertIn("relogin:" + state["accounts"][1]["id"], [a for _, a in layout.hits])  # one click to sign in
 
+    def test_painter_frames_match_whole_redraws(self):
+        """The panel draws again only what changed since its last frame (a hover fade, a switch
+        sliding, a row asking to confirm): every frame must be the whole redraw, pixel for pixel."""
+        from unittest import mock
+        _, hits = fr.render(self.state)
+        rest = fr.targets(self.state)
+        frames = []
+        for action in [a for _, a in hits][:4] + ["toggle:afk"]:
+            frames += [(action, {**rest, ("hover", action): i / 4}, {}) for i in range(1, 5)]
+            frames += [(None, {**rest, ("hover", action): 1 - i / 4}, {}) for i in range(1, 5)]
+        frames += [("toggle:autoSwap", {**rest, ("toggle", "autoSwap"): i / 5}, {}) for i in range(6)]
+        frames += [("swap:claude-b", rest, {"armed": "claude-b"}), (None, rest, {"pinned": True}),
+                   (None, rest, {"pending": "claude-b"}), (None, rest, {})]
+        with mock.patch("time.time", lambda: 1_790_000_000.0):  # "renews in" stays the same throughout
+            for scale in (1.0, 1.25, 1.5, 2.0):
+                painter, steps = fr.Painter(), 0
+                for hover, fx, extra in frames:
+                    image, hits = fr.render(self.state, hover, scale, fx=fx, painter=painter, **extra)
+                    whole, whole_hits = fr.render(self.state, hover, scale, fx=fx, **extra)
+                    self.assertEqual(image.tobytes(), whole.tobytes(), (scale, hover, extra))
+                    self.assertEqual(hits, whole_hits)
+                    steps += painter.changed is not None
+                self.assertGreater(steps, len(frames) // 2)  # most frames were partial redraws
+            painter = fr.Painter()
+            items = [{"action": "panel", "label": "Open panel", "bold": True}, "-", {"action": "quit", "label": "Quit"}]
+            for hover in ("panel", "quit", None):
+                image, _ = fr.render_menu(items, hover, 1.5, painter=painter)
+                self.assertEqual(image.tobytes(), fr.render_menu(items, hover, 1.5)[0].tobytes())
+
+    def test_window_pixels_are_written_only_where_the_frame_changed(self):
+        import ctypes
+        painter = fr.Painter()
+        first, _ = fr.render(self.state, None, 1.5, painter=painter)
+        size = first.width * first.height * 4
+        bitmap = ctypes.create_string_buffer(size)
+        fr.write_bgra(first, ctypes.addressof(bitmap))
+        self.assertEqual(bitmap.raw, first.convert("RGBa").tobytes("raw", "BGRa"))
+        second, _ = fr.render(self.state, "swap:claude-b", 1.5, painter=painter,
+                              fx={**fr.targets(self.state), ("hover", "swap:claude-b"): 0.5})
+        self.assertTrue(painter.changed)
+        fr.write_bgra(second, ctypes.addressof(bitmap), painter.changed)
+        self.assertEqual(bitmap.raw, second.convert("RGBa").tobytes("raw", "BGRa"))
+
     def test_switch_needs_a_confirming_click(self):
         layout, _ = fr.build(self.state, armed="claude-b")
         self.assertIn("Click again", [t[2] for t in layout.texts])

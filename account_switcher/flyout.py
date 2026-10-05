@@ -306,6 +306,7 @@ class Popup:
         self.slide = (0, 1)
         self.scale = 1.0
         self.fx, self.fx_anims = {}, {}   # animated values and their running transitions
+        self.painter = None   # draws each frame again only where it changed (while open)
 
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
     modal = True             # closes on a click elsewhere, hides the tray tooltip (not the taskbar blocks)
@@ -383,6 +384,7 @@ class Popup:
             self._destroy()
         self._register()
         self.hover = self.pressed = None
+        self.painter = fr.Painter()
         self.prepare()
         self.fx = {k: v for k, v in self.fx_targets().items() if k[0] != "hover"}
         self.fx_anims = {}
@@ -474,11 +476,13 @@ class Popup:
                 gdi32.DeleteDC(memory)
                 return
             old = gdi32.SelectObject(memory, bitmap)
-            surface = self._surface = [(width, height), memory, bitmap, bits, old, None]
+            surface = self._surface = [(width, height), memory, bitmap, bits, old, None, None]
         if surface[5] is not image:
-            data = image.convert("RGBa").tobytes("raw", "BGRa")
-            ctypes.memmove(surface[3], data, len(data))
-            surface[5] = image
+            painter = self.painter
+            # A frame the painter built on the one in the bitmap: convert only what it changed.
+            step = painter is not None and painter.image is image and surface[6] == painter.count - 1
+            fr.write_bgra(image, surface[3].value, painter.changed if step else None)
+            surface[5], surface[6] = image, painter.count if painter is not None and painter.image is image else None
         screen = user32.GetDC(None)
         blend = BLENDFUNCTION(0, 0, max(0, min(255, round(alpha * 255))), 1)
         user32.UpdateLayeredWindow(self.hwnd, screen, ctypes.byref(wintypes.POINT(self.x + offset[0], self.y + offset[1])),
@@ -489,7 +493,7 @@ class Popup:
     def _release_surface(self):
         surface, self._surface = getattr(self, "_surface", None), None
         if surface:
-            _, memory, bitmap, _, old, _ = surface
+            _, memory, bitmap, _, old, _, _ = surface
             gdi32.SelectObject(memory, old)
             gdi32.DeleteObject(bitmap)
             gdi32.DeleteDC(memory)
@@ -616,6 +620,7 @@ class Popup:
                 user32.KillTimer(hwnd, timer)
             user32.DestroyWindow(hwnd)
             self._release_surface()
+            self.painter = None
             if not any(popup.modal for popup in Popup._windows.values()):
                 OutsideClicks.stop()
                 if self.modal:
@@ -702,7 +707,7 @@ class Flyout(Popup):
         if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
             self.pending = None  # the switch landed
         return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed,
-                         only=self.only)
+                         only=self.only, painter=self.painter)
 
     def drag_region(self, x, y):
         # Popped out: drag by the header (anywhere outside a button when compact, which has none).
@@ -828,7 +833,7 @@ class TrayMenu(Popup):
         return place_menu(self.point, self.monitor, self.work, width, height, self.scale)
 
     def render(self, hover):
-        return fr.render_menu(self.items(), hover, self.scale, fx=self.fx)
+        return fr.render_menu(self.items(), hover, self.scale, fx=self.fx, painter=self.painter)
 
     def activate(self, action):
         tray = self.tray
