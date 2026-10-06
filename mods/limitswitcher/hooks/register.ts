@@ -41,7 +41,7 @@ type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
 // What `/resume` says as its list opens, while Settings → Jev compaction is on
-export const RESUME_TOAST = '⚡ Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
+export const RESUME_TOAST = '💡 Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
 const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
 const SAVED_FOR = 15_000 // the toast says what Jev saved for this long

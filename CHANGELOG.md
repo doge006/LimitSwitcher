@@ -2,6 +2,11 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.3.8](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.8) (2026-10-06)
+
+- Jev compaction when you resume an old conversation: after Claude Code's "Resume this conversation?" (Pro/Max), picking Resume has Jev compact it before anything is sent, so the resume uses less of your 5-hour limit. A note sits beside the question, a band shows it compacting and a toast what it saved; "Start a new conversation" compacts nothing.
+- The Claude Code mod's plugin is renamed from limit-status to limitswitcher (Settings → Update replaces it).
+
 ## [1.3.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.7) (2026-10-06)
 
 - New `/limits` command (Claude Code Status mod): every Claude account's limits at a glance, made for the phone over Remote Control. Shows the session's own account with bars, what Jev did for it, and where each account is in use with separate accounts per window.
