@@ -31,7 +31,7 @@ python -m unittest discover -s tests -v
 The mod's plugins have their own tests, run by Claude Code (2.1.287 or later):
 
 ```sh
-CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/limit-status
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/limitswitcher
 CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/jev-compact
 ```
 
@@ -88,7 +88,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `account_switcher/connections.py`: the usage APIs' HTTPS connections, kept open between checks (and TLS sessions resumed).
 - `account_switcher/codex_proxy.py` + `codex_config.py`: the Codex router and the config lines that point Codex at it.
 - `account_switcher/claude_hooks.py`, `afk_hook.py`, `statusline.py`: the Claude Code hook (Auto resume) and status line.
-- `mods/limit-status` + `mods/jev-compact` + `.claude-plugin/marketplace.json` + `account_switcher/mod.py`: the optional Claude Code mod (live usage; `/limits`, answered by `limits_text` in `live.py`; the Jev compaction before a swapped session goes on), and the app's install/status of it. The swap side of the compaction is `claude_limit` in `live.py` (the hook's answer waits for it). Each plugin has its own tests: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/<name>`; `mods/jev-compact/bench/bench.ts` measures the compaction on saved transcripts.
+- `mods/limitswitcher` + `mods/jev-compact` + `.claude-plugin/marketplace.json` + `account_switcher/mod.py`: the optional Claude Code mod (live usage; `/limits`, answered by `limits_text` in `live.py`; the Jev compaction before a swapped session goes on), and the app's install/status of it. The swap side of the compaction is `claude_limit` in `live.py` (the hook's answer waits for it). Each plugin has its own tests: `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/<name>`; `mods/jev-compact/bench/bench.ts` measures the compaction on saved transcripts.
 - `account_switcher/integrations.py`: sets all of that up while the app runs and undoes it on quit.
 - `account_switcher/web.py`: the controller and the local API (status line, hook, the macOS panel, a second launch).
 - `account_switcher/core.py` + `demo.py`: the account model and routing; sample accounts for `--demo`.

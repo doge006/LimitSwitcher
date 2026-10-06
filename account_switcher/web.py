@@ -151,6 +151,11 @@ class Controller:
         with self.condition:
             return [{"id": a["id"], "text": a["text"]} for a in self.alerts if now - a["at"] < ALERT_FOR]
 
+    def jev_on_resume(self, body):
+        """For a session's mod: whether an old session resumed is compacted first (Settings → Jev
+        compaction), so `/resume` can say so before one is picked."""
+        return body.get("source") == "mod" and self.live and bool(self.gateway.manager.meta.get("jevCompact"))
+
     def names(self, accounts):
         """Add each account's name ("label") and, in name mode, show it instead of the email, so
         every surface (tray, taskbar, notifications) follows. An account without a name shows as
@@ -462,7 +467,7 @@ class Controller:
         if self.mod_busy:
             return {"status": "error", "text": self.mod_busy}
         if self.mod_installed is False and time.time() - self.mod_seen < 120:
-            return {"status": "update"}  # limit-status alone, from before the Jev compaction
+            return {"status": "update"}  # an older mod reports: limit-status (its name before 1.3.8), or no jev-compact
         if time.time() - self.mod_seen < 120:
             return {"status": "active"}
         if self.mod_installed:
@@ -528,7 +533,7 @@ class Controller:
         now = time.time()
         self.mod_seen = now
         if self.mod_installed is None:
-            self.mod_installed = True  # at least limit-status is; a look-up says whether jev-compact is too
+            self.mod_installed = True  # at least limitswitcher is; a look-up says whether jev-compact is too
         manager = getattr(self.gateway, "manager", None)
         if manager is not None and now - float(manager.meta.get("modSeenAt") or 0) > 60:
             self.set_mod_seen(now)
@@ -637,7 +642,9 @@ class Controller:
         """A session's mod finished (or gave up on) the compaction it was asked for."""
         if not self.live:
             return False
-        if body.get("outcome") == "running":  # one the session started itself (/jevcompact)
+        if body.get("outcome") == "running":  # one the session started itself (/jevcompact, or on resume)
+            if body.get("resume") is True and not self.gateway.manager.meta.get("jevCompact"):
+                return False  # an old session resumed: compacted first only with Settings → Jev compaction on
             started = self.gateway.manager.compaction_started(str(body.get("session") or "")[:100] or None,
                                                               str(body.get("id") or "")[:40])
             if started:
@@ -777,7 +784,8 @@ def make_server(controller, port=0):
                                        "rate_limits": controller.statusline_limits(body),
                                        "compact": controller.compaction_request(body),
                                        "compacted": controller.compacted_context(body),
-                                       "alerts": controller.alerts_for(body)})
+                                       "alerts": controller.alerts_for(body),
+                                       "jevResume": controller.jev_on_resume(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return
@@ -801,7 +809,10 @@ def make_server(controller, port=0):
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
-                    self.respond(200, {"ok": controller.compaction_done(body if isinstance(body, dict) else {})})
+                    body = body if isinstance(body, dict) else {}
+                    # a compaction on resume: the mod goes ahead only when this says "resume" (Jev compaction on)
+                    extra = {"resume": True} if body.get("resume") is True else {}
+                    self.respond(200, {"ok": controller.compaction_done(body), **extra})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"ok": False, "error": str(error)})
                 return

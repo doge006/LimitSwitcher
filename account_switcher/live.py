@@ -83,7 +83,7 @@ STATUS_SYNC = 3.0        # seconds between a status line's look at the login fil
 JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOVED_RECENTLY = 120     # seconds: a limit reported this soon after an automatic switch was the old account's
-MOD_SESSION_FRESH = 120  # a session's limit-status mod reported this recently: it is there to compact
+MOD_SESSION_FRESH = 120  # a session's limitswitcher mod reported this recently: it is there to compact
 MIN_ROOM = 5            # percent: an account with less left than this is only moved to when none has more
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
@@ -187,7 +187,7 @@ class LiveAccounts:
         self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
         self.stale_reports = set()  # numbers from before the last Claude login change (see _login_changed)
         self.status_synced = 0.0  # when a status line report last looked at the login files
-        self.mod_sessions = {}   # Claude session -> when its limit-status mod last reported
+        self.mod_sessions = {}   # Claude session -> when its limitswitcher mod last reported
         self.compactions = {}    # Claude session -> its Jev compaction before a swap (see claude_limit)
         self.auto_moved = {}     # provider -> (account moved to, when): the last automatic switch
         self.signatures = {}
@@ -1165,9 +1165,9 @@ class LiveAccounts:
         state["waiting"] = False
         return {"action": "continue", "message": AFK_NOTE + (AFK_COMPACTED if compacted else "")}
 
-    # ---------- Jev compaction before a swap (mods/limit-status + mods/jev-compact) ----------
+    # ---------- Jev compaction before a swap (mods/limitswitcher + mods/jev-compact) ----------
     def note_mod_session(self, session):
-        """A session's limit-status mod reported: it is there to run a compaction."""
+        """A session's limitswitcher mod reported: it is there to run a compaction."""
         if not session:
             return
         with self.lock:
