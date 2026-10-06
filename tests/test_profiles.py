@@ -121,6 +121,18 @@ class ProfileTests(unittest.TestCase):
         self.assertTrue(self.account("c@example.com").pinned)
         self.assertEqual(self.window("c@example.com")["id"], window)
 
+    def test_limits_in_a_window_shows_its_own_account_and_where_each_is(self):
+        directory = self.m.open_profile(self.account("b@example.com").id)
+        text = self.m.limits_text("win-1", "Opus 5.5", None, None, str(directory))  # the mod sends the folder
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "**⇄ b@example.com** · Opus 5.5 · window 1")
+        self.assertIn("- 🟢 a@example.com · 5h **90%** · 1w **90%** · main", lines)
+        self.assertIn("- 🟢 c@example.com · 5h **70%** · 1w **70%**", lines)  # free: in use nowhere
+        # Later, without the folder: the session is remembered
+        self.assertTrue(self.m.limits_text("win-1").startswith("**⇄ b@example.com** · window 1\n"))
+        # A session sharing the main login
+        self.assertTrue(self.m.limits_text("other").startswith("**⇄ a@example.com** · main\n"))
+
     def test_a_limit_in_a_window_moves_that_window_only(self):
         from account_switcher.web import Controller
         directory = self.m.open_profile(self.account("b@example.com").id)

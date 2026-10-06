@@ -209,10 +209,25 @@ In the full view, the gear opens Settings:
 
 Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The mod is two plugins from this repository, installed together:
 
-- **limit-status** (`mods/limit-status`) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, runs the Jev compaction below, and shows the reset alerts (Settings) as a toast. LimitSwitcher's line itself is in Claude Code's status line (see below), where it can't be dismissed; installing the mod turns that on.
+- **limit-status** (`mods/limit-status`) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, runs the Jev compaction below, shows the reset alerts (Settings) as a toast, and adds `/limits` (see below). LimitSwitcher's line itself is in Claude Code's status line (see below), where it can't be dismissed; installing the mod turns that on.
 - **jev-compact** (`mods/jev-compact`) is the compaction. It is a plugin of its own because Claude Code skips a plugin's own compaction hook when that plugin starts the compaction.
 
 Install it from **Settings → Claude Code Status mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the plugins where the app's files are. The row then shows **Active** while a session is reporting, **Installed** until one is, **Update** when only an older limit-status is there, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script below (without Jev compaction).
+
+**`/limits`:** every Claude account's usage at a glance, in any Claude Code session with the mod. It's made for the Claude app on your phone during a [Remote Control](https://code.claude.com/docs/en/remote-control) session, where Claude Code's status line doesn't show. The session's own account comes first, with its model, a bar for each limit and the context, and what Jev did for the session; then each other Claude account on one line (Codex accounts aren't listed). With separate accounts per window, it shows the window's own account, and where each account is in use:
+
+```
+⇄ doge2 · Opus 5.5 (medium) · window 1
+🟢 5h  ██████░░░░  63% left
+🟡 1w  █░░░░░░░░░  13% left
+🟢 ctx ████████░░  78% left · 217k
+🗜 Jev saved ~56k before the last swap (12m ago)
+
+🟢 doge1 · 5h 92% · 1w 71% · main
+🔴 doge3 · 5h 0% ↻38m · 1w 40%
+```
+
+The dot is each line's level (green, yellow under 30% left, red under 10%), and a used-up limit shows when it resets. The reply is markdown (a table with the bars, a list of the other accounts), which Claude Code and the Claude app draw without colours, hence the dots. The mod answers it from the app's numbers, so it costs no Claude usage; the reply is part of the conversation, so the model reads it with your next message (a few hundred tokens).
 
 ## Jev compaction (optional)
 

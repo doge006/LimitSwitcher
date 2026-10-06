@@ -55,6 +55,7 @@ class Controller:
         self.alerts = []  # recent reset alerts for the mod to toast: {"id", "at", "text"}
         self.alerts_total = 0
         self.labels = {}         # account id -> name (demo; real accounts keep theirs in the metadata)
+        self.session_models = {}  # session -> (model, effort) from its status line, for /limits
         self.closed = False
         if gateway is not None:
             self.gateway = gateway(self.notify)
@@ -588,6 +589,10 @@ class Controller:
         effort = body.get("effort") if isinstance(body.get("effort"), str) else None
         config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
         line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, config_dir=config_dir)
+        if session and model:
+            self.session_models[session] = (model, effort)
+            if len(self.session_models) > 200:  # sessions come and go
+                self.session_models.pop(next(iter(self.session_models)))
         if body.get("source") == "mod":  # the mod feeds the usage; the line itself is the status line's
             self.note_mod()
             self.gateway.manager.note_mod_session(session)
@@ -598,6 +603,23 @@ class Controller:
         if time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
             return None
         return line
+
+    def limits_text(self, body):
+        """`/limits` from the mod: every Claude account at a glance, the session's own first (its
+        model and effort as its status line last reported them, its context from the mod)."""
+        if not self.live:
+            return "LimitSwitcher is in demo mode."
+        from .statusline import tokens_text
+        session = str(body.get("session") or "")[:100] or None
+        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        model, effort = self.session_models.get(session or "") or (body.get("model"), None)
+        model = model if isinstance(model, str) and model else None
+        context, ctx = body.get("context"), None
+        if isinstance(context, dict) and isinstance(context.get("tokens"), (int, float)) and context["tokens"] > 0:
+            percent = context.get("percent")
+            ctx = (tokens_text(int(context["tokens"])),
+                   max(0, min(100, 100 - int(percent))) if isinstance(percent, (int, float)) else None)
+        return self.gateway.manager.limits_text(session, model, effort, ctx, config_dir)
 
     def compaction_request(self, body):
         """For a session's mod: the Jev compaction to run before it goes on, if one is due."""
@@ -758,6 +780,18 @@ def make_server(controller, port=0):
                                        "alerts": controller.alerts_for(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
+                return
+            if self.path == "/api/limits":  # the mod's /limits: every Claude account at a glance
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, {"text": controller.limits_text(body if isinstance(body, dict) else {})})
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"text": None, "error": str(error)})
                 return
             if self.path == "/api/compaction":  # the mod: a Jev compaction started by hand, or one it ran is done
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

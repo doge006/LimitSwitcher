@@ -10,7 +10,7 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[] } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string> } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -19,6 +19,8 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
     return { value: JSON.stringify({ url: 'http://127.0.0.1:9/api/afk', token: 'tok' }) }
   })
   on('session.id', () => ({ value: 'session-1' }))
+  on('session.model', () => ({ value: 'Opus 5.5' }))
+  mock.env(on, options.env ?? {})
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('ui.status', ($, e) => {
@@ -34,6 +36,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
       answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [] }
       if (options.compact) asked = true
     }
+    if (path === '/api/limits') answer = { text: '**⇄ a@example.com** · Opus 5.5 (high)' }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
   })
   const outcomes = [...(options.outcomes ?? [])]
@@ -169,6 +172,42 @@ describe('limit-status', () => {
       changed: ['rateLimits' as const],
     })
     expect(toasts).toEqual([text])
+  })
+
+  test('/limits answers with every Claude account from the app, without a model turn', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on)
+    const registered: string[] = []
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => { registered.push(e.name); return { value: { command: e.name } } })
+    await $.session.start({ cwd: '/' })
+    expect(registered).toContain('limits')
+    const answer = await $.command.run({ command: 'limits' })
+    expect(answer.text).toBe('**⇄ a@example.com** · Opus 5.5 (high)')
+    const sent = w.posts.find((p) => p.path === '/api/limits')!
+    expect(sent.body).toEqual({ session: 'session-1', model: 'Opus 5.5', context: { tokens: 10, window: 1000, percent: 1 } })
+  })
+
+  test('/limits in a window with an account of its own sends its folder', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { env: { CLAUDE_CONFIG_DIR: '/data/profiles/window-2' } })
+    await $.command.run({ command: 'limits' })
+    expect(w.posts.find((p) => p.path === '/api/limits')!.body.configDir).toBe('/data/profiles/window-2')
+  })
+
+  test('/limits on an app from before /limits says to update it', { options: { statePath: STATE } }, async ($, on) => {
+    on('fs.read', () => ({ value: JSON.stringify({ url: 'http://127.0.0.1:9/api/afk', token: 'tok' }) }))
+    on('session.id', () => ({ value: 'session-1' }))
+    on('session.model', () => ({ value: 'Opus 5.5' }))
+    mock.env(on, {})
+    on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000 }, rateLimits: [] } }))
+    on('http.fetch', () => ({ value: { status: 400, ok: false, headers: {}, text: '{"error":"Unknown route"}' } }))
+    const answer = await $.command.run({ command: 'limits' })
+    expect(answer.text).toBe('This LimitSwitcher is too old for /limits: update it (Settings → Update).')
+  })
+
+  test('/limits without LimitSwitcher running says so', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { noApp: true })
+    const answer = await $.command.run({ command: 'limits' })
+    expect(answer.text).toBe('LimitSwitcher isn\'t running.')
   })
 
   test('without LimitSwitcher running, nothing happens', { options: { statePath: STATE } }, async ($, on) => {
