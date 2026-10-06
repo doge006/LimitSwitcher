@@ -204,6 +204,20 @@ class FullViewTests(unittest.TestCase):
         self.click("openWindow:claude-2")
         self.assertIn(("openWindow", {"id": "claude-2"}), self.controller.calls)
 
+    def test_no_new_window_on_an_expired_or_spent_account(self):
+        # "Login expired · Sign in again" sits where "New window" would fade in: only the sign-in is offered
+        expired = account(2, "claude", status="Login expired; sign in again")
+        self.view.set_state(state(perWindow=True, accounts=[account(1, "claude", active=True), expired]))
+        self.view.frame()
+        self.hover_card("claude-2")
+        self.assertEqual(self.hits("openWindow:"), [])
+        self.assertEqual(self.hits("relogin:"), ["relogin:claude-2"])
+        spent = account(2, "claude", eligible=False)  # nor on an account whose limit is reached
+        self.view.set_state(state(perWindow=True, accounts=[account(1, "claude", active=True), spent]))
+        self.view.frame()
+        self.hover_card("claude-2")
+        self.assertEqual(self.hits("openWindow:"), [])
+
     def test_windows_list_says_how_to_start_when_on_and_empty(self):
         self.assertFalse(any(i[0] == "windows" for i in self.view.items))  # off: nothing about windows
         self.view.set_state(state(perWindow=True))

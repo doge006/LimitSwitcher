@@ -253,14 +253,17 @@ def remove(directory, keychain=None):
 
 
 def open_window(directory, title="Claude Code"):
-    """A new terminal window running `claude` on the profile; records which process is the window."""
+    """A new terminal window running `claude` on the profile; records which process is the window.
+    It starts in the home folder, like a terminal opened by hand (not the app's own folder)."""
     env = environment(directory)
+    home = str(Path.home())
     if sys.platform == "darwin":
         # Like "Add account": a .command file Terminal runs by itself (it has the user's PATH). Its
         # shell writes its pid, then becomes `claude`.
         script = directory / "Open window.command"
         script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(directory / PID_FILE)) + "\n"
                           + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
+                          + f"cd {shlex.quote(home)}\n"
                           + f"printf '\\033]0;%s\\007' {shlex.quote(title)}\nexec claude\n")
         script.chmod(0o700)
         subprocess.Popen(["/usr/bin/open", "-a", "Terminal", str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -270,12 +273,12 @@ def open_window(directory, title="Claude Code"):
     if sys.platform == "win32":
         # cmd stays for the window's life: it is the process the app watches (and highlights)
         process = subprocess.Popen(["cmd.exe", "/k", f'title {title.replace("&", "and")} && claude'],
-                                   env=dict(os.environ, **env), creationflags=subprocess.CREATE_NEW_CONSOLE)
+                                   env=dict(os.environ, **env), cwd=home, creationflags=subprocess.CREATE_NEW_CONSOLE)
     else:
         terminal = next((t for t in ("x-terminal-emulator", "gnome-terminal", "konsole", "xterm") if shutil.which(t)), None)
         if terminal is None:
             raise RuntimeError("No terminal found; run `claude` with " + " ".join(f"{k}={v}" for k, v in env.items()))
-        process = subprocess.Popen([terminal, "--" if terminal == "gnome-terminal" else "-e", "claude"], env=dict(os.environ, **env))
+        process = subprocess.Popen([terminal, "--" if terminal == "gnome-terminal" else "-e", "claude"], env=dict(os.environ, **env), cwd=home)
     set_info(directory, pid=process.pid)
 
 

@@ -277,6 +277,12 @@ class LiveAccounts:
     def _keychain(self):
         return getattr(self.providers.get("claude"), "keychain", None)
 
+    def _token_lock(self, account_id):
+        """One renewal of a login at a time. Copying a saved login to Claude Code (a switch, a window)
+        holds it too: a renewal still under way would spend the refresh token being copied, and the
+        copy would expire within the hour. Taken before self.lock, never inside it."""
+        return self.token_locks.setdefault(account_id, threading.Lock())
+
     def sync_profiles(self):
         """Take over each profile's newest login (Claude Code renews it in the window), and retire the
         profiles whose window has closed: their login goes back to the saved copy, the account is free."""
@@ -380,8 +386,11 @@ class LiveAccounts:
         with self.lock:
             self.sync_live(force=True)
             best = self._pick([a for a in self.free_accounts() if a.headroom != 0])
-            if best is None:
-                self.notify("log", "New Claude Code window shares the main account: no other account is free")
+        if best is None:
+            self.notify("log", "New Claude Code window shares the main account: no other account is free")
+            return None
+        with self._token_lock(best.id), self.lock:
+            if best.id not in {a.id for a in self.free_accounts()}:  # taken while waiting: share the main one
                 return None
             directory = profiles.create(self.vault, best.id, keychain=self._keychain(), pid=pid, cwd=cwd, how="wrapper")
             self.sync_live(force=True)
@@ -391,7 +400,7 @@ class LiveAccounts:
 
     def open_profile(self, account_id):
         """"Own window" on a card: a new terminal running Claude Code on this account only."""
-        with self.lock:
+        with self._token_lock(account_id), self.lock:
             self.sync_live(force=True)
             self._check_free(account_id)
             directory = profiles.create(self.vault, account_id, keychain=self._keychain(), how="terminal")
@@ -410,7 +419,7 @@ class LiveAccounts:
     def swap_window(self, window_id, account_id, reason="manual"):
         """Move one window to another account: only its profile's login changes (Claude Code picks
         it up on its next request). The outgoing login's newest tokens are saved first."""
-        with self.lock:
+        with self._token_lock(account_id), self.lock:
             path = next((p for p in self.profile_paths.values() if p[0] == window_id), None)
             if path is None:
                 raise ValueError("That window has closed")
@@ -557,7 +566,10 @@ class LiveAccounts:
             # One renewal at a time per login, reading the saved login inside the lock: a renewal
             # that ran just before (Auto resume's check, the Codex router) leaves its new tokens here,
             # and renewing again with the old single-use token would kill the login.
-            with self.token_locks.setdefault(account_id, threading.Lock()):
+            with self._token_lock(account_id):
+                with self.lock:  # switched to, or given a window, since the list was made: no longer ours to renew
+                    is_active = account_id == self.active.get(meta["provider"])
+                    is_live = is_live or account_id == self.live_ids.get(meta["provider"]) or account_id in self.pinned
                 try:
                     secret = self.vault.read_secret(account_id)
                 except (OSError, ValueError):
@@ -705,7 +717,7 @@ class LiveAccounts:
 
     # ---------- switching ----------
     def swap(self, account_id, reason="manual"):
-        with self.lock:
+        with self._token_lock(account_id), self.lock:
             target = self.meta["accounts"].get(account_id)
             if target is None:
                 raise ValueError("Unknown account")
@@ -770,11 +782,12 @@ class LiveAccounts:
             chosen = self.active.get(name)
             self.routed.discard(name)
             self.sync_live(force=True)
-            if chosen and chosen != self.active.get(name) and chosen in self.meta["accounts"]:
-                try:
-                    self.swap(chosen, reason="quiet")
-                except (RuntimeError, ValueError, OSError):
-                    pass
+            again = chosen and chosen != self.active.get(name) and chosen in self.meta["accounts"]
+        if again:  # outside self.lock: swap takes the login's token lock first
+            try:
+                self.swap(chosen, reason="quiet")
+            except (RuntimeError, ValueError, OSError):
+                pass
 
     def route(self, name):
         with self.lock:
@@ -794,7 +807,7 @@ class LiveAccounts:
             if login is not None and login.identity == entry["identity"]:
                 tokens = login.secret["auth"]["tokens"]
                 return tokens["access_token"], tokens.get("account_id")
-        with self.token_locks.setdefault(account_id, threading.Lock()):
+        with self._token_lock(account_id):
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("Saved login missing")

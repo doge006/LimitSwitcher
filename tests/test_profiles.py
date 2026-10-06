@@ -324,5 +324,19 @@ class WrapperTests(unittest.TestCase):
                 server.server_close()
 
 
+class OpenWindowTests(unittest.TestCase):
+    @unittest.skipIf(sys.platform in ("darwin", "win32"), "the Linux terminal path")
+    def test_new_window_starts_in_the_home_folder(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(Path, "home", return_value=Path(tmp)), \
+                mock.patch.object(profiles, "environment", return_value={}), \
+                mock.patch.object(profiles, "set_info"), \
+                mock.patch.object(profiles.shutil, "which", return_value="/usr/bin/xterm"), \
+                mock.patch.object(profiles.subprocess, "Popen") as popen:
+            profiles.open_window(Path(tmp))
+        self.assertEqual(popen.call_args.kwargs["cwd"], tmp)  # not the app's own folder
+
+
 if __name__ == "__main__":
     unittest.main()
+
