@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { coldResume, COMPACTING, resumeSavedText, RESUME_NOTE, RESUME_TOAST } from './register.ts'
+import { coldResume, COMPACTING, resumeSavedText, RESUME_TOAST } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 
@@ -267,10 +267,8 @@ describe('limit-status', () => {
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'old-1', outcome: 'running', resume: true })
     expect(told[1]).toMatchObject({ session: 'old-1', id: told[0].id, outcome: 'done', saved: 20_000 })
-    expect(toasts).toEqual([])
-    expect(await bandOf($)).toBe(resumeSavedText(20_000, 50_000, 666_000))       // then what it saved, for 20 s
-    await (w as any).clock.advance(20_000)
-    expect(await bandOf($)).toBe('')
+    expect(toasts).toEqual([resumeSavedText(20_000, 50_000, 666_000)])           // then a toast says what it saved
+    expect(await bandOf($)).toBe('')                                             // and the band is gone
     expect(sent).toEqual(['where were we?'])                               // sent once it was done
     await $.prompt.submit({ text: 'next' })
     expect(sent).toEqual(['where were we?', 'next'])                       // nothing held after
@@ -293,41 +291,25 @@ describe('limit-status', () => {
     expect(w.compactions).toEqual([])
     expect(w.posts.filter((p) => p.path === '/api/compaction')).toEqual([])
   })
-  test('/resume says Jev will compact an old session, while Jev compaction is on', { options: { statePath: STATE } }, async ($, on) => {
+  test('/resume says Jev will compact an old session as its list opens, while Jev compaction is on', { options: { statePath: STATE } }, async ($, on) => {
     world(on, { jevResume: true })
-    const toasts: string[] = []
+    const toasts: { text: string; timeoutMs?: number }[] = []
     let opened = 0
-    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
-    on('command.describe', ($, e) => ({ description: 'Resume a previous conversation', isHidden: false }))
+    on('ui.toast', ($, e) => { toasts.push({ text: String(e.text), timeoutMs: e.timeoutMs }); return { value: undefined } })
     on('command.run', { command: 'resume' }, () => { opened++; return { text: '' } })
     await measure($)                                                    // the app says it is on
-    const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
-    expect(listed.description).toBe(`Resume a previous conversation · ${RESUME_NOTE}`)
     await $.command.run({ command: 'resume', args: '' })
-    expect(toasts).toEqual([RESUME_TOAST])
+    expect(toasts).toEqual([{ text: RESUME_TOAST, timeoutMs: 60_000 }]) // up while a session is picked (a toast's longest)
     expect(opened).toBe(1)                                              // Claude Code's own /resume still opens
   })
 
-  test('/resume is left as it is with Jev compaction off', { options: { statePath: STATE } }, async ($, on) => {
+  test('/resume says nothing with Jev compaction off', { options: { statePath: STATE } }, async ($, on) => {
     world(on, { jevResume: false })
     const toasts: string[] = []
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
-    on('command.describe', ($, e) => ({ description: 'Resume a previous conversation', isHidden: false }))
     on('command.run', { command: 'resume' }, () => ({ text: '' }))
     await measure($)
-    const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
-    expect(listed.description).toBe('Resume a previous conversation')
     await $.command.run({ command: 'resume', args: '' })
     expect(toasts).toEqual([])
-  })
-  test('/resume\'s note is a toast that stays up while a session is picked (a minute, a toast\'s longest)', { options: { statePath: STATE } }, async ($, on) => {
-    world(on, { jevResume: true })
-    const toasts: { text: string; timeoutMs?: number }[] = []
-    on('ui.toast', ($, e) => { toasts.push({ text: String(e.text), timeoutMs: e.timeoutMs }); return { value: undefined } })
-    on('command.describe', ($, e) => ({ description: e.description, isHidden: false }))
-    on('command.run', { command: 'resume' }, () => ({ text: '' }))
-    await measure($)
-    await $.command.run({ command: 'resume', args: '' })
-    expect(toasts).toEqual([{ text: RESUME_TOAST, timeoutMs: 60_000 }])
   })
 })

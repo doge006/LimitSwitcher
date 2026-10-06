@@ -40,15 +40,14 @@ const RESUME_LONGEST = 240_000 // never hold the first message longer than this
 type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
-// What `/resume` says before a session is picked, while Settings → Jev compaction is on
-export const RESUME_NOTE = 'Jev compacts an old session before it goes on (LimitSwitcher)'
+// What `/resume` says as its list opens, while Settings → Jev compaction is on
 export const RESUME_TOAST = 'Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
 const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
-const SAVED_FOR = 20_000 // the band says what Jev saved for this long
+const SAVED_FOR = 15_000 // the toast says what Jev saved for this long
 
-// The band above the prompt while a resumed session is compacted, then what it saved. A toast
-// can't be changed or taken down once shown (they stack), so this part is a band.
+// The band above the prompt while a resumed session is compacted: a toast can't be taken down
+// once shown (they stack), so "compacting" is a band, gone when it is done.
 const band = atom({ plugin: 'limit-status', key: 'band' } as const, null)
 function toast($: any, text: string, timeoutMs?: number): void {
   $.ui.toast(text, timeoutMs ? { timeoutMs } : undefined)
@@ -91,10 +90,7 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
     })
     const on = answer?.jevResume === true
-    if (on !== jevResume) {
-      jevResume = on
-      $.ui.invalidate('command.describe') // /resume's line in the list follows it
-    }
+    jevResume = on
     for (const alert of Array.isArray(answer?.alerts) ? answer.alerts : []) {
       // Reset alerts (Settings): every account of a provider had hit its limit and one has room again
       if (typeof alert?.id !== 'string' || typeof alert?.text !== 'string' || toasted.has(alert.id)) continue
@@ -191,11 +187,7 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
         const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
         saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
-        if (saved > 0) {
-          const text = resumeSavedText(saved, before, e.context_tokens)
-          await update($, band, () => text)
-          $.clock.after(SAVED_FOR, () => update($, band, (now) => (now === text ? null : now)))
-        }
+        if (saved > 0) toast($, resumeSavedText(saved, before, e.context_tokens), SAVED_FOR)
       } else {
         outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       }
@@ -209,7 +201,7 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
       break
     }
   }
-  await update($, band, (now) => (now === COMPACTING ? null : now))
+  await update($, band, () => null)
   try {
     await post($, app, '/api/compaction', { session, id, outcome, saved, ...(skip ? { reason: skip.slice(0, 300) } : {}) })
   } catch {
@@ -350,13 +342,8 @@ export const register: Register = (on, options) => {
     return { text: 'Jev compacting…' }
   })
 
-  // `/resume` says Jev will compact an old session, in the command list and as it opens the list of
-  // sessions (Claude Code's own "Resume this conversation?" can't carry a mod's note)
-  on('command.describe', { command: 'resume' }, async ($, e, next) => {
-    const result = await next(e)
-    return jevResume ? { ...result, description: `${result.description} · ${RESUME_NOTE}` } : result
-  })
-
+  // `/resume` says Jev will compact an old session as its list of sessions opens (Claude Code's own
+  // "Resume this conversation?" can't carry a mod's note)
   on('command.run', { command: 'resume' }, async ($, e, next) => {
     if (jevResume) toast($, RESUME_TOAST, NOTE_FOR) // up while a session is picked (a click takes it off)
     return next(e)
