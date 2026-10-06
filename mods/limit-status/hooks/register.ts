@@ -147,10 +147,11 @@ async function compactFor($: any, statePath: string, session: string, id: string
 
 type Resume = { session_id: string; source: string; agent_id?: string; context_tokens?: number; prompt_cache_likely_expired?: boolean }
 
-/** Whether a SessionStart is a cold resume worth compacting first: a resumed (or forked) main
- * session whose cache has expired, with enough context that reloading it costs a real share. */
+/** Whether a SessionStart is a cold resume worth compacting first: an old conversation loaded
+ * (never an account switch, which goes on in the same session) whose cache has expired, with
+ * enough context that reloading it costs a real share. */
 export function coldResume(e: Resume): boolean {
-  return (e.source === 'resume' || e.source === 'fork') && !e.agent_id
+  return e.source === 'resume' && !e.agent_id
     && e.prompt_cache_likely_expired === true && (e.context_tokens ?? 0) >= RESUME_MIN
 }
 
@@ -207,6 +208,25 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
   } catch {
     // the app stops showing it on its own
   }
+}
+
+let resuming: Promise<void> | null = null // the compaction on resume, while it runs
+let held: string | null = null // the first message, held until it is done (sent then)
+let pending: Resume | null = null // an old conversation loaded: compacted when its first message goes
+
+/** Runs the compaction on resume, outside the dispatch that asked, then sends what was held. */
+function startCompaction($: any, statePath: string, e: Resume): void {
+  const running: Promise<void> = new Promise<void>((resolve) => {
+    $.clock.after(0, () => compactOnResume($, statePath, e).catch(() => {}).finally(resolve))
+    $.clock.after(RESUME_LONGEST, resolve)
+  }).then(async () => {
+    if (resuming !== running) return
+    resuming = null
+    const text = held
+    held = null
+    if (text !== null) await $.prompt.submit({ text, asUser: true })
+  })
+  resuming = running
 }
 
 /** `/limits`: every Claude account at a glance, as the app has them (for the phone over Remote
@@ -280,33 +300,33 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
 export const register: Register = (on, options) => {
   const statePath = String(options.statePath ?? '')
   let last = '' // what was last sent: nothing new, nothing to send again
-  let resuming: Promise<void> | null = null // the compaction on resume, while it runs
-  let held: string | null = null // the first message, held until it is done (sent then)
 
-  // Right after "Resume this conversation?" is answered (Resume): compact first, outside this dispatch
+  // An old conversation loaded: nothing yet. Claude Code may still be asking "Resume this
+  // conversation?", and "Start a new conversation" there drops it (a /clear, so session.end).
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
-    if (statePath && !resuming && coldResume(e)) {
-      const running: Promise<void> = new Promise<void>((resolve) => {
-        $.clock.after(0, () => compactOnResume($, statePath, e).catch(() => {}).finally(resolve))
-        $.clock.after(RESUME_LONGEST, resolve)
-      }).then(async () => {
-        if (resuming !== running) return
-        resuming = null
-        const text = held
-        held = null
-        if (text !== null) await $.prompt.submit({ text, asUser: true })
-      })
-      resuming = running
-    }
+    pending = statePath && coldResume(e) ? e : null
+    if (pending && jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question (loading cleared /resume's)
     return result
   })
 
-  // The person's first message while it runs: held (a hook can't wait that long), then sent as
-  // typed once the session is compacted. One with an image can't be sent again by a plugin.
+  on('session.end', async ($, e, next) => {
+    pending = null // a new conversation (the question's other answer), or the window closed
+    return next(e)
+  })
+
+  // The first message after Resume: held (a hook can't wait that long) while Jev compacts the
+  // session, then sent as typed. Its usage is what the question warned of, so nothing goes
+  // before. One with an image can't be sent again by a plugin: it is turned back.
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin?.kind ?? 'composer' // absent: the person's own
-    if (!resuming || (kind !== 'composer' && kind !== 'bridge')) return next(e)
+    if (kind !== 'composer' && kind !== 'bridge') return next(e)
+    if (pending && !resuming && jevResume) { // Settings → Jev compaction is on (the app's last word)
+      const resumed = pending
+      pending = null
+      startCompaction($, statePath, resumed)
+    }
+    if (!resuming) return next(e)
     if (e.attachments?.length) {
       return { drop: 'Jev is compacting this resumed session first; send it again when it says what it saved.' }
     }
