@@ -637,7 +637,9 @@ class Controller:
         """A session's mod finished (or gave up on) the compaction it was asked for."""
         if not self.live:
             return False
-        if body.get("outcome") == "running":  # one the session started itself (/jevcompact)
+        if body.get("outcome") == "running":  # one the session started itself (/jevcompact, or on resume)
+            if body.get("resume") is True and not self.gateway.manager.meta.get("jevCompact"):
+                return False  # an old session resumed: compacted first only with Settings → Jev compaction on
             started = self.gateway.manager.compaction_started(str(body.get("session") or "")[:100] or None,
                                                               str(body.get("id") or "")[:40])
             if started:
@@ -801,7 +803,10 @@ def make_server(controller, port=0):
                 try:
                     size = int(self.headers.get("Content-Length", "0"))
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
-                    self.respond(200, {"ok": controller.compaction_done(body if isinstance(body, dict) else {})})
+                    body = body if isinstance(body, dict) else {}
+                    # a compaction on resume: the mod goes ahead only when this says "resume" (Jev compaction on)
+                    extra = {"resume": True} if body.get("resume") is True else {}
+                    self.respond(200, {"ok": controller.compaction_done(body), **extra})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"ok": False, "error": str(error)})
                 return

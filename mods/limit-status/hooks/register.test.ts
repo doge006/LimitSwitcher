@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
+import { coldResume, resumeSavedText } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 const MARKER = 'limitswitcher:jev-compact'
@@ -10,7 +11,7 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string> } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -23,6 +24,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
   mock.env(on, options.env ?? {})
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('classic.SessionStart', () => ({}))
   on('ui.status', ($, e) => {
     w.statuses.push(e.text)
     return { value: undefined }
@@ -36,6 +38,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
       answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [] }
       if (options.compact) asked = true
     }
+    if (path === '/api/compaction' && body.resume) answer = options.oldApp ? { ok: true } : { ok: !options.jevOff, resume: true }
     if (path === '/api/limits') answer = { text: '**⇄ a@example.com** · Opus 5.5 (high)' }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
   })
@@ -215,5 +218,55 @@ describe('limit-status', () => {
     on('session.measure', ($, e) => ({ changed: e.changed }))
     const result = await measure($)
     expect(result.changed).toEqual(['rateLimits'])
+  })
+  const resumed = { source: 'resume' as const, session_id: 'old-1', context_tokens: 666_000, prompt_cache_likely_expired: true, seconds_since_last_response: 470_000 }
+
+  test('a cold resume is one worth compacting first', () => {
+    expect(coldResume(resumed)).toBe(true)
+    expect(coldResume({ ...resumed, source: 'startup' })).toBe(false)
+    expect(coldResume({ ...resumed, prompt_cache_likely_expired: false })).toBe(false)   // still cached: cheap
+    expect(coldResume({ ...resumed, context_tokens: 40_000 })).toBe(false)              // too small to matter
+    expect(coldResume({ ...resumed, agent_id: 'a1' })).toBe(false)
+    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe(
+      '⇄ LimitSwitcher · Jev saved ~289k of 666k tokens (56%) before this resume: it uses about 56% less of your limit than Claude Code said')
+  })
+
+  test('an old session resumed: Jev compacts it first, the first message waits, then goes', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { outcomes: [{ saved: 20_000 }] })
+    const toasts: string[] = []
+    const sent: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
+    await $.classic.SessionStart(resumed)
+    const first = await $.prompt.submit({ text: 'where were we?' })        // typed before Jev is done
+    expect(first.drop).toContain('Jev is compacting')
+    expect(sent).toEqual([])
+    await (w as any).clock.settle()
+    expect(w.compactions).toEqual([MARKER])
+    const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
+    expect(told[0]).toMatchObject({ session: 'old-1', outcome: 'running', resume: true })
+    expect(told[1]).toMatchObject({ session: 'old-1', id: told[0].id, outcome: 'done', saved: 20_000 })
+    expect(toasts).toEqual([resumeSavedText(20_000, 50_000, 666_000)])
+    expect(sent).toEqual(['where were we?'])                               // sent once it was done
+    await $.prompt.submit({ text: 'next' })
+    expect(sent).toEqual(['where were we?', 'next'])                       // nothing held after
+  })
+
+  for (const [name, option] of [['Jev compaction off', { jevOff: true }], ['an app from before', { oldApp: true }]] as const) {
+    test(`with ${name}, a resume goes on as usual`, { options: { statePath: STATE } }, async ($, on) => {
+      const w = world(on, option)
+      await $.classic.SessionStart(resumed)
+      await (w as any).clock.settle()
+      expect(w.compactions).toEqual([])
+    })
+  }
+
+  test('a resume still cached, or a new session, is left alone', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on)
+    await $.classic.SessionStart({ ...resumed, prompt_cache_likely_expired: false })
+    await $.classic.SessionStart({ source: 'startup' })
+    await (w as any).clock.settle()
+    expect(w.compactions).toEqual([])
+    expect(w.posts.filter((p) => p.path === '/api/compaction')).toEqual([])
   })
 })

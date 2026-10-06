@@ -946,6 +946,36 @@ class JevCompactionTests(unittest.TestCase):
         self.manager.compactions["s1"]["finishedAt"] -= JEV_SHOWN + 1
         self.assertNotIn("Jev saved", self.manager.statusline(None, "s1"))
 
+    def test_compaction_on_resume_follows_the_jev_setting(self):
+        """An old session resumed: the mod compacts it first only when the app says "resume" and ok,
+        which it does with Settings → Jev compaction on."""
+        self.ready()
+        controller = Controller(gateway=lambda notify: self.gateway)
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        base = server.hook_url[: -len("/api/afk")]
+
+        def post(body):
+            from urllib.request import ProxyHandler, Request, build_opener
+            request = Request(base + "/api/compaction", data=json.dumps(body).encode(), method="POST",
+                              headers={"Authorization": "Bearer " + server.hook_token, "Content-Type": "application/json",
+                                       "Host": server.expected_host})
+            with build_opener(ProxyHandler({})).open(request, timeout=5) as response:
+                return json.load(response)
+
+        try:
+            self.manager.meta["jevCompact"] = False
+            self.assertEqual(post({"session": "r1", "id": "resume-1", "outcome": "running", "resume": True}),
+                             {"ok": False, "resume": True})
+            self.manager.meta["jevCompact"] = True
+            self.assertEqual(post({"session": "r1", "id": "resume-2", "outcome": "running", "resume": True}),
+                             {"ok": True, "resume": True})
+            self.assertTrue(post({"session": "r1", "id": "resume-2", "outcome": "done", "saved": 300_000})["ok"])
+            self.assertIn("Jev saved", self.manager.statusline(None, "r1"))
+            self.assertNotIn("resume", post({"session": "r2", "id": "hand-1", "outcome": "running"}))  # /jevcompact as before
+        finally:
+            server.shutdown()
+
     def test_end_to_end_through_the_local_api_and_the_hook(self):
         """The hook asks, the mod picks the compaction up from its status line report and reports
         back, the transcript changes, and the hook still wakes the session (restamp)."""

@@ -13,6 +13,12 @@ import type { Register } from 'claude-code'
 // `/limits` shows every Claude account's limits at a glance, from the app's numbers (the status
 // line doesn't show on the phone over Remote Control).
 //
+// When an old session is resumed (Claude Code's "Resume this conversation?" said it costs a share
+// of the usage limit: none of it is cached any more), it has Jev compact the session before the
+// first message goes, holds that message meanwhile, then says how much less there is to load. The
+// "Resume?" question itself is Claude Code's own and can't be changed by a mod: this starts right
+// after it is answered. It follows Settings → Jev compaction.
+//
 // And it shows the app's reset alerts as a toast: when every account of a provider had hit its
 // limit and one has room again, each open session hears of it on its next report.
 const EVERY = 30_000 // an idle session still reports now and then, and picks up a compaction asked for
@@ -26,6 +32,9 @@ const TRIES = 3          // Jev failed: wait, try again, wait, one more time, th
 const RETRY_AFTER = 30_000
 const BUSY_TRIES = 6     // a turn is running (the session went on, or is just ending): look again shortly
 const BUSY_AFTER = 5_000
+
+const RESUME_MIN = 100_000  // context tokens: a resume smaller than this costs too little to compact first
+const RESUME_LONGEST = 240_000 // never hold the first message longer than this
 
 type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
@@ -119,6 +128,69 @@ async function compactFor($: any, statePath: string, session: string, id: string
   }
 }
 
+type Resume = { session_id: string; source: string; agent_id?: string; context_tokens?: number; prompt_cache_likely_expired?: boolean }
+
+/** Whether a SessionStart is a cold resume worth compacting first: a resumed (or forked) main
+ * session whose cache has expired, with enough context that reloading it costs a real share. */
+export function coldResume(e: Resume): boolean {
+  return (e.source === 'resume' || e.source === 'fork') && !e.agent_id
+    && e.prompt_cache_likely_expired === true && (e.context_tokens ?? 0) >= RESUME_MIN
+}
+
+/** What the toast says after a compaction on resume: tokens saved, of how many, and the share. */
+export function resumeSavedText(saved: number, before: number, context?: number): string {
+  const share = before > 0 ? Math.round((saved / before) * 100) : 0
+  const of = context && context > saved ? ` of ${Math.round(context / 1000)}k` : ''
+  return `⇄ LimitSwitcher · Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume:`
+    + ` it uses about ${share}% less of your limit than Claude Code said`
+}
+
+/** The compaction on resume: asks the app first (it says whether Jev compaction is on, and shows
+ * "Jev Compacting…" in its line), compacts, tells the app how it went, and toasts what it saved.
+ * An app from before this answers without `resume` and nothing happens. */
+async function compactOnResume($: any, statePath: string, e: Resume): Promise<void> {
+  const app = await appOf($, statePath)
+  if (!app) return
+  const session = e.session_id
+  const id = `resume-${Date.now().toString(36)}`
+  try {
+    const answer = await post($, app, '/api/compaction', { session, id, outcome: 'running', resume: true })
+    if (answer?.ok !== true || answer?.resume !== true) return // off, too old, or a swap's compaction is under way
+  } catch {
+    return
+  }
+  let outcome = 'skipped'
+  let saved = 0
+  let skip: string | undefined
+  for (let busy = 1; ; busy++) {
+    try {
+      const result = await $.session.compact({ instructions: MARKER })
+      skip = result.skip
+      if (skip === undefined) {
+        const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
+        saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
+        outcome = 'done'
+        if (saved > 0) $.ui.toast(resumeSavedText(saved, before, e.context_tokens))
+      } else {
+        outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
+      }
+      break
+    } catch (error) {
+      if (busy < BUSY_TRIES) {
+        await new Promise<void>((resolve) => $.clock.after(BUSY_AFTER, resolve))
+        continue
+      }
+      skip = `the session is busy (${error instanceof Error ? error.message : String(error)})`
+      break
+    }
+  }
+  try {
+    await post($, app, '/api/compaction', { session, id, outcome, saved, ...(skip ? { reason: skip.slice(0, 300) } : {}) })
+  } catch {
+    // the app stops showing it on its own
+  }
+}
+
 /** `/limits`: every Claude account at a glance, as the app has them (for the phone over Remote
  * Control, where the status line doesn't show). Answered here, so it costs no model turn. The
  * window's own folder says which account it is on, with separate accounts per window. */
@@ -190,6 +262,39 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
 export const register: Register = (on, options) => {
   const statePath = String(options.statePath ?? '')
   let last = '' // what was last sent: nothing new, nothing to send again
+  let resuming: Promise<void> | null = null // the compaction on resume, while it runs
+  let held: string | null = null // the first message, held until it is done (sent then)
+
+  // Right after "Resume this conversation?" is answered (Resume): compact first, outside this dispatch
+  on('classic.SessionStart', async ($, e, next) => {
+    const result = await next(e)
+    if (statePath && !resuming && coldResume(e)) {
+      const running: Promise<void> = new Promise<void>((resolve) => {
+        $.clock.after(0, () => compactOnResume($, statePath, e).catch(() => {}).finally(resolve))
+        $.clock.after(RESUME_LONGEST, resolve)
+      }).then(async () => {
+        if (resuming !== running) return
+        resuming = null
+        const text = held
+        held = null
+        if (text !== null) await $.prompt.submit({ text, asUser: true })
+      })
+      resuming = running
+    }
+    return result
+  })
+
+  // The person's first message while it runs: held (a hook can't wait that long), then sent as
+  // typed once the session is compacted. One with an image can't be sent again by a plugin.
+  on('prompt.submit', async ($, e, next) => {
+    const kind = e.origin?.kind ?? 'composer' // absent: the person's own
+    if (!resuming || (kind !== 'composer' && kind !== 'bridge')) return next(e)
+    if (e.attachments?.length) {
+      return { drop: 'Jev is compacting this resumed session first; send it again when it says what it saved.' }
+    }
+    held = held === null ? e.text : `${held}\n\n${e.text}`
+    return { drop: 'Jev is compacting this resumed session first; your message goes as soon as it is done.' }
+  })
 
   on('session.measure', async ($, e, next) => {
     const result = await next(e)
