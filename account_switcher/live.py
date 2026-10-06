@@ -1038,6 +1038,81 @@ class LiveAccounts:
                 limits[key] = {"used_percentage": window["used"], "resets_at": window.get("resetsAt")}
         return limits or None
 
+    def limits_text(self, session=None, model=None, effort=None, context=None, config_dir=None):
+        """`/limits` in Claude Code (from the phone over Remote Control, most often, where the status
+        line doesn't show): the session's own account with its model, a bar for each limit and its
+        context, Jev's work on it, then every other Claude account on one line, with where each is in
+        use. Markdown, which the terminal and the Claude app draw without colours: the bars are block
+        characters and a coloured dot gives each line's level. context: ("120k", 88) or None."""
+        now = time.time()
+        own = self.profile_account(config_dir, session)  # a window with an account of its own
+        current = own or self.live_ids.get("claude")
+        rows = [a for a in self.accounts() if a.provider == "claude"]
+        if not rows:
+            return "No Claude accounts in LimitSwitcher yet."
+        rows.sort(key=lambda a: a.id != current)  # the session's own first, the rest as the app lists them
+        windows_open = any(a.pinned for a in rows)
+
+        def windows(account):
+            """[(label, % left, reset text or None)] for the 5-hour and weekly limits."""
+            shown = []
+            for window in account.usage or []:
+                if window.get("scope") != "account" or window.get("key") not in ("five_hour", "weekly"):
+                    continue
+                left = max(0, math.floor(100 - window["used"] + 1e-6))  # rounded down, as the status line
+                reset = window.get("resetsAt")
+                shown.append(("5h" if window["key"] == "five_hour" else "1w", left,
+                              wait_text(reset - now) if left <= 10 and reset and reset > now else None))
+            return shown
+
+        def where(account):
+            """Where the account is in use, once some window has one of its own."""
+            if not windows_open:
+                return ""
+            if account.window:
+                return f" · window {account.window}"
+            return " · main" if account.id == self.live_ids.get("claude") else ""
+
+        lines, others = [], []
+        for account in rows:
+            name, shown = self.shown_name(account.id), windows(account)
+            if account.id == current:
+                lines.append(f"**⇄ {name}**" + (f" · {model[:40]}" + (f" ({effort[:12]})" if effort else "") if model else "")
+                             + where(account))
+                lines += ["", "| | | |", "|:--|:--|--:|"]
+                for label, left, reset in shown:
+                    lines.append(f"| {level_dot(left)} **{label}** | `{bar(left)}` | {left}% left" + (f" · ↻{reset}" if reset else "") + " |")
+                if context:
+                    tokens, left = context
+                    lines.append(f"| {level_dot(left)} **ctx** | `{bar(left)}` | {left}% left · {tokens} |" if left is not None
+                                 else f"| ⚪ **ctx** | | {tokens} |")
+                if not shown and not context:
+                    lines = lines[:-3] + ["", account.status or "No usage read yet."]
+                jev = self.jev_text(session, now)
+                if jev:
+                    lines += ["", jev]
+            else:
+                parts = [f"{label} **{left}%**" + (f" ↻{reset}" if reset else "") for label, left, reset in shown]
+                dot = level_dot(min(left for _, left, _ in shown)) if shown else "⚪"
+                others.append(f"- {dot} {name} · " + (" · ".join(parts) if parts else account.status or "no usage read yet")
+                              + where(account))
+        if others:
+            lines += ["", "**Other accounts**", ""] + others
+        if current not in {a.id for a in rows}:
+            lines = ["Claude Code's login isn't one of LimitSwitcher's accounts.", ""] + lines
+        return "\n".join(lines).strip()
+
+    def jev_text(self, session, now):
+        """`/limits`: the session's Jev compaction, under way or what the last one saved."""
+        if self.compacting(session):
+            return "⏳ Jev compacting…"
+        job = self.compactions.get(session or "")
+        if job and job["status"] == "done" and job.get("saved") and round(job["saved"] / 1000) > 0:
+            when = wait_text(now - (job.get("finishedAt") or job["at"]), ago=True)
+            what = "by hand" if job.get("manual") else "before the last swap"
+            return f"🗜 Jev saved ~{round(job['saved'] / 1000)}k {what} ({when} ago)"
+        return None
+
     @staticmethod
     def _pick(candidates):
         """The account to move to: of those with real room, the one whose weekly (longest) window
@@ -1453,6 +1528,30 @@ class LiveAccounts:
             self.logins.pop(name, None)
             shutil.rmtree(directory, ignore_errors=True)
             self.notify("accounts", None)
+
+
+def level_dot(left):
+    """The level of what's left as a coloured dot, the status line's thresholds."""
+    return "🟢" if left > 30 else "🟡" if left > 10 else "🔴"
+
+
+def bar(left, cells=10):
+    """What's left as a bar of block characters: "██████░░░░"."""
+    full = max(0, min(cells, round(left * cells / 100)))
+    return "█" * full + "░" * (cells - full)
+
+
+def wait_text(seconds, ago=False):
+    """A wait as `/limits` shows it: "38m", "1h 12m", "2d 3h" (rounded up; a time passed, down)."""
+    minutes = max(1, math.floor(seconds / 60) if ago else math.ceil(seconds / 60))
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m" if minutes else f"{hours}h"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h" if hours else f"{days}d"
+
 
 def clock_text(ts, clock24=None):
     """A time of day in the app's clock setting (Settings → 24-hour clock; unset: the system's)."""

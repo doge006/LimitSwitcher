@@ -10,6 +10,9 @@ import type { Register } from 'claude-code'
 // plugin's own compaction hook when that plugin starts the compaction, so the two are separate.
 // `/jevcompact` runs the same compaction by hand (registered here for that reason too).
 //
+// `/limits` shows every Claude account's limits at a glance, from the app's numbers (the status
+// line doesn't show on the phone over Remote Control).
+//
 // And it shows the app's reset alerts as a toast: when every account of a provider had hit its
 // limit and one has room again, each open session hears of it on its next report.
 const EVERY = 30_000 // an idle session still reports now and then, and picks up a compaction asked for
@@ -116,6 +119,28 @@ async function compactFor($: any, statePath: string, session: string, id: string
   }
 }
 
+/** `/limits`: every Claude account at a glance, as the app has them (for the phone over Remote
+ * Control, where the status line doesn't show). Answered here, so it costs no model turn. The
+ * window's own folder says which account it is on, with separate accounts per window. */
+async function limitsText($: any, statePath: string): Promise<string> {
+  const app = await appOf($, statePath)
+  if (!app) return 'LimitSwitcher isn\'t running.'
+  try {
+    const { context } = await $.session.usage()
+    const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+    const answer = await post($, app, '/api/limits', {
+      session: String(await $.session.id()),
+      model: await $.session.model(),
+      context: context ? { tokens: context.tokens, window: context.window, percent: context.percent } : null,
+      ...(configDir ? { configDir: String(configDir) } : {}),
+    })
+    if (answer === null) return 'This LimitSwitcher is too old for /limits: update it (Settings → Update).'
+    return typeof answer.text === 'string' && answer.text ? answer.text : 'LimitSwitcher has no limits to show yet.'
+  } catch {
+    return 'LimitSwitcher didn\'t answer; try again in a moment.'
+  }
+}
+
 /** `/jevcompact`: the same compaction by hand, once, in the session it is typed in. The app is told
  * when it starts and how it went, so its line in the status bar shows it like one before a swap.
  * Returns what to say, and whether the app showed it (then nothing else needs to). */
@@ -187,7 +212,13 @@ export const register: Register = (on, options) => {
     return { text: 'Jev compacting…' }
   })
 
+  on('command.run', { command: 'limits' }, async $ => ({ text: await limitsText($, statePath) }))
+
   on('session.start', async ($, e, next) => {
+    await $.command.register({
+      name: 'limits',
+      description: 'Every Claude account\'s usage limits at a glance (LimitSwitcher)',
+    })
     await $.command.register({
       name: 'jevcompact',
       description: 'Shrink this session\'s old tool outputs with Jev (needs jev-compact and an OpenRouter key)',

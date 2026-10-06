@@ -7,7 +7,7 @@
     {
       "name": "limit-status",
       "source": "./mods/limit-status",
-      "description": "Feeds Claude Code's live usage to LimitSwitcher, and runs the Jev compaction it asks for before a swapped session goes on."
+      "description": "Feeds Claude Code's live usage to LimitSwitcher, adds /limits (every Claude account at a glance), and runs the Jev compaction it asks for before a swapped session goes on."
     },
     {
       "name": "jev-compact",

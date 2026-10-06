@@ -618,6 +618,48 @@ class AfkTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
+    def test_limits_lists_only_claude_accounts_the_one_in_use_first(self):
+        codex_login(self.home, "acct-x", "x@example.com", "at-x", "rt-x")
+        self.manager.sync_live()
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        controller.statusline({"session": "s", "model": "Opus 5.5", "effort": "high"})  # the status line's model
+        text = controller.limits_text({"session": "s", "model": "ignored", "context": {"tokens": 183_000, "percent": 18}})
+        lines = text.split("\n")
+        self.assertEqual(lines[0], "**⇄ a@example.com** · Opus 5.5 (high)")  # no windows of their own: no "main"
+        self.assertTrue(lines[4].startswith("| 🔴 **5h** | `░░░░░░░░░░` | 0% left · ↻"), lines[4])  # used up: when it resets
+        self.assertEqual(lines[5], "| 🟢 **1w** | `█████░░░░░` | 50% left |")
+        self.assertEqual(lines[6], "| 🟢 **ctx** | `████████░░` | 82% left · 183k |")
+        self.assertEqual(lines[-1], "- 🟢 b@example.com · 5h **90%** · 1w **90%**")
+        self.assertNotIn("x@example.com", text)  # Codex accounts aren't Claude's
+        self.assertNotIn("Jev", text)
+        # A session whose status line never reported: the mod's own model, no effort
+        self.assertTrue(controller.limits_text({"session": "t", "model": "Sonnet 5.5"}).startswith("**⇄ a@example.com** · Sonnet 5.5\n"))
+
+    def test_limits_shows_what_jev_did_for_the_session(self):
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        self.manager.compactions["s"] = {"id": "j1", "status": "running", "at": time.time()}
+        self.assertIn("\n\n⏳ Jev compacting…\n", controller.limits_text({"session": "s"}))
+        self.manager.compactions["s"].update(status="done", saved=56_400, finishedAt=time.time() - 120)
+        self.assertIn("\n\n🗜 Jev saved ~56k before the last swap (2m ago)\n", controller.limits_text({"session": "s"}))
+        self.assertNotIn("Jev", controller.limits_text({"session": "other"}))  # another session's compaction
+
+    def test_limits_endpoint_needs_the_hook_token(self):
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        server = make_server(controller)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        url = server.hook_url.replace("/api/afk", "/api/limits")
+        try:
+            self.assertEqual(post(url, {"session": "s"})[0], 403)
+            status, body = post(url, {"session": "s"}, {"Authorization": "Bearer " + server.hook_token})
+            self.assertEqual(status, 200)
+            self.assertTrue(json.loads(body)["text"].startswith("**⇄ a@example.com**"))
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_status_line_script_reports_live_usage(self):
         from account_switcher import statusline
         controller = Controller(gateway=lambda notify: self.gateway)
