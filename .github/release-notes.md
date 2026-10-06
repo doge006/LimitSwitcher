@@ -1,10 +1,13 @@
-The app offers it in Settings → **Update to 1.3.6** (or download below).
+The app offers it in Settings → **Update to 1.3.7** (or download below).
 
-## A smoother full view
+## /limits: every account at a glance, from your phone
 
-- **Scrolling glides.** Each mouse wheel notch used to jump the page 64 px in one frame. It now slides there over about 10 frames, and trackpads still follow your fingers directly.
-- **Menus, the date picker and toasts are lighter.** They now redraw only where they are, not the whole window every frame. At 200% display scaling, the slowest Settings menu frames went from 41 ms to 18 ms, and toasts from 20 ms to 4 ms.
-- **Less memory, not more.** Peak memory with the full view open is lower (131 MB vs 154 MB in the test run), and the app idles at 30.7 MB vs 32.4 MB.
+- **A new `/limits` command** in any Claude Code session with the Claude Code Status mod. It is made for the Claude app on your phone during a Remote Control session, where Claude Code's status line doesn't show.
+- **Your session's account first:** its model, a bar for the 5-hour and weekly limits, and the context, plus what Jev did for the session (compacting now, or how much it saved on the last swap).
+- **Every other Claude account on one line,** with a coloured dot for how much is left and when a used-up limit resets. With separate accounts per window, it shows the window's own account and where each account is in use ("window 2", "main").
+- **Costs no Claude usage:** the app answers it from its own numbers.
+
+To get the command, update the mod once after updating the app: Settings → **Claude Code Status mod → Install**, then `/reload-plugins` in open sessions. More in [the mod's docs](https://github.com/doge006/LimitSwitcher/blob/main/docs/claude-code-mod.md#limits).
 
 ## Download
 

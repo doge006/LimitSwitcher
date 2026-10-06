@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.3.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.7) (2026-10-06)
+
+- New `/limits` command (Claude Code Status mod): every Claude account's limits at a glance, made for the phone over Remote Control. Shows the session's own account with bars, what Jev did for it, and where each account is in use with separate accounts per window.
+
 ## [1.3.6](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.6) (2026-10-06)
 
 - Full view: mouse-wheel scrolling glides over about 10 frames instead of jumping 64 px.
