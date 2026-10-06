@@ -8,6 +8,7 @@ instead of drawing the whole window at 2x. Everything is laid out in logical pix
 """
 from functools import lru_cache
 import json
+from pathlib import Path
 import math
 import sys
 import time
@@ -957,6 +958,16 @@ def record_windows(state, w, h, scale, ui):
     return Tile(None, windows_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(h * scale)))
 
 
+def folder_name(cwd):
+    """A window's folder as its last part ("~" for the home folder, not the user's name)."""
+    path = (cwd or "").replace("\\", "/").rstrip("/")
+    if not path:
+        return ""
+    if path.lower() == str(Path.home()).replace("\\", "/").rstrip("/").lower():
+        return "~"
+    return path.rsplit("/", 1)[-1] or path
+
+
 def windows_content(c, state, w, ui):
     """Separate accounts per window: each open window with its account. A click picks a window (the app
     points it out on screen); the account cards then offer "Use in Window N" for that window alone.
@@ -995,13 +1006,16 @@ def windows_content(c, state, w, ui):
         c.rect(0, y, w, WINDOW_ROW_H, 9, base + (255,))
         c.outline(0, y, w, WINDOW_ROW_H, 9, (accent + (200,)) if on else mixc(LINE, LINE_STRONG, hot))
         mid = y + WINDOW_ROW_H / 2
-        title = f"Window {window['number']}"
-        c.text(16, mid, title, 13, TEXT, True, anchor="lm", bg=base)
-        folder = (window.get("cwd") or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
-        detail = " · ".join(p for p in (folder, window.get("model")) if p)
+        # the session's title (its name from /rename, Claude Code's title, or its first prompt) once it
+        # has one; then "Window N" (what the account cards call it), its folder and model
+        number = f"Window {window['number']}"
         account = accounts.get(window.get("accountId"))
         who = display_name(account) if account else "No account"
         who_w = text_w(who, 13, True)
+        title = fit(window["title"], 13, True, (w - who_w) * .5) if window.get("title") else number
+        c.text(16, mid, title, 13, TEXT, True, anchor="lm", bg=base)
+        detail = " · ".join(p for p in (number if window.get("title") else None, folder_name(window.get("cwd")),
+                                          window.get("model")) if p)
         if detail:
             c.text(16 + text_w(title, 13, True) + 10, mid, fit(detail, 12, False, w - 60 - text_w(title, 13, True) - who_w),
                    12, MUTED, anchor="lm", bg=base)

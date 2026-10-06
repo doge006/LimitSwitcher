@@ -81,11 +81,14 @@ def report(state, data, cache=None):
     try:
         model = data.get("model") if isinstance(data.get("model"), dict) else {}
         effort = data.get("effort") if isinstance(data.get("effort"), dict) else {}
+        workspace = data.get("workspace") if isinstance(data.get("workspace"), dict) else {}
         body = dumps({"rate_limits": limits if isinstance(limits, dict) else None,
                            "session": str(data.get("session_id") or "")[:100],
                            "model": model.get("display_name") or model.get("id"),
                            "effort": effort.get("level"),
-                           "configDir": os.environ.get("CLAUDE_CONFIG_DIR") or None}).encode()
+                           "configDir": os.environ.get("CLAUDE_CONFIG_DIR") or None,
+                           "cwd": str(workspace.get("current_dir") or data.get("cwd") or "")[:500] or None,
+                           "transcript": str(data.get("transcript_path") or "")[:1000] or None}).encode()
         status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)
         if status >= 400:
             return None, None, None  # the app refused (a token from before it restarted): nothing, not an old line

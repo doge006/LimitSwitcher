@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.3.10](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.10) (2026-10-06)
+
+- Windows list: each window shows its session's title (its /rename name, Claude Code's title, or its first prompt), then "Window N", its folder and its model. The folder now shows for windows opened with New window too.
+
 ## [1.3.9](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.9) (2026-10-06)
 
 - Fixed: a switch (or a new window) at the moment the app renewed that account's login could leave Claude Code with a spent copy, signed out within the hour. It now waits for the renewal and hands over the new login.
