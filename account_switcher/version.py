@@ -8,7 +8,7 @@ source has `.git`.
 from pathlib import Path
 import sys
 
-VERSION = "1.3.5"
+VERSION = "1.3.6"
 REPO = "doge006/LimitSwitcher"
 ROOT = Path(__file__).resolve().parent.parent
 
