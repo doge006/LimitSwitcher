@@ -65,7 +65,23 @@ def merge_boxes(boxes, size):
     return [tuple(b) for b in out]
 
 
+def shift_rows(image, shift):
+    """Move an image's rows up by `shift` (down if negative), in place, a band at a time (so no
+    second copy of the whole image is ever made). The rows left behind keep what they had."""
+    width, height = image.size
+    band = 96
+    if shift > 0:
+        for y in range(0, height - shift, band):
+            image.paste(image.crop((0, y + shift, width, min(height, y + shift + band))), (0, y))
+    else:
+        for end in range(height, -shift, -band):
+            y = max(-shift, end - band)
+            image.paste(image.crop((0, y + shift, width, end + shift)), (0, y))
+
+
 ANIM_MS = 15  # between animation frames: under Windows' timer tick (15.6 ms), so one frame per tick
+SCROLL_S = 0.18  # a wheel notch glides there in this long (each notch more starts from where it is)
+SCROLL = ("scroll",)  # the scroll position's key in Motion
 
 
 def ease(p):
@@ -142,7 +158,8 @@ class FullView:
         self.controller, self.host = controller, host
         self.state = state
         self.ui = UI()
-        self.scroll = 0.0
+        self.scroll = 0.0          # where the page is drawn from (logical px, on a device pixel)
+        self.scroll_to = 0.0       # where it is gliding to
         self.width = self.height = 0
         self.scale = 1.0
         self.tiles = {}            # key -> (cache key, Tile)
@@ -154,12 +171,16 @@ class FullView:
         self.pointer = None
         self.pressed = None
         self.motion = Motion()
+        self.motion.to(SCROLL, 0.0, 0)
         self.seen = set()          # tiles already on screen (new ones rise in, like the web page)
         self.last_page = None      # (layout, [(box, what)], image): the page, to redraw only what changes
         self.incremental = True
         self.native = False        # a host that draws with the platform (macOS): tiles are recorded, not drawn
         self.changed = None        # device boxes the last frame changed (None: all of it), for the host
         self.had_overlays = False
+        self.scrolled = False      # the last frame moved the page
+        self.shown = None          # (frame, device boxes the overlays drew in) while menus or toasts show
+        self.overlays_moving = False
         self.take_log(state)
         self.ui.per_window, self.ui.own_windows = bool(state.get("perWindow")), len(state.get("windows") or [])
         try:
@@ -247,19 +268,37 @@ class FullView:
         if not self.width:
             return
         self.items, self.content_h = vr.layout(self.state, self.width)
-        self.scroll = max(0.0, min(self.scroll, self.max_scroll()))
+        if self.scroll_to > self.max_scroll():
+            self.wheel(0, glide=False)  # the page got shorter: stay within it
+        self.scroll = min(self.scroll, self.max_scroll())
 
     def max_scroll(self):
         return max(0.0, self.content_h - self.height)
 
-    def wheel(self, pixels):
-        """Scroll by `pixels` logical px (positive: down the page)."""
-        before = self.scroll
-        self.scroll = max(0.0, min(self.scroll + pixels, self.max_scroll()))
-        if self.scroll != before:
-            self.ui.menu = None if self.ui.menu == "add" else self.ui.menu
-            self.refresh_hover()
-            self.host.invalidate()
+    def wheel(self, pixels, glide=True):
+        """Scroll by `pixels` logical px (positive: down the page). A mouse wheel's notch glides
+        there; a trackpad's deltas are already smooth, so they move the page at once (glide=False)."""
+        target = max(0.0, min(self.scroll_to + pixels, self.max_scroll()))
+        if target == self.scroll_to and (glide or SCROLL not in self.motion.runs):
+            return
+        self.scroll_to = target
+        if glide:
+            self.motion.to(SCROLL, target, SCROLL_S)
+        else:
+            self.motion.runs.pop(SCROLL, None)
+            self.motion.values[SCROLL] = target
+        self.ui.menu = None if self.ui.menu == "add" else self.ui.menu
+        self.host.invalidate()
+
+    def follow_scroll(self):
+        """Take the scroll position this frame, on a whole device pixel (so the page moves as a
+        whole and only what scrolls into view is drawn). True if it moved."""
+        s = self.scale
+        scroll = max(0.0, min(round(self.motion.get(SCROLL) * s) / s, self.max_scroll()))
+        if scroll == self.scroll:
+            return False
+        self.scroll = scroll
+        return True
 
     # ---------- drawing ----------
     def tile(self, kind, key, w, h, data):
@@ -299,6 +338,7 @@ class FullView:
         moving). Also sets the page's clickable regions."""
         s, motion, ui = self.scale, self.motion, self.ui
         moving = motion.step()
+        self.scrolled = self.follow_scroll()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
         vr.CLOCK_24 = self.state.get("clock24")
         prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkSkipLarge", "waitNearReset", "jevCompact", "perWindow", "resetAlerts")}
@@ -345,19 +385,43 @@ class FullView:
     def frame(self):
         """The window's pixels (RGB, device px) and the clickable regions."""
         ops, moving = self.build()
-        image = self.compose(ops)
+        page = self.compose(ops)
         self.overlay_hits = []
-        overlays = self.overlays_showing()
-        if overlays:
-            image = image.copy()  # the page stays as it is, for the next frame to build on
-            moving |= self.draw_overlays(vr.Surface(image, self.scale))
+        if self.overlays_showing():
+            image = self.with_overlays(page)
+            moving |= self.overlays_moving
         else:
-            self.draw_overlays(vr.Surface(image, self.scale))  # nothing to draw; keeps the toast timers right
-        if overlays or self.had_overlays:
-            self.changed = None  # menus and toasts sit on top of the page: all of it (while they show)
-        self.had_overlays = overlays
-        self.animate(moving)
+            image = page
+            self.draw_overlays(vr.Surface(page, self.scale))  # nothing to draw; keeps the toast timers right
+            if self.shown is not None:  # menus and toasts went away: the page shows again where they were
+                if self.changed is not None:
+                    self.changed = merge_boxes(self.changed + self.shown[1], page.size)
+                self.shown = None
+        self.after_frame(moving)
         return image
+
+    def with_overlays(self, page):
+        """The page with menus, the date editor and toasts on top, in a frame of its own (the page
+        stays as it is, for the next frame to build on). That frame is kept while they show: each
+        frame puts the page back only where it changed or an overlay was, and draws them again."""
+        held = self.shown
+        if held is None or held[0].size != page.size or self.changed is None or not self.incremental:
+            image, restore = page.copy(), None
+        else:
+            image, restore = held[0], merge_boxes(self.changed + held[1], page.size)
+            for box in restore:
+                image.paste(page.crop(box), box[:2])
+        surface = vr.Surface(image, self.scale, base=page if self.incremental else None)
+        self.overlays_moving = self.draw_overlays(surface)
+        drawn = merge_boxes(surface.boxes, image.size)
+        self.changed = None if restore is None else merge_boxes(restore + drawn, image.size)
+        self.shown = (image, drawn)
+        return image
+
+    def after_frame(self, moving):
+        if self.scrolled:  # the page moved under a still pointer: hover what is there now
+            self.refresh_hover()
+        self.animate(moving)
 
     def animate(self, moving):
         """Frames keep coming while something moves. A running timer is left alone: on Windows it
@@ -390,7 +454,7 @@ class FullView:
         moving |= self.draw_overlays(painter.surface())
         self.had_overlays = overlays
         self.changed = None
-        self.animate(moving)
+        self.after_frame(moving)
         return [(box, sig) for box, sig, _ in ops]
 
     def overlays_showing(self):
@@ -401,30 +465,63 @@ class FullView:
         """The page: the backdrop with the tiles and live parts on it. Only what changed since
         the last frame is drawn again: each changed area is rebuilt from the backdrop up, with
         everything that touches it, in the same order, so it comes out pixel for pixel as a
-        whole redraw would (tests compare the two). A new size or scroll redraws everything."""
+        whole redraw would (tests compare the two). A scroll moves the last page's pixels and
+        draws only what came into view and what changed. A new size redraws everything."""
         s = self.scale
         size = (round(self.width * s), round(self.height * s))
         last = self.last_page
-        same_layout = (last is not None and last[0] == (size, self.scroll, s)
-                       and [o[1][:2] for o in last[1]] == [o[1][:2] for o in ops])
-        if not same_layout or not self.incremental:
+        dirty = None
+        if last is not None and self.incremental and last[0][::2] == (size, s):
+            moved = (self.scroll - last[0][1]) * s
+            shift = round(moved)
+            if shift == 0 and [o[1][:2] for o in last[1]] == [o[1][:2] for o in ops]:
+                dirty = []
+                for (old_box, old_sig, _), (box, sig, _) in zip(last[1], ops):
+                    if old_sig != sig:
+                        dirty += [old_box, box]
+            elif abs(moved - shift) < 1e-6 and abs(shift) < size[1]:
+                dirty = self.scrolled_dirty(last, ops, shift, size)
+        if dirty is None:
             self.last_page = None  # let the old page go before making the new one
             page = Image.new("RGB", size, vr.BG)  # the backdrop: one colour
             self.paint_region(page, (0, 0) + page.size, ops)
             self.changed = None  # everything
         else:
             page = last[2]
-            dirty = []
-            for (old_box, old_sig, _), (box, sig, _) in zip(last[1], ops):
-                if old_sig != sig:
-                    dirty += [old_box, box]
+            if shift:
+                shift_rows(page, shift)
             self.changed = merge_boxes(dirty, page.size)
             for box in self.changed:
                 region = Image.new("RGB", (box[2] - box[0], box[3] - box[1]), vr.BG)
                 self.paint_region(region, box, ops)
                 page.paste(region, box[:2])
+            if shift:
+                self.changed = None  # all of the window shows something else
         self.last_page = ((size, self.scroll, s), [(box, sig, None) for box, sig, _ in ops], page)
         return page
+
+    @staticmethod
+    def scrolled_dirty(last, ops, shift, size):
+        """What to draw after the last page moves up by `shift` device px (down if negative):
+        the strip that came into view, every tile that is not the same tile moved by exactly
+        that much, and every bar and percentage (small; drawn at a fraction of a pixel)."""
+        width, height = size
+        dirty = [(0, height - shift, width, height) if shift > 0 else (0, 0, width, -shift)]
+        before = {}
+        for (x0, y0, x1, y1), sig, _ in last[1]:
+            box = (x0, y0 - shift, x1, y1 - shift)
+            if sig[0] == "tile":
+                before[sig[1]] = (box, sig[:3] + (sig[3], sig[4] - shift) + sig[5:])
+            else:
+                dirty.append(box)
+        for box, sig, _ in ops:
+            old = before.pop(sig[1], None) if sig[0] == "tile" else None
+            if old is None or old[1] != sig:
+                dirty.append(box)
+                if old is not None:
+                    dirty.append(old[0])
+        dirty += [box for box, _ in before.values()]  # scrolled out of view, or gone
+        return dirty
 
     def paint_region(self, region, box, ops):
         """Draw every op that touches `box` (device px) onto `region`, the image of that box."""
@@ -829,5 +926,5 @@ class FullView:
         if self.ui.editing:
             self.commit_name()
         self.tiles.clear()
-        self.last_page = None
+        self.last_page = self.shown = None
         vr.release()

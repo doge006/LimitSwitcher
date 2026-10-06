@@ -266,10 +266,58 @@ class FullViewTests(unittest.TestCase):
         many = state(accounts=[account(i, "claude") for i in range(12)])
         self.view.set_state(many)
         self.view.wheel(10_000)
+        self.view.motion.settle()
+        self.view.frame()
         self.assertEqual(self.view.scroll, self.view.max_scroll())
         self.assertGreater(self.view.scroll, 0)
         self.view.wheel(-10_000)
+        self.view.motion.settle()
+        self.view.frame()
         self.assertEqual(self.view.scroll, 0)
+
+    def test_a_wheel_notch_glides_and_a_trackpad_moves_at_once(self):
+        self.view.set_state(state(accounts=[account(i, "claude") for i in range(12)]))
+        self.view.motion.settle()
+        clock = [time.perf_counter()]
+        with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]):
+            self.view.wheel(vr.SCROLL_STEP)
+            self.view.wheel(vr.SCROLL_STEP)  # a second notch before the first got there: goes on from there
+            self.assertEqual(self.view.scroll, 0)  # nothing moves before the next frame
+            seen = []
+            for _ in range(40):  # cards scrolling into view for the first time rise in too
+                clock[0] += 1 / 60
+                self.view.frame()
+                seen.append(self.view.scroll)
+                self.assertEqual(round(self.view.scroll * self.view.scale, 6) % 1, 0)  # on a device pixel
+        self.assertEqual(seen, sorted(seen))
+        self.assertGreater(len(set(seen)), 5)  # many small steps, not one jump
+        self.assertEqual(seen[-1], 2 * vr.SCROLL_STEP)
+        self.assertNotIn("anim", self.host.timers)  # and then it rests
+        self.view.wheel(-30, glide=False)
+        self.view.frame()
+        self.assertEqual(self.view.scroll, 2 * vr.SCROLL_STEP - 30)
+
+    def test_the_page_getting_shorter_brings_the_scroll_back(self):
+        self.view.set_state(state(accounts=[account(i, "claude") for i in range(12)]))
+        self.view.wheel(10_000, glide=False)
+        self.view.frame()
+        self.view.set_state(state())
+        self.view.frame()
+        self.assertEqual(self.view.scroll, self.view.max_scroll())
+        self.assertEqual(self.view.scroll_to, self.view.max_scroll())
+
+    def test_moving_rows_in_place_matches_a_copy(self):
+        from PIL import Image
+        image = Image.effect_noise((37, 300), 60).convert("RGB")
+        for shift in (1, 5, 95, 96, 97, 200, 299, -1, -5, -96, -97, -200, -299):
+            moved = image.copy()
+            fullview.shift_rows(moved, shift)
+            expect = image.copy()
+            if shift > 0:
+                expect.paste(image.crop((0, shift, 37, 300)), (0, 0))
+            else:
+                expect.paste(image.crop((0, 0, 37, 300 + shift)), (0, -shift))
+            self.assertEqual(moved.tobytes(), expect.tobytes(), shift)
 
     def test_unchanged_cards_are_not_redrawn(self):
         before = {key: tile for key, (_, tile) in self.view.tiles.items()}
@@ -325,6 +373,30 @@ class FullViewTests(unittest.TestCase):
                     whole = vr.shadow(400, 300, scale).copy()
                     whole.alpha_composite(card, (m, m))
                     self.assertEqual(tile.image.tobytes(), whole.tobytes(), (scale, data["id"], fade))
+
+    def test_big_shapes_drawn_in_bands_match_a_whole_mask(self):
+        """A menu's background and outline are drawn from their top and bottom rows' mask and
+        filled in between; the pixels must be those of pasting through the whole mask."""
+        import random
+        from PIL import Image
+        rng = random.Random(3)
+        for _ in range(120):
+            scale = rng.choice((1.0, 1.25, 1.5, 1.75, 2.0))
+            box = (rng.uniform(-20, 30), rng.uniform(-20, 30), rng.uniform(60, 700), rng.uniform(60, 600))
+            r, alpha, width = rng.choice((0, 1, 3, 10, 11, 50)), rng.choice((255, 128, 40)), rng.choice((1, 1.5, 3))
+            origin = rng.choice(((0, 0), (13, 7)))
+            for kind in ("rect", "outline"):
+                drawn = []
+                for big in (vr.BIG_MASK, 10 ** 12):
+                    image = Image.new("RGB", (900, 800), (30, 60, 90))
+                    canvas = vr.Canvas(image, scale, vr.BG, origin=origin)
+                    with unittest.mock.patch.object(vr, "BIG_MASK", big):
+                        if kind == "rect":
+                            canvas.rect(*box, r, (200, 100, 50, alpha))
+                        else:
+                            canvas.outline(*box, r, (200, 100, 50, alpha), width)
+                    drawn.append(image.tobytes())
+                self.assertEqual(drawn[0], drawn[1], (kind, scale, box, r, alpha, width, origin))
 
     def test_bars_fill_from_empty_then_follow_changes(self):
         motion = self.view.motion
@@ -414,7 +486,8 @@ class IncrementalDrawingTests(unittest.TestCase):
         clock = [1000.0]
         controller = Controller()
         try:
-            with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]):
+            with unittest.mock.patch.object(fullview.time, "perf_counter", lambda: clock[0]), \
+                    unittest.mock.patch.object(fullview.time, "monotonic", lambda: clock[0]):  # toasts fade by it
                 views = []
                 for incremental in (True, False):
                     view = fullview.FullView(controller, Host(), controller.snapshot())
@@ -422,9 +495,9 @@ class IncrementalDrawingTests(unittest.TestCase):
                     view.incremental = incremental
                     views.append(view)
 
-                def step(n):
+                def step(n, seconds=0.04):
                     for _ in range(n):
-                        clock[0] += 0.04
+                        clock[0] += seconds
                         state = controller.snapshot()
                         frames = []
                         for view in views:
@@ -452,6 +525,38 @@ class IncrementalDrawingTests(unittest.TestCase):
                     view.wheel(100)
                 step(8)
                 self.assertIsNotNone(views[0].last_page)
+                page = views[0].last_page[2]
+                for notches in (3, -1, 2, -4):  # scrolling: the page is moved, not drawn again
+                    for view in views:
+                        view.wheel(notches * vr.SCROLL_STEP)
+                        view.mouse_move(450, 300)  # hovering whatever passes under the pointer
+                    step(7, 0.012)
+                self.assertGreater(views[0].max_scroll(), 0)
+                self.assertIs(views[0].last_page[2], page)
+                for menu in ("settings", "add"):  # menus fade in over the page, rows hover, a toast comes and goes
+                    for view in views:
+                        view.activate(menu)
+                    step(4, 0.03)
+                    for view in views:
+                        view.toast("Swapped to another account", "ok")
+                    step(3, 0.03)
+                    rows = [box for box, hits in views[0].overlay_hits for box, action, cursor in hits][:4]
+                    for x, y, w, h in rows:
+                        for view in views:
+                            view.mouse_move(x + w / 2, y + h / 2)
+                        step(3, 0.03)
+                    for view in views:
+                        view.wheel(-vr.SCROLL_STEP)  # the page scrolls under the menu (Settings stays open)
+                    step(6, 0.03)
+                    for view in views:
+                        view.activate(menu)
+                    step(3, 0.03)
+                for view in views:
+                    view.toast("Something failed", "error")
+                step(8, 0.03)
+                clock[0] += 7  # the toasts fade out and go
+                step(8, 0.03)
+                self.assertIsNone(views[0].shown)
         finally:
             controller.close()
 
