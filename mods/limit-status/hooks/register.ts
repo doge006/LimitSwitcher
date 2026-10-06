@@ -179,7 +179,7 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
         const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
         saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
-        if (saved > 0) $.ui.toast(resumeSavedText(saved, before, e.context_tokens))
+        if (saved > 0) $.ui.toast(resumeSavedText(saved, before, e.context_tokens), { timeoutMs: 10_000 })
       } else {
         outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       }
@@ -334,7 +334,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'resume' }, async ($, e, next) => {
-    if (jevResume) $.ui.toast(RESUME_TOAST)
+    if (jevResume) $.ui.toast(RESUME_TOAST, { timeoutMs: 15_000 }) // up while a session is picked (a click takes it off)
     return next(e)
   })
 
