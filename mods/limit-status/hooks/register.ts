@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { Register } from 'claude-code'
 
 // Feeds Claude Code's live usage to LimitSwitcher straight from Claude Code, after every turn
@@ -41,7 +42,17 @@ type App = { base: string; token: string }
 
 // What `/resume` says before a session is picked, while Settings → Jev compaction is on
 export const RESUME_NOTE = 'Jev compacts an old session before it goes on (LimitSwitcher)'
-export const RESUME_TOAST = '⇄ LimitSwitcher · Jev compaction is on: resuming an old session compacts it first, then says what it saved'
+export const RESUME_TOAST = 'Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
+export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
+const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
+const SAVED_FOR = 20_000 // the band says what Jev saved for this long
+
+// The band above the prompt while a resumed session is compacted, then what it saved. A toast
+// can't be changed or taken down once shown (they stack), so this part is a band.
+const band = atom({ plugin: 'limit-status', key: 'band' } as const, null)
+function toast($: any, text: string, timeoutMs?: number): void {
+  $.ui.toast(text, timeoutMs ? { timeoutMs } : undefined)
+}
 
 let jevResume = false // the app's last word on it (each report)
 const handled = new Set<string>() // compaction ids already run (the app keeps asking until it hears back)
@@ -88,7 +99,7 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
       // Reset alerts (Settings): every account of a provider had hit its limit and one has room again
       if (typeof alert?.id !== 'string' || typeof alert?.text !== 'string' || toasted.has(alert.id)) continue
       toasted.add(alert.id)
-      $.ui.toast(alert.text)
+      toast($, alert.text)
     }
     const id = answer?.compact?.id
     if (typeof id === 'string' && id && !handled.has(id)) {
@@ -168,6 +179,7 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
   } catch {
     return
   }
+  await update($, band, () => COMPACTING)
   let outcome = 'skipped'
   let saved = 0
   let skip: string | undefined
@@ -179,7 +191,11 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
         const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
         saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
-        if (saved > 0) $.ui.toast(resumeSavedText(saved, before, e.context_tokens), { timeoutMs: 10_000 })
+        if (saved > 0) {
+          const text = resumeSavedText(saved, before, e.context_tokens)
+          await update($, band, () => text)
+          $.clock.after(SAVED_FOR, () => update($, band, (now) => (now === text ? null : now)))
+        }
       } else {
         outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       }
@@ -193,6 +209,7 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
       break
     }
   }
+  await update($, band, (now) => (now === COMPACTING ? null : now))
   try {
     await post($, app, '/api/compaction', { session, id, outcome, saved, ...(skip ? { reason: skip.slice(0, 300) } : {}) })
   } catch {
@@ -305,6 +322,13 @@ export const register: Register = (on, options) => {
     return { drop: 'Jev is compacting this resumed session first; your message goes as soon as it is done.' }
   })
 
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const text = await read($, band)
+    if (text === null || e.props.hasSurvey) return next(e)
+    const { Text } = $.ui.resolve(e)
+    return h(Text, { dimColor: true }, text)
+  })
+
   on('session.measure', async ($, e, next) => {
     const result = await next(e)
     const key = JSON.stringify(e.rateLimits)
@@ -321,7 +345,7 @@ export const register: Register = (on, options) => {
   on('command.run', { command: 'jevcompact' }, async $ => {
     $.clock.after(0, async () => {
       const { text, shown } = await compactByHand($, statePath)
-      if (!shown) $.ui.toast(text)
+      if (!shown) toast($, text)
     })
     return { text: 'Jev compacting…' }
   })
@@ -334,7 +358,7 @@ export const register: Register = (on, options) => {
   })
 
   on('command.run', { command: 'resume' }, async ($, e, next) => {
-    if (jevResume) $.ui.toast(RESUME_TOAST, { timeoutMs: 15_000 }) // up while a session is picked (a click takes it off)
+    if (jevResume) toast($, RESUME_TOAST, NOTE_FOR) // up while a session is picked (a click takes it off)
     return next(e)
   })
 

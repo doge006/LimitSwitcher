@@ -1,8 +1,24 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { coldResume, resumeSavedText, RESUME_NOTE, RESUME_TOAST } from './register.ts'
+import { coldResume, COMPACTING, resumeSavedText, RESUME_NOTE, RESUME_TOAST } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
+
+/** The band above the prompt as the mod draws it ('' when it draws none). */
+async function bandOf($: any): Promise<string> {
+  const drawn = await $.ui.render({
+    surface: 'terminal', component: 'AbovePrompt', requestId: 'above-prompt',
+    props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 120, scroll: { offset: 0, bodyRows: 10 }, view: {} },
+  })
+  const texts: string[] = []
+  const walk = (node: any): void => {
+    if (typeof node === 'string') texts.push(node)
+    else if (Array.isArray(node)) node.forEach(walk)
+    else if (node && typeof node === 'object') Object.values(node).forEach(walk)
+  }
+  walk(drawn)
+  return texts.find((text) => text.includes('LimitSwitcher')) ?? ''
+}
 const MARKER = 'limitswitcher:jev-compact'
 
 type World = { posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[] }
@@ -11,7 +27,7 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void> } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -24,6 +40,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
   mock.env(on, options.env ?? {})
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
+  on('ui.render', ($, e) => h($.ui.resolve(e).Box, null))  // the engine's own: nothing in the band
   on('classic.SessionStart', () => ({}))
   on('ui.status', ($, e) => {
     w.statuses.push(e.text)
@@ -43,8 +60,9 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
   })
   const outcomes = [...(options.outcomes ?? [])]
-  on('session.compact', ($, e) => {
+  on('session.compact', async ($, e) => {
     w.compactions.push(String(e.instructions))
+    if (options.gate) await options.gate
     const next = outcomes.shift() ?? { saved: 1000 }
     if ('skip' in next) return { skip: next.skip }
     return { messages: [{ role: 'user' as const, text: 'kept', toolUses: [] }], tokensBefore: 50_000, tokensAfter: 50_000 - next.saved }
@@ -231,7 +249,8 @@ describe('limit-status', () => {
   })
 
   test('an old session resumed: Jev compacts it first, the first message waits, then goes', { options: { statePath: STATE } }, async ($, on) => {
-    const w = world(on, { outcomes: [{ saved: 20_000 }] })
+    let release = () => {}
+    const w = world(on, { outcomes: [{ saved: 20_000 }], gate: new Promise<void>((resolve) => { release = resolve }) })
     const toasts: string[] = []
     const sent: string[] = []
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
@@ -240,12 +259,18 @@ describe('limit-status', () => {
     const first = await $.prompt.submit({ text: 'where were we?' })        // typed before Jev is done
     expect(first.drop).toContain('Jev is compacting')
     expect(sent).toEqual([])
+    await (w as any).clock.advance(0)
+    expect(await bandOf($)).toBe(COMPACTING)                                  // the band says so while it runs
+    release()
     await (w as any).clock.settle()
     expect(w.compactions).toEqual([MARKER])
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'old-1', outcome: 'running', resume: true })
     expect(told[1]).toMatchObject({ session: 'old-1', id: told[0].id, outcome: 'done', saved: 20_000 })
-    expect(toasts).toEqual([resumeSavedText(20_000, 50_000, 666_000)])
+    expect(toasts).toEqual([])
+    expect(await bandOf($)).toBe(resumeSavedText(20_000, 50_000, 666_000))       // then what it saved, for 20 s
+    await (w as any).clock.advance(20_000)
+    expect(await bandOf($)).toBe('')
     expect(sent).toEqual(['where were we?'])                               // sent once it was done
     await $.prompt.submit({ text: 'next' })
     expect(sent).toEqual(['where were we?', 'next'])                       // nothing held after
@@ -278,7 +303,7 @@ describe('limit-status', () => {
     await measure($)                                                    // the app says it is on
     const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
     expect(listed.description).toBe(`Resume a previous conversation · ${RESUME_NOTE}`)
-    await $.command.run({ command: 'resume' })
+    await $.command.run({ command: 'resume', args: '' })
     expect(toasts).toEqual([RESUME_TOAST])
     expect(opened).toBe(1)                                              // Claude Code's own /resume still opens
   })
@@ -292,7 +317,17 @@ describe('limit-status', () => {
     await measure($)
     const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
     expect(listed.description).toBe('Resume a previous conversation')
-    await $.command.run({ command: 'resume' })
+    await $.command.run({ command: 'resume', args: '' })
     expect(toasts).toEqual([])
+  })
+  test('/resume\'s note is a toast that stays up while a session is picked (a minute, a toast\'s longest)', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { jevResume: true })
+    const toasts: { text: string; timeoutMs?: number }[] = []
+    on('ui.toast', ($, e) => { toasts.push({ text: String(e.text), timeoutMs: e.timeoutMs }); return { value: undefined } })
+    on('command.describe', ($, e) => ({ description: e.description, isHidden: false }))
+    on('command.run', { command: 'resume' }, () => ({ text: '' }))
+    await measure($)
+    await $.command.run({ command: 'resume', args: '' })
+    expect(toasts).toEqual([{ text: RESUME_TOAST, timeoutMs: 60_000 }])
   })
 })
