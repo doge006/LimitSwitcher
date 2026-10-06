@@ -90,12 +90,12 @@ jobs:
           }
           if ($run -notmatch 'LimitSwitcher[.]exe') { throw "start at sign-in runs '$run', not LimitSwitcher.exe" }
           Write-Host "PASS start at sign-in: $run"
-      - name: The README's measuring snippet works
+      - name: The docs' measuring snippet works
         run: |
-          # The Windows snippet from README.md (Performance), sampling 5 s instead of 60.
-          $readme = Get-Content README.md -Raw
+          # The Windows snippet from docs/performance.md, sampling 5 s instead of 60.
+          $readme = Get-Content docs/performance.md -Raw
           $snippet = [regex]::Match($readme, '(?s)```powershell\r?\n(\$before = .*?)```').Groups[1].Value
-          if (-not $snippet) { throw 'no snippet in README.md' }
+          if (-not $snippet) { throw 'no snippet in docs/performance.md' }
           $out = Invoke-Expression ($snippet -replace 'Start-Sleep 60', 'Start-Sleep 5' -replace '/ 60 \* 100', '/ 5 * 100')
           Write-Host $out
           if ($out -notmatch 'MB memory') { throw 'the snippet printed nothing useful' }

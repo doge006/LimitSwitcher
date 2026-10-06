@@ -28,6 +28,15 @@ python -m account_switcher.tray --demo   # sample accounts, no real logins touch
 python -m unittest discover -s tests -v
 ```
 
+The mod's plugins have their own tests, run by Claude Code (2.1.287 or later):
+
+```sh
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/limit-status
+CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test mods/jev-compact
+```
+
+The **Tests** workflow runs both on every push and pull request. The Windows and macOS workflows (installers, smoke tests on real desktops, profiling) are run by hand from the Actions tab.
+
 Real-account tests use fake login files and a fake provider API. Tray tests use pystray's dummy backend and need `pystray` + `Pillow`. Outside Windows and macOS, saved logins are stored unencrypted in owner-only files; that fallback is for development only. The local API listens on 127.0.0.1 only and needs a per-run token.
 
 ## Demo mode
@@ -64,9 +73,9 @@ The **macOS app** workflow (job `dmg`) runs it too, and prints the running app's
 
 ## Publishing a release
 
-Bump `VERSION` in `account_switcher/version.py`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitcher-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
+Bump `VERSION` in `account_switcher/version.py`, write the release notes in `.github/release-notes.md` and add the highlights to `CHANGELOG.md`, merge, then run the **Release** workflow (Actions tab). It builds `LimitSwitcher-Setup.exe` (`scripts/build_windows.ps1`, Inno Setup) and the two Mac DMGs (tested through `scripts/install-mac.sh`, including an update over a running copy), installs the exe silently and checks that the app runs, installs it again over the running copy (as an update does), uninstalls it, then publishes release `v<VERSION>`. Run it with **Publish** off to build and test only; the installer is then kept as a download on the run for 7 days. Users get it on their next launch.
 
-The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitcher-AppleSilicon.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs it with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the README's measuring snippet, quitting, and that nothing was written inside the app. The DMG is kept on the run for 14 days (the Mac app is Apple silicon only; `build_mac.py --arch x86_64` still builds an Intel one if ever needed).
+The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one Apple silicon runner): `scripts/build_mac.py` builds `LimitSwitcher-AppleSilicon.dmg` (the app with its own Python, ad-hoc signed, not notarized), then installs it with `scripts/install-mac.sh --dmg`, starts it and checks the menu bar icon, the window, the status line, the measuring snippet in `docs/performance.md`, quitting, and that nothing was written inside the app. The DMG is kept on the run for 14 days (the Mac app is Apple silicon only; `build_mac.py --arch x86_64` still builds an Intel one if ever needed).
 
 ## Layout
 
@@ -90,7 +99,7 @@ The Mac disk images come from the **macOS app** workflow with **job** `dmg` (one
 - `scripts/build_windows.ps1` + `LimitSwitcher.iss`, `win_launcher.c`: the Windows installer (the app, its own Python and `LimitSwitcher.exe`).
 - `scripts/build_mac.py` + `mac_launcher.c`: the macOS disk images (LimitSwitcher.app with its own Python); `scripts/install-mac.sh`: the README's Mac install command, also run by the app's updater (it installs the latest release's DMG, or `--dmg <file>`).
 - `scripts/make_icons.py`: draws the app icon. `scripts/make_media.py` draws the README's screenshots and GIF (the **Media** workflow runs it on Windows).
-- `docs/media/`: the README's screenshots and GIFs (`demo.gif`, `settings.gif`).
+- `docs/`: the user and design docs the README links to; `docs/media/`: the screenshots and GIFs (`demo.gif`, `settings.gif`).
 - `scripts/mac_memory.py`: where the Mac menu bar app's memory goes (see Measuring performance).
 - `scripts/compare_native.py`: the Mac full view drawn natively vs the Pillow drawing (images, memory, timing).
 - `scripts/render_frames.py`: frame hashes of the full view (Pillow, as Windows draws it) through a fixed script of states: run before and after a change to the drawing code to prove Windows pixels are unchanged.
