@@ -955,19 +955,22 @@ class JevCompactionTests(unittest.TestCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = server.hook_url[: -len("/api/afk")]
 
-        def post(body):
+        def post(body, path="/api/compaction"):
             from urllib.request import ProxyHandler, Request, build_opener
-            request = Request(base + "/api/compaction", data=json.dumps(body).encode(), method="POST",
+            request = Request(base + path, data=json.dumps(body).encode(), method="POST",
                               headers={"Authorization": "Bearer " + server.hook_token, "Content-Type": "application/json",
                                        "Host": server.expected_host})
             with build_opener(ProxyHandler({})).open(request, timeout=5) as response:
                 return json.load(response)
 
         try:
+            report = {"session": "r1", "source": "mod", "rate_limits": None}
             self.manager.meta["jevCompact"] = False
+            self.assertFalse(post(report, "/api/statusline")["jevResume"])  # /resume says nothing
             self.assertEqual(post({"session": "r1", "id": "resume-1", "outcome": "running", "resume": True}),
                              {"ok": False, "resume": True})
             self.manager.meta["jevCompact"] = True
+            self.assertTrue(post(report, "/api/statusline")["jevResume"])   # /resume says Jev compacts first
             self.assertEqual(post({"session": "r1", "id": "resume-2", "outcome": "running", "resume": True}),
                              {"ok": True, "resume": True})
             self.assertTrue(post({"session": "r1", "id": "resume-2", "outcome": "done", "saved": 300_000})["ok"])

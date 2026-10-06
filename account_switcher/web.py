@@ -151,6 +151,11 @@ class Controller:
         with self.condition:
             return [{"id": a["id"], "text": a["text"]} for a in self.alerts if now - a["at"] < ALERT_FOR]
 
+    def jev_on_resume(self, body):
+        """For a session's mod: whether an old session resumed is compacted first (Settings → Jev
+        compaction), so `/resume` can say so before one is picked."""
+        return body.get("source") == "mod" and self.live and bool(self.gateway.manager.meta.get("jevCompact"))
+
     def names(self, accounts):
         """Add each account's name ("label") and, in name mode, show it instead of the email, so
         every surface (tray, taskbar, notifications) follows. An account without a name shows as
@@ -779,7 +784,8 @@ def make_server(controller, port=0):
                                        "rate_limits": controller.statusline_limits(body),
                                        "compact": controller.compaction_request(body),
                                        "compacted": controller.compacted_context(body),
-                                       "alerts": controller.alerts_for(body)})
+                                       "alerts": controller.alerts_for(body),
+                                       "jevResume": controller.jev_on_resume(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return

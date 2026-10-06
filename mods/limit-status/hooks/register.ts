@@ -39,6 +39,11 @@ const RESUME_LONGEST = 240_000 // never hold the first message longer than this
 type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
+// What `/resume` says before a session is picked, while Settings → Jev compaction is on
+export const RESUME_NOTE = 'Jev compacts an old session before it goes on (LimitSwitcher)'
+export const RESUME_TOAST = '⇄ LimitSwitcher · Jev compaction is on: resuming an old session compacts it first, then says what it saved'
+
+let jevResume = false // the app's last word on it (each report)
 const handled = new Set<string>() // compaction ids already run (the app keeps asking until it hears back)
 const toasted = new Set<string>() // reset alerts already shown in this session (the app offers each for a few minutes)
 
@@ -74,6 +79,11 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
     const answer = await post($, app, '/api/statusline', {
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
     })
+    const on = answer?.jevResume === true
+    if (on !== jevResume) {
+      jevResume = on
+      $.ui.invalidate('command.describe') // /resume's line in the list follows it
+    }
     for (const alert of Array.isArray(answer?.alerts) ? answer.alerts : []) {
       // Reset alerts (Settings): every account of a provider had hit its limit and one has room again
       if (typeof alert?.id !== 'string' || typeof alert?.text !== 'string' || toasted.has(alert.id)) continue
@@ -141,8 +151,7 @@ export function coldResume(e: Resume): boolean {
 export function resumeSavedText(saved: number, before: number, context?: number): string {
   const share = before > 0 ? Math.round((saved / before) * 100) : 0
   const of = context && context > saved ? ` of ${Math.round(context / 1000)}k` : ''
-  return `⇄ LimitSwitcher · Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume:`
-    + ` it uses about ${share}% less of your limit than Claude Code said`
+  return `⇄ LimitSwitcher · Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume`
 }
 
 /** The compaction on resume: asks the app first (it says whether Jev compaction is on, and shows
@@ -315,6 +324,18 @@ export const register: Register = (on, options) => {
       if (!shown) $.ui.toast(text)
     })
     return { text: 'Jev compacting…' }
+  })
+
+  // `/resume` says Jev will compact an old session, in the command list and as it opens the list of
+  // sessions (Claude Code's own "Resume this conversation?" can't carry a mod's note)
+  on('command.describe', { command: 'resume' }, async ($, e, next) => {
+    const result = await next(e)
+    return jevResume ? { ...result, description: `${result.description} · ${RESUME_NOTE}` } : result
+  })
+
+  on('command.run', { command: 'resume' }, async ($, e, next) => {
+    if (jevResume) $.ui.toast(RESUME_TOAST)
+    return next(e)
   })
 
   on('command.run', { command: 'limits' }, async $ => ({ text: await limitsText($, statePath) }))

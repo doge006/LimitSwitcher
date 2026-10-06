@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { coldResume, resumeSavedText } from './register.ts'
+import { coldResume, resumeSavedText, RESUME_NOTE, RESUME_TOAST } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 const MARKER = 'limitswitcher:jev-compact'
@@ -11,7 +11,7 @@ type World = { posts: { path: string; body: any }[]; compactions: string[]; stat
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean } = {}): World {
+function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -35,7 +35,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
     w.posts.push({ path, body })
     let answer: unknown = { ok: true }
     if (path === '/api/statusline') {
-      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [] }
+      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [], jevResume: options.jevResume ?? false }
       if (options.compact) asked = true
     }
     if (path === '/api/compaction' && body.resume) answer = options.oldApp ? { ok: true } : { ok: !options.jevOff, resume: true }
@@ -227,8 +227,7 @@ describe('limit-status', () => {
     expect(coldResume({ ...resumed, prompt_cache_likely_expired: false })).toBe(false)   // still cached: cheap
     expect(coldResume({ ...resumed, context_tokens: 40_000 })).toBe(false)              // too small to matter
     expect(coldResume({ ...resumed, agent_id: 'a1' })).toBe(false)
-    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe(
-      '⇄ LimitSwitcher · Jev saved ~289k of 666k tokens (56%) before this resume: it uses about 56% less of your limit than Claude Code said')
+    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe('⇄ LimitSwitcher · Jev saved ~289k of 666k tokens (56%) before this resume')
   })
 
   test('an old session resumed: Jev compacts it first, the first message waits, then goes', { options: { statePath: STATE } }, async ($, on) => {
@@ -268,5 +267,32 @@ describe('limit-status', () => {
     await (w as any).clock.settle()
     expect(w.compactions).toEqual([])
     expect(w.posts.filter((p) => p.path === '/api/compaction')).toEqual([])
+  })
+  test('/resume says Jev will compact an old session, while Jev compaction is on', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { jevResume: true })
+    const toasts: string[] = []
+    let opened = 0
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('command.describe', ($, e) => ({ description: 'Resume a previous conversation', isHidden: false }))
+    on('command.run', { command: 'resume' }, () => { opened++; return { text: '' } })
+    await measure($)                                                    // the app says it is on
+    const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
+    expect(listed.description).toBe(`Resume a previous conversation · ${RESUME_NOTE}`)
+    await $.command.run({ command: 'resume' })
+    expect(toasts).toEqual([RESUME_TOAST])
+    expect(opened).toBe(1)                                              // Claude Code's own /resume still opens
+  })
+
+  test('/resume is left as it is with Jev compaction off', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { jevResume: false })
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('command.describe', ($, e) => ({ description: 'Resume a previous conversation', isHidden: false }))
+    on('command.run', { command: 'resume' }, () => ({ text: '' }))
+    await measure($)
+    const listed = await $.command.describe({ command: 'resume', description: 'Resume a previous conversation', isHidden: false, immediate: false })
+    expect(listed.description).toBe('Resume a previous conversation')
+    await $.command.run({ command: 'resume' })
+    expect(toasts).toEqual([])
   })
 })
