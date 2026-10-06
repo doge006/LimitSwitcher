@@ -247,6 +247,21 @@ class FullViewTests(unittest.TestCase):
         self.assertIn(("swapWindow", {"window": "window-0000000a", "id": "claude-2"}), self.controller.calls)
         self.assertIsNone(self.view.ui.window)
 
+    def test_windows_show_the_session_title_folder_and_model(self):
+        self.assertEqual(vr.folder_name("C:\\Users\\me\\code\\proj\\"), "proj")
+        self.assertEqual(vr.folder_name(str(vr.Path.home())), "~")  # not the user's name
+        self.assertEqual(vr.folder_name(""), "")
+        windows = [{"id": "window-0000000a", "number": 1, "accountId": "claude-2", "cwd": "/x/proj", "model": "Opus",
+                    "title": "Fix the login bug"},
+                   {"id": "window-0000000b", "number": 2, "accountId": None, "cwd": "", "model": None}]
+        c = vr.Recorder(1, vr.BG)
+        vr.windows_content(c, state(perWindow=True, windows=windows), 900, self.view.ui)
+        texts = [op[3] if len(op) > 3 and isinstance(op[3], str) else None for op in c.ops]
+        shown = " | ".join(t for t in texts if t)
+        self.assertIn("Fix the login bug", shown)
+        self.assertIn("Window 1 · proj · Opus", shown)  # the number the account cards use, then folder and model
+        self.assertIn("Window 2", shown)  # no title yet: its number
+
     def test_rename_in_name_mode(self):
         self.view.set_state(state(nameMode=True))
         self.view.frame()

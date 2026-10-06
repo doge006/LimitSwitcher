@@ -33,7 +33,7 @@ Check the providers' terms for using several subscriptions this way; that's your
 
 Claude Code, prototype; off by default, in Settings. Normally every Claude Code window shares one account, and **Swap to this** moves them all. With this on, each Claude Code terminal you open from then on starts on an account no other window is using, so two windows can work on two accounts at once.
 
-- **What you see:** a **Windows** list appears above the accounts, one row per window that has its own account, with the account it's on. That account's card says **In Window 1** (and so on); the card marked **In use** is the main account, shared by every other window.
+- **What you see:** a **Windows** list appears above the accounts, one row per window that has its own account: its session's title (its `/rename` name, Claude Code's title, or its first prompt), its folder and model, and the account it's on. That account's card says **In Window 1** (and so on); the card marked **In use** is the main account, shared by every other window.
 - **Moving one window to another account:** click the window in the list (it's outlined on screen, and its taskbar button flashes on Windows), then click **Use in Window 1** on the account you want. Only that window changes, on its next request. Click the window again, or press Esc, to cancel. **New window** on a card (shown on hover) opens a new terminal on that account straight away, in your home folder.
 - **Limits:** when a window hits a usage limit, Auto swap moves that window alone to a free account, and Auto resume continues it.
 - **Good to know:**

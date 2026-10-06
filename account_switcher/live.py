@@ -203,7 +203,7 @@ class LiveAccounts:
         self.profile_signatures = {}  # folder -> its login's signature, as for the official files
         self.profile_sessions = {}    # Claude session -> its profile folder (normalized), for reports that can't say
         self.profile_paths = {}       # folder (normalized) -> (window id, folder)
-        self.window_reports = {}      # folder (normalized) -> {"model", "session", "at"} from its status line
+        self.window_reports = {}      # folder (normalized) -> {"model", "session", "at", "cwd", "title"} from its status line
 
     # ---------- account list ----------
     def accounts(self):
@@ -347,13 +347,14 @@ class LiveAccounts:
 
     def windows(self):
         """The open windows that have a profile, oldest first, for the full view: [{"id", "number",
-        "accountId", "cwd", "model", "session"}]."""
+        "accountId", "cwd", "model", "session", "title"}]."""
         rows = []
         with self.lock:
             for key, (name, directory) in self.profile_paths.items():
                 window = profiles.info(directory)
                 report = self.window_reports.get(key) or {}
-                rows.append({"id": name, "accountId": self.profile_dirs.get(key), "cwd": window.get("cwd") or "",
+                rows.append({"id": name, "accountId": self.profile_dirs.get(key), "cwd": report.get("cwd") or window.get("cwd") or "",
+                             "title": report.get("title"),
                              "started": float(window.get("started") or 0), "model": report.get("model"),
                              "session": report.get("session"), "how": window.get("how")})
         rows.sort(key=lambda r: r["started"])
@@ -950,7 +951,7 @@ class LiveAccounts:
                                  for w in outgoing.get("usage") or [] if w.get("key") in minutes))
         self.stale_reports = stale
 
-    def statusline(self, limits, session=None, model=None, effort=None, config_dir=None):
+    def statusline(self, limits, session=None, model=None, effort=None, config_dir=None, cwd=None, transcript=None):
         """Live usage from a Claude Code status line (rate_limits), for the account signed in to
         Claude Code. Returns the compact status line text.
 
@@ -969,7 +970,9 @@ class LiveAccounts:
         if own is not None:
             account_id = own
             if config_dir:
-                self.window_reports[profiles.key(config_dir)] = {"model": model, "session": session, "at": now}
+                # what the Windows list shows: the session's title, its folder (where it is now) and model
+                self.window_reports[profiles.key(config_dir)] = {"model": model, "session": session, "at": now, "cwd": cwd,
+                                                                 "title": profiles.session_title(transcript) if transcript else None}
         entry = self.meta["accounts"].get(account_id) if account_id else None
         if entry is None:
             return None

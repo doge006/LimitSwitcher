@@ -282,6 +282,70 @@ def open_window(directory, title="Claude Code"):
     set_info(directory, pid=process.pid)
 
 
+# ---------- a window's session title ----------
+_titles = {}  # transcript path -> what was read of it so far
+
+
+def session_title(transcript):
+    """The title of a Claude Code session, from its transcript: its name from /rename, else the
+    title Claude Code gave it, else its first prompt. Only what was added since the last call is
+    read (a status line asks every second or so); None until there is one."""
+    try:
+        size = os.path.getsize(transcript)
+    except (OSError, TypeError, ValueError):
+        return None
+    seen = _titles.get(transcript)
+    if seen is None or size < seen["offset"]:  # new, or rewritten (a Jev compaction)
+        seen = _titles[transcript] = {"offset": 0, "custom": None, "ai": None, "summary": None, "first": None}
+        if len(_titles) > 64:  # sessions come and go
+            _titles.pop(next(iter(_titles)))
+    if size > seen["offset"]:
+        try:
+            with open(transcript, "rb") as f:
+                f.seek(seen["offset"])
+                chunk = f.read(size - seen["offset"])
+        except OSError:
+            return _best_title(seen)
+        end = chunk.rfind(b"\n") + 1  # whole lines only: the last one may still be being written
+        seen["offset"] += end
+        for line in chunk[:end].splitlines():
+            _read_title_line(seen, line)
+    return _best_title(seen)
+
+
+_TITLE_LINE = re.compile(rb'"type":\s*"(custom-title|ai-title|summary)"')
+_USER_LINE = re.compile(rb'"type":\s*"user"')
+
+
+def _read_title_line(seen, line):
+    if _TITLE_LINE.search(line):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return
+        for kind, key, slot in (("custom-title", "customTitle", "custom"), ("ai-title", "aiTitle", "ai"),
+                                ("summary", "summary", "summary")):
+            if entry.get("type") == kind and isinstance(entry.get(key), str) and entry[key].strip():
+                seen[slot] = entry[key].strip()
+    elif seen["first"] is None and _USER_LINE.search(line):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            return
+        if entry.get("isMeta") or entry.get("isSidechain"):
+            return
+        content = (entry.get("message") or {}).get("content")
+        if isinstance(content, list):
+            content = next((part.get("text") for part in content if isinstance(part, dict) and part.get("type") == "text"), None)
+        text = content.strip() if isinstance(content, str) else ""
+        if text and not text.startswith(("<", "Caveat:")):  # slash commands and their output aren't prompts
+            seen["first"] = " ".join(text.split())[:120]
+
+
+def _best_title(seen):
+    return seen["custom"] or seen["ai"] or seen["summary"] or seen["first"]
+
+
 # ---------- the `claude` wrapper (the setting) ----------
 def wrapper_dir(vault_root):
     return Path(vault_root) / "bin"

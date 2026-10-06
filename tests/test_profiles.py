@@ -185,6 +185,14 @@ class ProfileTests(unittest.TestCase):
         self.assertIsNotNone(self.m.allocate_window(os.getpid(), "/work/two"))
         self.assertIsNone(self.m.allocate_window(os.getpid(), "/work/three"))  # nothing free: shares the main login
 
+    def test_a_window_shows_its_sessions_title_and_where_it_is(self):
+        directory = self.m.open_profile(self.account("b@example.com").id)  # "New window": no folder known yet
+        transcript = Path(self.tmp.name) / "win-1.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"role": "user", "content": "Ship the fix"}}) + "\n")
+        self.m.statusline(None, "win-1", model="Opus", config_dir=str(directory), cwd="/work/app", transcript=str(transcript))
+        window = self.window("b@example.com")
+        self.assertEqual((window["title"], window["cwd"], window["model"]), ("Ship the fix", "/work/app", "Opus"))
+
     def test_a_closed_windows_profile_goes_and_frees_its_account(self):
         directory = self.m.open_profile(self.account("b@example.com").id)
         ended = subprocess.Popen([sys.executable, "-c", "pass"])
@@ -335,6 +343,33 @@ class OpenWindowTests(unittest.TestCase):
                 mock.patch.object(profiles.subprocess, "Popen") as popen:
             profiles.open_window(Path(tmp))
         self.assertEqual(popen.call_args.kwargs["cwd"], tmp)  # not the app's own folder
+
+
+class SessionTitleTests(unittest.TestCase):
+    def test_title_from_rename_else_claude_codes_else_first_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "session.jsonl")
+
+            def append(*entries):
+                with open(path, "a", encoding="utf-8") as f:
+                    for entry in entries:
+                        f.write(json.dumps(entry) + "\n")
+
+            append({"type": "user", "isMeta": True, "message": {"role": "user", "content": "Caveat: local commands"}},
+                   {"type": "user", "message": {"role": "user", "content": "<command-name>/model</command-name>"}})
+            self.assertIsNone(profiles.session_title(path))  # nothing typed yet
+            append({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": "Fix the\nlogin bug"}]}},
+                   {"type": "user", "message": {"role": "user", "content": "a later prompt"}})
+            self.assertEqual(profiles.session_title(path), "Fix the login bug")
+            append({"type": "summary", "summary": "Login bug fix"})
+            self.assertEqual(profiles.session_title(path), "Login bug fix")
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps({"type": "custom-title", "customTitle": "Release work"}) + "\n" + '{"type": "custom-ti')
+            self.assertEqual(profiles.session_title(path), "Release work")  # the half-written line waits
+            with open(path, "a", encoding="utf-8") as f:
+                f.write('tle", "customTitle": "Renamed again"}\n')
+            self.assertEqual(profiles.session_title(path), "Renamed again")
+            self.assertIsNone(profiles.session_title(str(Path(tmp) / "missing.jsonl")))
 
 
 if __name__ == "__main__":

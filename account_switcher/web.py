@@ -593,7 +593,10 @@ class Controller:
         model = body.get("model") if isinstance(body.get("model"), str) else None
         effort = body.get("effort") if isinstance(body.get("effort"), str) else None
         config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
-        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, config_dir=config_dir)
+        cwd = body.get("cwd") if isinstance(body.get("cwd"), str) else None
+        transcript = body.get("transcript") if isinstance(body.get("transcript"), str) else None
+        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, config_dir=config_dir,
+                                               cwd=cwd, transcript=transcript)
         if session and model:
             self.session_models[session] = (model, effort)
             if len(self.session_models) > 200:  # sessions come and go
