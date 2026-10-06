@@ -77,7 +77,7 @@ const measure = ($: any) => $.session.measure({
   changed: ['rateLimits' as const],
 })
 
-describe('limit-status', () => {
+describe('limitswitcher', () => {
   test('feeds the usage to the app, and draws nothing of its own', { options: { statePath: STATE } }, async ($, on) => {
     const w = world(on)
     await measure($)
@@ -246,24 +246,27 @@ describe('limit-status', () => {
     expect(coldResume({ ...resumed, prompt_cache_likely_expired: false })).toBe(false)   // still cached: cheap
     expect(coldResume({ ...resumed, context_tokens: 40_000 })).toBe(false)              // too small to matter
     expect(coldResume({ ...resumed, agent_id: 'a1' })).toBe(false)
-    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe('⇄ LimitSwitcher · Jev saved ~289k of 666k tokens (56%) before this resume')
+    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe('✅ Jev saved ~289k of 666k tokens (56%) before this resume')
   })
 
-  test('an old session resumed: Jev compacts it when the first message goes, which waits, then goes', { options: { statePath: STATE } }, async ($, on) => {
+  test('a message sent in the moment before Jev starts starts it and goes back into the box', { options: { statePath: STATE } }, async ($, on) => {
     let release = () => {}
     const w = world(on, { jevResume: true, outcomes: [{ saved: 20_000 }], gate: new Promise<void>((resolve) => { release = resolve }) })
     const toasts: string[] = []
     const sent: string[] = []
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    const filled: string[] = []
     on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
+    on('prompt.fill', ($, e) => { filled.push(e.text); return { isFilled: true } })
     await measure($)                                                       // the app: Jev compaction is on
     await $.classic.SessionStart(resumed)
-    await (w as any).clock.settle()
-    expect(w.compactions).toEqual([])                                      // nothing while "Resume this conversation?" may be up
-    const first = await $.prompt.submit({ text: 'where were we?' })        // the first message, after Resume
-    expect(first.drop).toContain('Jev is compacting')
+    await (w as any).clock.advance(60_000)
+    expect(w.compactions).toEqual([])                                      // nothing while "Resume this conversation?" is up
+    const first = await $.prompt.submit({ text: 'where were we?' })        // a message before it started: it starts it
+    expect(first.drop).toContain('back in the box')
     expect(sent).toEqual([])
     await (w as any).clock.advance(0)
+    expect(filled).toEqual(['where were we?'])                             // as typed, to send with Enter (as the person's own)
     expect(await bandOf($)).toBe(COMPACTING)                                  // the band says so while it runs
     release()
     await (w as any).clock.settle()
@@ -271,11 +274,46 @@ describe('limit-status', () => {
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'old-1', outcome: 'running', resume: true })
     expect(told[1]).toMatchObject({ session: 'old-1', id: told[0].id, outcome: 'done', saved: 20_000 })
-    expect(toasts).toEqual([RESUME_TOAST, resumeSavedText(20_000, 50_000, 666_000)]) // the note beside the question, then what it saved
+    expect(toasts).toEqual([RESUME_TOAST, resumeSavedText(20_000, 50_000, 666_000)])
     expect(await bandOf($)).toBe('')                                             // and the band is gone
-    expect(sent).toEqual(['where were we?'])                               // sent once it was done
-    await $.prompt.submit({ text: 'next' })
-    expect(sent).toEqual(['where were we?', 'next'])                       // nothing held after
+    expect(sent).toEqual([])                                               // nothing sent by the mod
+    await $.prompt.submit({ text: 'where were we?' })                      // Enter: it goes as typed
+    expect(sent).toEqual(['where were we?'])
+  })
+
+  test('Resume: Jev starts once the prompt area is drawn again, before anything is typed', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { jevResume: true, outcomes: [{ saved: 20_000 }] })
+    on('ui.toast', () => ({ value: undefined }))
+    await measure($)
+    await $.classic.SessionStart(resumed)
+    await (w as any).clock.advance(30_000)                                 // the question is up: no prompt area drawn
+    expect(w.compactions).toEqual([])
+    await bandOf($)                                                        // answered: Claude Code draws the prompt area
+    await (w as any).clock.advance(1_000)
+    expect(w.compactions).toEqual([])                                      // a "Start a new conversation" would end it by now
+    await (w as any).clock.advance(500)
+    await (w as any).clock.settle()
+    expect(w.compactions).toEqual([MARKER])
+  })
+
+  test('a message sent while Jev compacts is left to Claude Code, which queues it behind the compaction', { options: { statePath: STATE } }, async ($, on) => {
+    let release = () => {}
+    const w = world(on, { jevResume: true, outcomes: [{ saved: 20_000 }], gate: new Promise<void>((resolve) => { release = resolve }) })
+    const toasts: string[] = []
+    const sent: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
+    await measure($)
+    await $.classic.SessionStart(resumed)
+    await bandOf($)                                                        // Resume
+    await (w as any).clock.advance(1_500)
+    expect(w.compactions).toEqual([MARKER])                                // running
+    const typed = await $.prompt.submit({ text: 'where were we?' })
+    expect(typed.drop).toBeUndefined()
+    expect(sent).toEqual(['where were we?'])                               // as typed, the person's own
+    release()
+    await (w as any).clock.settle()
+    expect(toasts).toEqual([RESUME_TOAST, resumeSavedText(20_000, 50_000, 666_000)]) // no "press Enter"
   })
 
   test('"Start a new conversation" (a /clear): nothing is compacted, the message goes at once', { options: { statePath: STATE } }, async ($, on) => {
@@ -285,7 +323,9 @@ describe('limit-status', () => {
     on('session.end', ($, e) => ({ sessionId: e.sessionId }))
     await measure($)
     await $.classic.SessionStart(resumed)
+    await bandOf($)                                                        // the question answered
     await $.session.end({ reason: 'clear', sessionId: 'old-1', resume: { id: 'old-1' } } as any)
+    await (w as any).clock.advance(5_000)
     await $.prompt.submit({ text: 'hello' })
     await (w as any).clock.settle()
     expect(sent).toEqual(['hello'])

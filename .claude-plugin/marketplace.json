@@ -5,8 +5,8 @@
   },
   "plugins": [
     {
-      "name": "limit-status",
-      "source": "./mods/limit-status",
+      "name": "limitswitcher",
+      "source": "./mods/limitswitcher",
       "description": "Feeds Claude Code's live usage to LimitSwitcher, adds /limits (every Claude account at a glance), and runs the Jev compaction it asks for before a swapped session goes on."
     },
     {

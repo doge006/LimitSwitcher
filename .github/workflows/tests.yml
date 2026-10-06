@@ -42,7 +42,7 @@ jobs:
           node-version: 22
       - name: Install Claude Code (it runs the mods' tests)
         run: npm install -g @anthropic-ai/claude-code
-      - name: limit-status
-        run: claude plugin test mods/limit-status
+      - name: limitswitcher
+        run: claude plugin test mods/limitswitcher
       - name: jev-compact
         run: claude plugin test mods/jev-compact

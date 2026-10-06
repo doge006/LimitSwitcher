@@ -467,7 +467,7 @@ class Controller:
         if self.mod_busy:
             return {"status": "error", "text": self.mod_busy}
         if self.mod_installed is False and time.time() - self.mod_seen < 120:
-            return {"status": "update"}  # limit-status alone, from before the Jev compaction
+            return {"status": "update"}  # an older mod reports: limit-status (its name before 1.3.8), or no jev-compact
         if time.time() - self.mod_seen < 120:
             return {"status": "active"}
         if self.mod_installed:
@@ -533,7 +533,7 @@ class Controller:
         now = time.time()
         self.mod_seen = now
         if self.mod_installed is None:
-            self.mod_installed = True  # at least limit-status is; a look-up says whether jev-compact is too
+            self.mod_installed = True  # at least limitswitcher is; a look-up says whether jev-compact is too
         manager = getattr(self.gateway, "manager", None)
         if manager is not None and now - float(manager.meta.get("modSeenAt") or 0) > 60:
             self.set_mod_seen(now)

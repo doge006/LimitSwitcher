@@ -1,10 +1,11 @@
 """The optional Claude Code mod: installing it and checking on it.
 
 It is two plugins from this repository's marketplace, installed and checked together:
-  mods/limit-status  feeds Claude Code's live usage to this app after every turn, and runs the
+  mods/limitswitcher feeds Claude Code's live usage to this app after every turn, and runs the
                      Jev compaction the app asks for right before it swaps a session's account
+                     (named limit-status until 1.3.8: installing removes that one)
   mods/jev-compact   the compaction itself (Claude Code skips a plugin's own compaction hook when
-                     that plugin starts the compaction, so it can't live in limit-status)
+                     that plugin starts the compaction, so it can't live in limitswitcher)
 They are installed with Claude Code's own plugin commands; nothing but those commands and their
 one setting each (where this app's files are) is written.
 """
@@ -20,9 +21,10 @@ from . import processes
 from .version import REPO
 
 MARKETPLACE = "limitswitcher"
-PLUGIN = "limit-status"
+PLUGIN = "limitswitcher"
 PLUGIN_ID = f"{PLUGIN}@{MARKETPLACE}"
 JEV_ID = f"jev-compact@{MARKETPLACE}"
+OLD_PLUGIN_ID = f"limit-status@{MARKETPLACE}"  # the same plugin under its name before 1.3.8
 ENV_FILE = ".env"     # in the data folder: OPENROUTER_API_KEY=... for the Jev compaction
 TIMEOUT = 90          # installing fetches the repository
 QUIET = 20            # listing what is installed
@@ -52,7 +54,7 @@ def _run(args, timeout, stdin_text=None):
 
 def installed():
     """True when both plugins are there, False when either is missing (an install from before the
-    Jev compaction has only limit-status: Settings then offers the install again); None when it
+    Jev compaction, or from before the rename, has only limit-status: Settings then offers the install again); None when it
     can't be told (no `claude` command, or an old one)."""
     try:
         done = _run(["list", "--json"], QUIET)
@@ -89,6 +91,7 @@ def install(state_file, source=REPO):
             updated = _run(["update", plugin], TIMEOUT)
             if not there and updated.returncode != 0:
                 return _why(done)
+        _run(["uninstall", OLD_PLUGIN_ID], TIMEOUT)  # the same plugin under its old name, if it is there
         return None
     except FileNotFoundError as error:
         return str(error)

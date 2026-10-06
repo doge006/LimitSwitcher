@@ -8,10 +8,10 @@ import { askerOver, type Transport } from '../src/openrouter.ts'
 // session cached, so every token it does not have to load is usage saved. It answers the
 // compaction itself, so Claude Code makes no model request (it works on an account at 0%).
 //
-// It acts only on LimitSwitcher's own request (`$.session.compact` from the limit-status mod with
+// It acts only on LimitSwitcher's own request (`$.session.compact` from the limitswitcher mod with
 // MARKER as its instructions, also for `/jevcompact` typed by hand); plain /compact and
 // auto-compaction stay Claude Code's own. The request is
-// never handed to Claude Code's summary: when this can't prune, it skips, and limit-status retries
+// never handed to Claude Code's summary: when this can't prune, it skips, and limitswitcher retries
 // or lets the session go on without it.
 
 export const MARKER = 'limitswitcher:jev-compact'

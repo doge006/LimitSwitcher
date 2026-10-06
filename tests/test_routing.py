@@ -1002,7 +1002,7 @@ class JevCompactionTests(unittest.TestCase):
 
         compacted = threading.Event()
 
-        def mod():  # what limit-status and jev-compact do in the session
+        def mod():  # what limitswitcher and jev-compact do in the session
             for _ in range(200):
                 answer = post("/api/statusline", {"session": "s1", "source": "mod", "rate_limits": None})
                 if answer.get("compact"):

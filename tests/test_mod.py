@@ -19,12 +19,15 @@ def done(code=0, out="", err=""):
 
 class ModCommandTests(unittest.TestCase):
     def test_installed_reads_claude_codes_own_list(self):
-        listing = json.dumps([{"id": "other@x"}, {"id": "limit-status@limitswitcher", "enabled": True},
+        listing = json.dumps([{"id": "other@x"}, {"id": "limitswitcher@limitswitcher", "enabled": True},
                               {"id": "jev-compact@limitswitcher"}])
         with mock.patch.object(mod, "_run", return_value=done(out=listing)):
             self.assertTrue(mod.installed())
-        older = json.dumps([{"id": "limit-status@limitswitcher"}])  # from before the Jev compaction: install again
+        older = json.dumps([{"id": "limitswitcher@limitswitcher"}])  # from before the Jev compaction: install again
         with mock.patch.object(mod, "_run", return_value=done(out=older)):
+            self.assertFalse(mod.installed())
+        renamed = json.dumps([{"id": "limit-status@limitswitcher"}, {"id": "jev-compact@limitswitcher"}])  # before 1.3.8
+        with mock.patch.object(mod, "_run", return_value=done(out=renamed)):
             self.assertFalse(mod.installed())
         with mock.patch.object(mod, "_run", return_value=done(out="[]")):
             self.assertFalse(mod.installed())
@@ -40,10 +43,11 @@ class ModCommandTests(unittest.TestCase):
         with mock.patch.object(mod, "_run", side_effect=lambda args, timeout: calls.append(args) or done()):
             self.assertIsNone(mod.install("/data/afk-hook.json"))
         self.assertEqual(calls[0][:2], ["marketplace", "add"])
-        self.assertIn(["install", "limit-status@limitswitcher", "--config", "statePath=/data/afk-hook.json"], calls)
+        self.assertIn(["install", "limitswitcher@limitswitcher", "--config", "statePath=/data/afk-hook.json"], calls)
         self.assertIn(["install", "jev-compact@limitswitcher", "--config", f"envFile={Path('/data/.env')}"], calls)
-        self.assertIn(["update", "limit-status@limitswitcher"], calls)  # a newer version, when there is one
-        self.assertEqual(calls[-1], ["update", "jev-compact@limitswitcher"])
+        self.assertIn(["update", "limitswitcher@limitswitcher"], calls)  # a newer version, when there is one
+        self.assertIn(["update", "jev-compact@limitswitcher"], calls)
+        self.assertEqual(calls[-1], ["uninstall", "limit-status@limitswitcher"])  # its name before 1.3.8, if there
 
     def test_install_is_fine_when_already_there_and_says_why_when_not(self):
         with mock.patch.object(mod, "_run", return_value=done(code=1, err="Marketplace already exists")):
@@ -71,7 +75,7 @@ class ModProcessTests(unittest.TestCase):
         seen = []
         with mock.patch.object(mod, "_run", side_effect=lambda args, timeout, stdin_text=None: seen.append((args, stdin_text)) or done()):
             self.assertIsNone(mod.configure("/data/LimitSwitcher/afk-hook.json"))
-        self.assertEqual(seen[0][0], ["configure", "limit-status@limitswitcher", "--values-stdin"])
+        self.assertEqual(seen[0][0], ["configure", "limitswitcher@limitswitcher", "--values-stdin"])
         self.assertEqual(json.loads(seen[0][1]), {"statePath": "/data/LimitSwitcher/afk-hook.json"})
         self.assertEqual(seen[1][0], ["configure", "jev-compact@limitswitcher", "--values-stdin"])
         self.assertEqual(json.loads(seen[1][1]), {"envFile": str(Path("/data/LimitSwitcher/.env"))})
@@ -186,7 +190,7 @@ class ModStateTests(unittest.TestCase):
         c.live = True
         c.mod_checked = time.time()
         c.mod_seen = time.time()
-        c.mod_installed = False  # limit-status reports, jev-compact isn't there
+        c.mod_installed = False  # limitswitcher reports, jev-compact isn't there
         self.assertEqual(c.mod_state()["status"], "update")
 
     def test_the_first_report_of_the_mod_puts_the_status_line_command_in(self):

@@ -41,14 +41,15 @@ type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
 // What `/resume` says as its list opens, while Settings → Jev compaction is on
-export const RESUME_TOAST = 'Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
+export const RESUME_TOAST = '⚡ Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
 const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
 const SAVED_FOR = 15_000 // the toast says what Jev saved for this long
+const ANSWERED_AFTER = 1_500 // "Start a new conversation" ends the session within this (its /clear)
 
 // The band above the prompt while a resumed session is compacted: a toast can't be taken down
 // once shown (they stack), so "compacting" is a band, gone when it is done.
-const band = atom({ plugin: 'limit-status', key: 'band' } as const, null)
+const band = atom({ plugin: 'limitswitcher', key: 'band' } as const, null)
 function toast($: any, text: string, timeoutMs?: number): void {
   $.ui.toast(text, timeoutMs ? { timeoutMs } : undefined)
 }
@@ -159,36 +160,46 @@ export function coldResume(e: Resume): boolean {
 export function resumeSavedText(saved: number, before: number, context?: number): string {
   const share = before > 0 ? Math.round((saved / before) * 100) : 0
   const of = context && context > saved ? ` of ${Math.round(context / 1000)}k` : ''
-  return `⇄ LimitSwitcher · Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume`
+  return `✅ Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume`
 }
 
 /** The compaction on resume: asks the app first (it says whether Jev compaction is on, and shows
  * "Jev Compacting…" in its line), compacts, tells the app how it went, and toasts what it saved.
  * An app from before this answers without `resume` and nothing happens. */
-async function compactOnResume($: any, statePath: string, e: Resume): Promise<void> {
+type Agreed = { app: App; session: string; id: string }
+
+/** Asks the app whether to compact a resumed session now (Settings → Jev compaction on; its line
+ * then shows "Jev Compacting…"). An app from before this answers without `resume`: no. */
+async function agreeOnResume($: any, statePath: string, e: Resume): Promise<Agreed | null> {
   const app = await appOf($, statePath)
-  if (!app) return
+  if (!app) return null
   const session = e.session_id
   const id = `resume-${Date.now().toString(36)}`
   try {
     const answer = await post($, app, '/api/compaction', { session, id, outcome: 'running', resume: true })
-    if (answer?.ok !== true || answer?.resume !== true) return // off, too old, or a swap's compaction is under way
+    return answer?.ok === true && answer?.resume === true ? { app, session, id } : null // off, too old, or a swap's is under way
   } catch {
-    return
+    return null
   }
+}
+
+async function compactOnResume($: any, e: Resume, { app, session, id }: Agreed): Promise<void> {
   await update($, band, () => COMPACTING)
   let outcome = 'skipped'
   let saved = 0
   let skip: string | undefined
   for (let busy = 1; ; busy++) {
     try {
+      started = true
       const result = await $.session.compact({ instructions: MARKER })
       skip = result.skip
       if (skip === undefined) {
         const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
         saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
-        if (saved > 0) toast($, resumeSavedText(saved, before, e.context_tokens), SAVED_FOR)
+        if (saved > 0) {
+          toast($, resumeSavedText(saved, before, e.context_tokens), SAVED_FOR)
+        }
       } else {
         outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       }
@@ -211,20 +222,19 @@ async function compactOnResume($: any, statePath: string, e: Resume): Promise<vo
 }
 
 let resuming: Promise<void> | null = null // the compaction on resume, while it runs
-let held: string | null = null // the first message, held until it is done (sent then)
-let pending: Resume | null = null // an old conversation loaded: compacted when its first message goes
+let started = false // the compaction itself has started: Claude Code queues a message sent now behind it
+let pending: Resume | null = null // an old conversation loaded: compacted once "Resume this conversation?" is answered
+let armed = false // the prompt area was drawn while one is pending: the compaction starts shortly unless it is dropped
 
-/** Runs the compaction on resume, outside the dispatch that asked, then sends what was held. */
-function startCompaction($: any, statePath: string, e: Resume): void {
+/** Runs the compaction the app agreed to, outside the dispatch that started it. */
+function startCompaction($: any, e: Resume, agreed: Agreed): void {
+  started = false
   const running: Promise<void> = new Promise<void>((resolve) => {
-    $.clock.after(0, () => compactOnResume($, statePath, e).catch(() => {}).finally(resolve))
+    $.clock.after(0, () => compactOnResume($, e, agreed).catch(() => {}).finally(resolve))
     $.clock.after(RESUME_LONGEST, resolve)
-  }).then(async () => {
+  }).then(() => {
     if (resuming !== running) return
     resuming = null
-    const text = held
-    held = null
-    if (text !== null) await $.prompt.submit({ text, asUser: true })
   })
   resuming = running
 }
@@ -303,9 +313,12 @@ export const register: Register = (on, options) => {
 
   // An old conversation loaded: nothing yet. Claude Code may still be asking "Resume this
   // conversation?", and "Start a new conversation" there drops it (a /clear, so session.end).
+  // Claude Code draws no prompt area while it asks: the first drawing after the load means it
+  // was answered (or never asked), and the compaction starts then, before anything is typed.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
     pending = statePath && coldResume(e) ? e : null
+    armed = false
     if (pending && jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question (loading cleared /resume's)
     return result
   })
@@ -315,30 +328,44 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
-  // The first message after Resume: held (a hook can't wait that long) while Jev compacts the
-  // session, then sent as typed. Its usage is what the question warned of, so nothing goes
-  // before. One with an image can't be sent again by a plugin: it is turned back.
+  // A message sent while Jev compacts the resumed session is queued by Claude Code behind the
+  // compaction and goes, as typed, once it is done (this hook sees it then). One sent in the
+  // moment before the compaction starts goes back into the prompt box, to send again: its usage
+  // is what the question warned of. (A hook can't hold it that long, and sent again by the mod it
+  // would read "Prompt from the limitswitcher plugin".)
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin?.kind ?? 'composer' // absent: the person's own
     if (kind !== 'composer' && kind !== 'bridge') return next(e)
-    if (pending && !resuming && jevResume) { // Settings → Jev compaction is on (the app's last word)
+    if (pending && !resuming && jevResume) { // a message sent before it started: start it now
       const resumed = pending
       pending = null
-      startCompaction($, statePath, resumed)
+      const agreed = await agreeOnResume($, statePath, resumed)
+      if (agreed) startCompaction($, resumed, agreed)
     }
-    if (!resuming) return next(e)
-    if (e.attachments?.length) {
-      return { drop: 'Jev is compacting this resumed session first; send it again when it says what it saved.' }
+    if (!resuming || started) return next(e)
+    const text = e.text
+    $.clock.after(0, () => $.prompt.fill({ text }).catch(() => {})) // once the box has been cleared
+    return {
+      drop: e.attachments?.length
+        ? 'Jev is starting to compact this resumed session: your message is back in the box (paste the image again). Send it again.'
+        : 'Jev is starting to compact this resumed session: your message is back in the box. Send it again.',
     }
-    held = held === null ? e.text : `${held}\n\n${e.text}`
-    return { drop: 'Jev is compacting this resumed session first; your message goes as soon as it is done.' }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    if (pending && !armed && !resuming) {
+      armed = true
+      const resumed = pending
+      $.clock.after(ANSWERED_AFTER, () => {
+        if (pending !== resumed || resuming || !jevResume) return // a new conversation, or already started
+        pending = null
+        void agreeOnResume($, statePath, resumed).then((agreed) => { if (agreed && !resuming) startCompaction($, resumed, agreed) })
+      })
+    }
     const text = await read($, band)
     if (text === null || e.props.hasSurvey) return next(e)
     const { Text } = $.ui.resolve(e)
-    return h(Text, { dimColor: true }, text)
+    return h(Text, { color: 'claude', bold: true }, text)
   })
 
   on('session.measure', async ($, e, next) => {
