@@ -242,6 +242,41 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(b.status, "")
         self.assertEqual(self.vault.read_secret(b.id)["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b+")
 
+    def test_a_switch_waits_for_our_own_renewal_and_hands_over_the_new_tokens(self):
+        """The usage check renews a saved login while it's switched to: the switch used to copy the
+        refresh token that renewal was spending, and Claude Code's copy expired within the hour."""
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b-old", "rt-b", expires_in=-10)
+        self.api.uuid_for["rt-b"] = "uuid-b"
+        self.api.claude_usage["at-rt-b+"] = claude_usage(10, 10)
+        m.sync_live()
+        a, b = self.by_email(m, "a@example.com"), self.by_email(m, "b@example.com")
+        m.swap(a.id)  # b saved, with an expired token: ours to renew
+        provider = self.providers["claude"]
+        renewing, release = threading.Event(), threading.Event()
+        real = provider.refresh
+
+        def slow_refresh(secret, why=""):
+            renewing.set()
+            release.wait(5)
+            return real(secret, why)
+
+        with mock.patch.object(provider, "refresh", slow_refresh):
+            check = threading.Thread(target=m.refresh, kwargs={"force": True})
+            check.start()
+            self.assertTrue(renewing.wait(5))
+            switch = threading.Thread(target=m.swap, args=(b.id,))
+            switch.start()
+            switch.join(0.3)
+            self.assertTrue(switch.is_alive())  # waits for the renewal under way
+            release.set()
+            check.join(5)
+            switch.join(5)
+        self.assertEqual(self.live_claude().email, "b@example.com")
+        self.assertEqual(self.live_claude().secret["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b+")
+        self.assertEqual([r for r in self.api.refreshes if r[0] == "/claude/token"], [("/claude/token", "rt-b")])
+
     def test_name_mode_never_puts_an_email_in_a_notification(self):
         m = self.manager()
         m.sync_live()

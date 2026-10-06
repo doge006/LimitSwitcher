@@ -2,6 +2,12 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.3.9](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.9) (2026-10-06)
+
+- Fixed: a switch (or a new window) at the moment the app renewed that account's login could leave Claude Code with a spent copy, signed out within the hour. It now waits for the renewal and hands over the new login.
+- Fixed: "New window" no longer overlaps "Login expired · Sign in again" on a card; it isn't offered on an expired login or a used-up account.
+- New window opens in your home folder instead of LimitSwitcher's folder.
+
 ## [1.3.8](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.8) (2026-10-06)
 
 - Jev compaction when you resume an old conversation: after Claude Code's "Resume this conversation?" (Pro/Max), picking Resume has Jev compact it before anything is sent, so the resume uses less of your 5-hour limit. A note sits beside the question, a band shows it compacting and a toast what it saved; "Start a new conversation" compacts nothing.

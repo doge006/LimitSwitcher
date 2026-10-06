@@ -705,11 +705,14 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
     else:
         status = account.get("status") or ""
         relogin = live and any(s in status.lower() for s in ("sign in", "expired", "missing"))
-        # can open a window of its own (only offered while "Separate accounts per window" is on)
-        own = live and provider == "claude" and getattr(ui, "per_window", False) and not active and not account.get("pinned")
+        # can open a window of its own (only offered while "Separate accounts per window" is on);
+        # not while its login has expired (that needs signing in first) or its limit is reached
+        own = (live and provider == "claude" and getattr(ui, "per_window", False) and not active
+               and not account.get("pinned") and not relogin and eligible)
         # a window picked in the Windows list: the button gives it this account ("Use in Window 2")
         number = getattr(ui, "window_number", None)
-        pick = getattr(ui, "window", None) and provider == "claude" and eligible and not active and not account.get("pinned")
+        pick = (getattr(ui, "window", None) and provider == "claude" and eligible and not active
+                and not account.get("pinned") and not relogin)
         pick = (f"Use in Window {number}" if number else "Use in window") if pick else None
         bw = max(124, text_w(pick, 13, True) + 24) if pick else 124
         if relogin:
