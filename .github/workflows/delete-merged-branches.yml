@@ -1,0 +1,40 @@
+name: Delete merged branches
+
+# Deletes branches whose every commit is already in main (nothing would be lost), plus any branches
+# named in "also". main and branches with an open pull request are never touched. Manual only; with
+# "dry run" on, it only lists what it would delete.
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Only list what would be deleted"
+        type: boolean
+        default: true
+      also:
+        description: "Unmerged branches to delete too (space-separated)"
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete merged branches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ALSO: ${{ inputs.also }}
+        run: |
+          open=$(gh pr list --state open --limit 200 --json headRefName --jq '.[].headRefName')
+          for branch in $(gh api --paginate "repos/$GH_REPO/branches" --jq '.[].name'); do
+            [ "$branch" = main ] && continue
+            if echo "$open" | grep -qxF "$branch"; then echo "keep $branch (open pull request)"; continue; fi
+            ahead=$(gh api "repos/$GH_REPO/compare/main...$branch" --jq .ahead_by)
+            if [ "$ahead" != 0 ] && ! echo " $ALSO " | grep -qF " $branch "; then echo "keep $branch ($ahead commits not in main)"; continue; fi
+            if [ "${{ inputs.dry_run }}" = true ]; then echo "would delete $branch"; continue; fi
+            gh api -X DELETE "repos/$GH_REPO/git/refs/heads/$branch" && echo "deleted $branch"
+          done

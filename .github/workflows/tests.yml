@@ -1,0 +1,48 @@
+name: Tests
+
+# The unit tests (tests/) and the Claude Code mod's tests (mods/*), on every push and pull request.
+# One Linux runner, a few minutes; the Windows and macOS workflows (real desktops, installers) stay manual.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements-native.txt
+      - name: Install the app's requirements
+        run: python -m pip install -r requirements-native.txt
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+
+  mods:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      CLAUDE_CODE_ENABLE_FUNCTION_HOOKS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install Claude Code (it runs the mods' tests)
+        run: npm install -g @anthropic-ai/claude-code
+      - name: limit-status
+        run: claude plugin test mods/limit-status
+      - name: jev-compact
+        run: claude plugin test mods/jev-compact

@@ -176,16 +176,16 @@ jobs:
           # No accounts on the runner, so the app has no line to add; this checks the bundle's Python runs it.
           assert done.returncode == 0 and not done.stderr.strip(), "status line command failed"
           PY
-      - name: The README's measuring snippet works
+      - name: The docs' measuring snippet works
         run: |
           snippet=$(python3 - <<'PY'
           import re
-          text = open("README.md").read()
+          text = open("docs/performance.md").read()
           match = re.search(r"```sh\n(pids=.*?)```", text, re.S)
           print(match.group(1).replace("sleep 60", "sleep 5").replace("/60*100", "/5*100"))
           PY
           )
-          [ -n "$snippet" ] || { echo "no snippet in README.md"; exit 1; }
+          [ -n "$snippet" ] || { echo "no snippet in docs/performance.md"; exit 1; }
           out=$(bash -c "$snippet")
           echo "$out"
           echo "$out" | grep -q "MB memory"
