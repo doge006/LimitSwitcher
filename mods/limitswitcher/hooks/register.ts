@@ -60,6 +60,7 @@ function toast($: any, text: string, timeoutMs?: number): void {
 }
 
 let jevResume = false // the app's last word on it (each report)
+let heard = false // the app has answered a report in this session (until then jevResume is only a guess)
 const handled = new Set<string>() // compaction ids already run (the app keeps asking until it hears back)
 const toasted = new Set<string>() // reset alerts already shown in this session (the app offers each for a few minutes)
 
@@ -97,6 +98,7 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
       ...(window ? { window: String(window) } : {}),
     })
+    if (answer) heard = true
     const on = answer?.jevResume === true
     jevResume = on
     for (const alert of Array.isArray(answer?.alerts) ? answer.alerts : []) {
@@ -319,10 +321,10 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
     const result = await $.session.compact({ instructions: MARKER })
     skip = result.skip
     if (skip === undefined) {
-      saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
-        ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
+      const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
+      saved = before && typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
       outcome = 'done'
-      text = `Jev saved ~${Math.round(saved / 1000)}k tokens`
+      text = `Jev compacted: saved ~${Math.round(saved / 1000)}k` + (before ? ` of ${Math.round(before / 1000)}k tokens` : ' tokens')
     } else {
       outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       text = `No Jev compaction: ${skip}`
@@ -353,6 +355,9 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     pending = statePath && coldResume(e) ? e : null
     armed = false
+    // `claude --resume` / `--continue` loads it as the session starts, before the first report has
+    // had an answer: ask the app now, or the note would never show beside the question
+    if (pending && !heard) await poll($, statePath).catch(() => {})
     if (pending && jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question (loading cleared /resume's)
     return result
   })
@@ -413,12 +418,12 @@ export const register: Register = (on, options) => {
   })
 
   // The engine refuses a compaction under the command's own hook: it starts right after, outside
-  // this dispatch. LimitSwitcher's line in the status bar shows it; a toast only says what that
-  // line could not (no app running, or no compaction).
+  // this dispatch. LimitSwitcher's line in the status bar shows it while it runs; how it went is a
+  // line of its own under the command's "Jev compacting…", in the conversation.
   on('command.run', { command: 'jevcompact' }, async $ => {
     $.clock.after(0, async () => {
-      const { text, shown } = await compactByHand($, statePath)
-      if (!shown) toast($, text)
+      const { text } = await compactByHand($, statePath)
+      $.ui.log(text)
     })
     return { text: 'Jev compacting…' }
   })

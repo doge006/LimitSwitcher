@@ -28,6 +28,13 @@ TIMEOUT = 15
 log = logging.getLogger("account_switcher.providers")
 
 
+def token_mark(token):
+    """A refresh token's short fingerprint for app.log (never the token): which saved copy of a login
+    was renewed, and which was spent, can then be told apart when one has to be signed in again."""
+    import hashlib
+    return "#" + hashlib.sha256(token.encode()).hexdigest()[:8] if token else "#none"
+
+
 class ProviderError(Exception):
     """Short, user-facing problem description."""
 
@@ -388,11 +395,12 @@ class Claude:
             _, token = _http("POST", self.TOKEN_URL, {"Accept": "application/json", "User-Agent": CLAUDE_TOKEN_AGENT},
                              {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": self.CLIENT_ID})
         except ProviderError as error:
-            log.warning("Claude login of %s: renewal refused (%s): %s", who, why, error)
+            log.warning("Claude login of %s: renewal refused (%s) %s: %s", who, why, token_mark(oauth["refreshToken"]), error)
             if error.relogin or "error 400" in str(error):
                 raise ProviderError("Login expired; sign in again", relogin=True)
             raise
-        log.warning("Claude login of %s: renewed (%s)", who, why)
+        log.warning("Claude login of %s: renewed (%s) %s -> %s", who, why, token_mark(oauth["refreshToken"]),
+                    token_mark((token or {}).get("refresh_token") or oauth["refreshToken"]))
         expected = secret["oauthAccount"].get("accountUuid")
         actual = ((token or {}).get("account") or {}).get("uuid")
         if expected and actual and expected != actual:

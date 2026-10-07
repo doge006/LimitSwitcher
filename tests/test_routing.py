@@ -627,10 +627,12 @@ class AfkTests(unittest.TestCase):
         text = controller.limits_text({"session": "s", "model": "ignored", "context": {"tokens": 183_000, "percent": 18}})
         lines = text.split("\n")
         self.assertEqual(lines[0], "**⇄ a@example.com** · Opus 5.5 (high)")  # no windows of their own: no "main"
-        self.assertTrue(lines[4].startswith("| 🔴 **5h** | `░░░░░░░░░░` | 0% left · ↻"), lines[4])  # used up: when it resets
-        self.assertEqual(lines[5], "| 🟢 **1w** | `█████░░░░░` | 50% left |")
-        self.assertEqual(lines[6], "| 🟢 **ctx** | `████████░░` | 82% left · 183k |")
-        self.assertEqual(lines[-1], "- 🟢 b@example.com · 5h **90%** · 1w **90%**")
+        self.assertEqual(lines[2], "```")  # a code block: the bars and numbers line up
+        self.assertTrue(lines[3].startswith("🔴 5h   ░░░░░░░░░░    0% left · resets in "), lines[3])  # used up: when it resets
+        self.assertEqual(lines[4], "🟢 1w   █████░░░░░   50% left")
+        self.assertEqual(lines[5], "🟢 ctx  ████████░░   82% left · 183k")
+        self.assertEqual(lines[6], "```")
+        self.assertEqual(lines[-5:], ["**Other accounts**", "", "```", "🟢 b@example.com  5h  90%  1w  90%", "```"])
         self.assertNotIn("x@example.com", text)  # Codex accounts aren't Claude's
         self.assertNotIn("Jev", text)
         # A session whose status line never reported: the mod's own model, no effort
