@@ -38,6 +38,10 @@ jobs:
           launchctl setenv ACCOUNT_SWITCHER_DEBUG 1
           sw_vers
           bash Install.command --skip-code
+      - name: Separate accounts per window (the router, the claude wrapper, windows end to end)
+        run: |
+          cd tests
+          NO_PROXY='*' PYTHONPATH=.. ../.venv/bin/python3 -m unittest -v test_windows test_windows_sim test_claude_router
       - name: HTTPS from the app's Python (usage APIs)
         run: |
           .venv/bin/python3 -c "
