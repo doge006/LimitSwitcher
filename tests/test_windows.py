@@ -385,7 +385,10 @@ class WindowTests(unittest.TestCase):
         (claude_home / "projects" / "session.jsonl").write_text("{}")
         folder = profiles.root(self.vault.root) / "window-1a2b3c4d"
         folder.mkdir(parents=True)
-        os.symlink(claude_home / "projects", folder / "projects")
+        try:
+            os.symlink(claude_home / "projects", folder / "projects", target_is_directory=True)
+        except OSError:
+            self.skipTest("no symlinks here (Windows without the right): .github/win_perwindow.py covers junctions")
         own = Claude(config_dir=folder, keychain=False)
         secret = self.vault.read_secret(self.account("b@example.com").id)
         secret["credentials"]["claudeAiOauth"].update(accessToken="at-b9", refreshToken="rt-b9")
@@ -504,7 +507,11 @@ class WrapperTests(unittest.TestCase):
                 self.assertEqual(done.returncode, 0)
                 self.assertEqual(out.read_text().splitlines(), [f'set "ANTHROPIC_BASE_URL={self.ANSWER["baseUrl"]}"',
                                                                  'set "LIMITSWITCHER_WINDOW=1a2b3c4d"'])
-                self.assertEqual(app.asked[0][2]["pid"], os.getpid())  # its parent: the cmd.exe running claude.cmd
+                pid = app.asked[0][2]["pid"]  # its parent: the cmd.exe running claude.cmd
+                if sys.platform == "win32":
+                    self.assertTrue(isinstance(pid, int) and pid > 0)  # (a venv's python.exe starts the real one as its child)
+                else:
+                    self.assertEqual(pid, os.getpid())
         finally:
             app.close()
 
