@@ -81,7 +81,7 @@ class FlyoutRenderTests(unittest.TestCase):
         five = next(w for w in claude["windows"] if w["key"] == "five_hour")
         five.update(used=0.0, resetsAt=None)
         texts = [t[2] for t in fr.build_block(state, "claude")[0].texts]
-        self.assertIn("starts with a message", texts)
+        self.assertTrue(any(t in fr.STARTS for t in texts), texts)  # the longest that fits (fonts differ)
         self.assertTrue(any(t.startswith("resets in ") for t in texts))  # the weekly one, as before
         texts = [t[2] for t in fr.build(state)[0].texts]
         self.assertTrue(any(t in fr.STARTS for t in texts), texts)
