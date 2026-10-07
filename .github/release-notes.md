@@ -1,31 +1,20 @@
-The app offers it in Settings → **Update to 1.4.0** (or download below).
+The app offers it in Settings → **Update to 1.4.1** (or download below).
 
-## /swapaccount: one window on another account
+## Fixed: "Not logged in" after a restart
 
-Type **`/swapaccount <name or email>`** in any Claude Code window (with the Claude Code Status mod): that window, and only that one, goes on that account from its next message. Every other window, and new ones, stay on the main account, so you can work in one window on one account's limits and in another on another's.
+If Claude Code's login had expired and nothing renewed it (Claude Code wasn't running, or its own renewal went wrong), Claude Code said **Not logged in** and the taskbar disappeared until you swapped accounts by hand. Now:
 
-- In name mode, type the name or the email; otherwise the email (or the part before the @).
-- **`/swapaccount`** alone, or a name that doesn't match, lists the accounts you can pick and what each has left (names only, in name mode).
-- **`/swapaccount main`** puts the window back on the main account.
-- The window shows up in the **Windows** list, where you can also move it from the app.
+- **LimitSwitcher renews it** and writes it back. It does this under Claude Code's own locks, so the two never renew at once.
+- **A login that can't be renewed any more** (signed out elsewhere, or a spent copy from before 1.3.9) is marked **Login expired · Sign in again**, and with Auto swap on, Claude Code moves to the best other account by itself, as a swap by hand would.
 
-The mod updates itself (Claude Code picks up its new version); open sessions get `/swapaccount` after `/reload-plugins` or a restart.
+## The taskbar says when a limit starts
 
-## Separate accounts per window, rebuilt
+A limit nobody has used yet has no reset time. The taskbar and the panel now say **starts with a message** under it (the full view already said "Starts with your first message"), rather than nothing.
 
-A window on its own account is now your usual Claude Code in every way: the same settings, plugins and mods, `/resume`, agents mode (`claude agents`), history and Remote Control. Only the account its messages go to differs: a small router in LimitSwitcher puts that account's login on the window's requests and passes everything else through unchanged. Before, such a window had a config folder of its own linked to yours, which could drift apart:
+## Also in this update (from 1.4.0)
 
-- **Fixed:** on Windows, a separate window could lose its plugins (and `/jevcompact` with them) after a settings change.
-- **Fixed:** sessions in separate windows were missing from agents mode.
-
-What else changes:
-
-- **Limits:** a window on its own account gets the same Auto swap, Auto resume and Jev compaction as the main account. At its limit it moves alone to the best other account; it moves onto the main account only when no other has room.
-- **Sharing:** two windows (or a window and the main account) can use the same account. When it runs out, each moves on by itself.
-- **The Windows list** shows windows on the main account too, and any window can be moved to any account, the main one included.
-- **Lighter:** no process of the `claude` wrapper stays open per window on Windows, and the router costs a few milliseconds of CPU per streamed answer.
-- LimitSwitcher has to be running for a window on its own account (its messages go through the app). Restarting or updating the app is fine: the window carries on when it's back.
-- Windows opened with 1.3.x keep working until you close them; their folders are cleaned up then.
+- **`/swapaccount <name or email>`** puts one Claude Code window on another account; everything else stays your usual Claude Code.
+- Separate accounts per window, rebuilt: every window is an ordinary Claude Code window, and only the account its messages go to differs.
 
 ## Download
 

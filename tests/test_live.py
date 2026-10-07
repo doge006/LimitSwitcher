@@ -223,24 +223,62 @@ class LiveTests(unittest.TestCase):
         m.swap(b.id)
         self.assertEqual(self.live_claude().secret["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b-rotated")
 
-    def test_inactive_accounts_refresh_but_live_one_waits(self):
+    def test_an_expired_login_claude_code_didnt_renew_is_renewed_and_written_back(self):
+        """Claude Code not running (or its own renewal gone wrong: "Not logged in"): its login expired
+        and nobody renewed it. The app renews it, under Claude Code's locks, and writes it back."""
         m = self.manager()
         m.sync_live()
         claude_login(self.home, "uuid-b", "b@example.com", "at-b-old", "rt-b", expires_in=-10)
         self.api.uuid_for["rt-b"] = "uuid-b"
+        self.api.claude_usage["at-rt-b+"] = claude_usage(10, 10)
         m.sync_live()
         m.refresh()
+        self.assertEqual([r for r in self.api.refreshes if r[0] == "/claude/token"], [("/claude/token", "rt-b")])
+        live = self.live_claude()
+        self.assertEqual((live.email, live.secret["credentials"]["claudeAiOauth"]["refreshToken"]), ("b@example.com", "rt-b+"))
         b = self.by_email(m, "b@example.com")
-        self.assertIn("Waiting for Claude", b.status)  # live login expired: leave it to Claude Code
-        self.assertEqual([r for r in self.api.refreshes if r[0] == "/claude/token"], [])
-        a = self.by_email(m, "a@example.com")
-        m.swap(a.id)  # now B is inactive and its expired token is ours to refresh
-        self.api.claude_usage["at-rt-b+"] = claude_usage(10, 10)
-        m.refresh(force=True)
-        self.assertEqual(self.api.refreshes, [("/claude/token", "rt-b")])
-        b = self.by_email(m, "b@example.com")
-        self.assertEqual(b.status, "")
         self.assertEqual(self.vault.read_secret(b.id)["credentials"]["claudeAiOauth"]["refreshToken"], "rt-b+")
+        self.assertTrue(any("Renewed Claude Code's login" in str(v) for k, v in self.logs if k == "log"))
+        m.refresh(force=True)
+        self.assertEqual(self.by_email(m, "b@example.com").status, "")
+        self.assertEqual(len(self.api.refreshes), 1)  # fresh now: never again
+
+    def test_a_dead_login_claude_code_is_left_with_moves_it_to_another_account(self):
+        """The login Claude Code has can't be renewed (its refresh token spent elsewhere): it says "Not
+        logged in". The app marks it, and Auto swap puts Claude Code on the best other account."""
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b-old", "rt-b", expires_in=-10)
+        self.api.dead.add("rt-b")
+        m.sync_live()
+        m.refresh()
+        self.assertEqual(self.live_claude().email, "a@example.com")
+        b = self.by_email(m, "b@example.com")
+        self.assertEqual(b.status, "Login expired; sign in again")
+        self.assertTrue(any("signed out of" in str(v) for k, v in self.logs if k == "log"))
+
+    def test_a_dead_login_stays_with_auto_swap_off(self):
+        m = self.manager()
+        m.meta["autoSwap"] = False
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b-old", "rt-b", expires_in=-10)
+        self.api.dead.add("rt-b")
+        m.sync_live()
+        m.refresh()
+        self.assertEqual(self.live_claude().email, "b@example.com")
+        self.assertEqual(self.by_email(m, "b@example.com").status, "Login expired; sign in again")
+
+    def test_claude_code_renewing_meanwhile_is_left_alone(self):
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b-old", "rt-b", expires_in=-10)
+        m.sync_live()
+        b = self.by_email(m, "b@example.com")
+        from account_switcher.live import login_mark
+        mark = login_mark(self.vault.read_secret(b.id))
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b-new", "rt-b-new")  # Claude Code renewed it
+        self.assertIsNone(m.recover_claude_login(b.id, mark))
+        self.assertEqual(self.api.refreshes, [])
 
     def test_a_switch_waits_for_our_own_renewal_and_hands_over_the_new_tokens(self):
         """The usage check renews a saved login while it's switched to: the switch used to copy the
