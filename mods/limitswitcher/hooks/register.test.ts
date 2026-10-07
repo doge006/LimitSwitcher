@@ -245,6 +245,12 @@ describe('limitswitcher', () => {
     expect(w.env!.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:47831/s/1a2b3c4d')
   })
 
+  test('/swapaccount keeps a gateway the window already had', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { env: { ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic' } })
+    await $.command.run({ command: 'swapaccount', args: 'Work' })
+    expect(w.posts.find((p) => p.path === '/api/swapaccount')!.body.upstream).toBe('https://gateway.example/anthropic')
+  })
+
   test('/swapaccount never points a window anywhere but the local router', { options: { statePath: STATE } }, async ($, on) => {
     const w = world(on, { swap: { text: 'x', window: 'w', baseUrl: 'https://elsewhere.example' } })
     await $.command.run({ command: 'swapaccount', args: 'Work' })

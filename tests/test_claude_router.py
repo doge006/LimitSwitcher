@@ -7,6 +7,7 @@ import os
 import threading
 import time
 import unittest
+from unittest import mock
 
 os.environ.setdefault("NO_PROXY", "127.0.0.1,localhost")
 from account_switcher import claude_router
@@ -156,6 +157,29 @@ class RouterTests(unittest.TestCase):
         _, body = self.post("w1", "/v1/count_tokens")  # the same connection, again
         self.assertEqual(json.loads(body)["token"], "at-b")
 
+    def test_a_stream_split_anywhere_comes_through_whole(self):
+        """The router passes a stream's bytes as they arrive and only follows the chunk sizes: a size
+        line, a chunk or the final empty line split across reads still ends the answer where it ends."""
+        import io
+        from account_switcher.claude_router import ClaudeRouter as Router
+        events = [b"event: delta\ndata: " + b"x" * n + b"\n\n" for n in (1, 300, 70000, 5)]
+        wire = b"".join(b"%x;ext=1\r\n%s\r\n" % (len(e), e) for e in events) + b"0\r\nTrailer: t\r\n\r\n"
+
+        class Pieces:  # a socket that hands out the bytes in awkward pieces
+            def __init__(self, data, size):
+                self.data, self.size = data, size
+
+            def read1(self, n):
+                piece, self.data = self.data[:min(n, self.size)], self.data[min(n, self.size):]
+                return piece
+
+        for size in (1, 2, 3, 7, 64, 65536):
+            out = io.BytesIO()
+            ok = Router.relay_chunks(mock.Mock(wfile=out), mock.Mock(fp=Pieces(wire + b"NEXT", size)))
+            self.assertTrue(ok, size)
+            self.assertTrue(out.getvalue().startswith(wire), size)
+        self.assertFalse(Router.relay_chunks(mock.Mock(wfile=io.BytesIO()), mock.Mock(fp=Pieces(wire[:-3], 9))))  # cut off
+
     def test_connections_to_anthropic_are_kept_and_reused(self):
         for _ in range(5):
             self.post("w1", "/v1/count_tokens")
@@ -207,7 +231,7 @@ class RouterTests(unittest.TestCase):
     def test_an_idle_connection_from_claude_code_lets_its_thread_go(self):
         self.post("w1", "/v1/count_tokens")
         before = threading.active_count()
-        with unittest.mock.patch.object(self.router.server.RequestHandlerClass, "timeout", 0.3):
+        with mock.patch.object(self.router.server.RequestHandlerClass, "timeout", 0.3):
             connection = http.client.HTTPConnection("127.0.0.1", self.router.port, timeout=10)
             connection.request("POST", f"/{self.router.secret}/w2/v1/count_tokens", body=b"{}",
                                headers={"Authorization": "Bearer at-main"})

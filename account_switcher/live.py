@@ -62,6 +62,7 @@ WINDOW_GRACE = 90  # a window is never forgotten in its first moments (its proce
 WINDOW_IDLE = 12 * 3600  # a window whose process isn't known, with no request this long, has closed
 WINDOWS_EVERY = 5  # seconds between looks at whether the windows are still open
 LEGACY_EVERY = 60  # seconds between looks for windows from before the router (their own config folders)
+FIRST_REPORT = object()  # a window switched before it reported: its first report after is the old account's
 CLAUDE_PROCESSES = ("claude", "node", "bun")  # what Claude Code runs as (native, npm)
 WINDOWS_FILE = "windows.json"  # in the data folder: each window's account, kept across app restarts
 UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
@@ -212,6 +213,8 @@ class LiveAccounts:
         self.window_reports = {}      # window id -> {"model", "session", "at", "cwd", "title"} from its status line
         self.window_pids_found = set()  # windows whose process was looked up from a status line
         self.window_failures = set()  # (window, account) whose login couldn't be used, said once
+        self.window_keys = {}         # window id -> the numbers of its last status line report
+        self.window_stale = {}        # window id -> numbers that are still its previous account's (after a switch)
         self.windows_checked = 0.0
         self.legacy_checked = 0.0
 
@@ -479,13 +482,15 @@ class LiveAccounts:
             if window.get("account") == account_id:
                 return
             window["account"] = account_id
+            self.window_stale[window_id] = self.window_keys.get(window_id, FIRST_REPORT)
+            self.window_failures = {f for f in self.window_failures if f[0] != window_id}
             self._save_windows()
         number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
         who = self.shown_name(account_id) if account_id else "the main account"
         self.notify("log", f"Window {number} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
         self.notify("accounts", None)
 
-    def swap_account(self, window_id, session, query, cwd=None):
+    def swap_account(self, window_id, session, query, cwd=None, upstream=None):
         """`/swapaccount <name or email>` in a Claude Code window (the mod): this window, and only this one,
         goes on another account from its next request; every other window and new ones stay as they are.
         A window the router doesn't know yet (started without the setting) is added to the Windows list:
@@ -522,15 +527,16 @@ class LiveAccounts:
             self.swap_window(window_id, target)
         else:
             with self.lock:
-                window_id = self._new_window(target, "command", cwd=cwd)
+                window_id = self._new_window(target, "command", cwd=cwd, upstream=upstream)
                 if session:
                     self.window_sessions[session] = window_id
             answer = {"window": window_id, "baseUrl": self.router_url(window_id)}
             self.notify("accounts", None)
         number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
         if target is None:
-            text = (f"Window {number} is on the main account (**{self.shown_name(self.live_ids.get('claude'))}**) "
-                    "and follows it when it switches.")
+            main = self.live_ids.get("claude")
+            text = (f"Window {number} is on the main account" + (f" (**{self.shown_name(main)}**)" if main else "")
+                    + " and follows it when it switches.")
         else:
             text = (f"Window {number} now uses **{self.shown_name(target)}** from its next message; other windows, and "
                     "new ones, stay as they are. At its limit it moves on to the best other account by itself.")
@@ -616,7 +622,10 @@ class LiveAccounts:
         window = self.claude_windows.get(window_id)
         if window is None:
             return None, None
-        return window.get("account"), window.get("upstream")
+        account = window.get("account")
+        if (window_id, account) in self.window_failures:
+            account = None  # its login can't be used (said once): the session's own until it's signed in again
+        return account, window.get("upstream")
 
     def window_token(self, account_id, renew=False):
         """The access token a window's requests go with. The account the main login holds: Claude
@@ -690,6 +699,7 @@ class LiveAccounts:
             logging.getLogger("account_switcher").warning(
                 "%s login of %s saved from %s", provider.title(), login.email or login.identity, source)
             entry.pop("deadLogin", None)
+            self.window_failures = {f for f in self.window_failures if f[1] != account_id}  # windows may use it again
             entry.pop("waitingMark", None)
             entry.pop("waitingSince", None)
             if entry.get("status", "").startswith(("Waiting for", "Signed out")):
@@ -1157,6 +1167,24 @@ class LiveAccounts:
                                            "title": profiles.session_title(transcript) if transcript else None}
             self.window_seen[window] = now
             self.window_process(window, parent)
+        windows = []
+        for key, minutes in (("five_hour", 300), ("seven_day", 10080)):
+            limit = limits.get(key) if isinstance(limits, dict) else None
+            if isinstance(limit, dict) and isinstance(limit.get("used_percentage"), (int, float)):
+                reset = limit.get("resets_at")
+                windows.append((minutes, float(limit["used_percentage"]), float(reset) if isinstance(reset, (int, float)) else None))
+        switched = False  # a window just moved to another account: its numbers are still the old account's
+        if window in self.claude_windows and windows:
+            key = report_key(windows)
+            with self.lock:
+                before = self.window_stale.get(window, key)
+                if before is FIRST_REPORT:
+                    self.window_stale[window] = key
+                if before is FIRST_REPORT or before == key:
+                    switched = window in self.window_stale
+                else:
+                    self.window_stale.pop(window, None)  # a reply on the new account
+                self.window_keys[window] = key
         if own is not None:
             account_id = own
         entry = self.meta["accounts"].get(account_id) if account_id else None
@@ -1164,18 +1192,11 @@ class LiveAccounts:
             return None
         settled = own is not None or now - self.live_since.get(name, 0.0) >= SWAP_SETTLE
         if isinstance(limits, dict) and settled:
-            windows = []
-            for key, minutes in (("five_hour", 300), ("seven_day", 10080)):
-                window = limits.get(key)
-                if isinstance(window, dict) and isinstance(window.get("used_percentage"), (int, float)):
-                    reset = window.get("resets_at")
-                    windows.append((minutes, float(window["used_percentage"]),
-                                    float(reset) if isinstance(reset, (int, float)) else None))
             # Claude Code repeats its last numbers with every reply, also after a limit when it gets
             # no new ones. Only a report that changes something counts as live; otherwise the API
             # goes back to its normal pace and catches what the status line misses.
             key = report_key(windows)
-            fresh = own is not None or key not in self.stale_reports  # the previous account's numbers (see _login_changed)
+            fresh = (own is not None or key not in self.stale_reports) and not switched  # the previous account's numbers (see _login_changed)
             if session is not None:
                 with self.lock:
                     previous = self.session_reports.get(session)

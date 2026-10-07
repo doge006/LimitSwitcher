@@ -252,11 +252,13 @@ async function swapAccount($: any, statePath: string, account: string): Promise<
   if (!app) return 'LimitSwitcher isn\'t running.'
   try {
     const window = await $.env.get('LIMITSWITCHER_WINDOW')
+    const base = await $.env.get('ANTHROPIC_BASE_URL')  // a gateway of the person's own: the router forwards there
     const answer = await post($, app, '/api/swapaccount', {
       session: String(await $.session.id()),
       account,
       cwd: await $.session.cwd(),
       ...(window ? { window: String(window) } : {}),
+      ...(base && !window ? { upstream: String(base) } : {}),
     })
     if (answer === null) return 'This LimitSwitcher is too old for /swapaccount: update it (Settings → Update).'
     if (typeof answer.window === 'string' && typeof answer.baseUrl === 'string' && answer.baseUrl.startsWith('http://127.0.0.1:')) {

@@ -638,7 +638,8 @@ class Controller:
         session = str(body.get("session") or "")[:100] or None
         query = body.get("account") if isinstance(body.get("account"), str) else ""
         cwd = body.get("cwd")[:500] if isinstance(body.get("cwd"), str) else None
-        answer = self.gateway.manager.swap_account(window, session, query[:200], cwd)
+        upstream = body.get("upstream") if isinstance(body.get("upstream"), str) and body["upstream"].startswith(("https://", "http://")) else None
+        answer = self.gateway.manager.swap_account(window, session, query[:200], cwd, upstream[:500] if upstream else None)
         self.notify("changed", None)
         return answer
 

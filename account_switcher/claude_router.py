@@ -256,7 +256,11 @@ class ClaudeRouter:
         h.end_headers()
         whole = False
         try:
-            if not bodiless:
+            if bodiless:
+                pass
+            elif chunked and response.chunked:
+                whole = self.relay_chunks(h, response)  # as it came, framing and all
+            else:
                 while True:
                     piece = response.read1(CHUNK)
                     if not piece:
@@ -264,13 +268,51 @@ class ClaudeRouter:
                     h.wfile.write(b"%x\r\n%s\r\n" % (len(piece), piece) if chunked else piece)
                 if chunked:
                     h.wfile.write(b"0\r\n\r\n")
-            whole = True
-        except (OSError, http.client.HTTPException):
+                whole = True
+            whole = whole or bodiless
+        except (OSError, http.client.HTTPException, ValueError):
             h.close_connection = True  # the window went away (or Anthropic did) mid-answer
         if whole:
+            response.close()  # read to its end: the connection is free (http.client keeps its socket)
             self.done(key, connection, response)
         else:
             connection.close()
+
+    @staticmethod
+    def relay_chunks(h, response):
+        """An event stream's bytes straight through, chunk framing included: one write per read from
+        the network, and only the chunk sizes looked at, to see where the answer ends (http.client
+        would decode each event and the router re-frame it). True once the last chunk has come."""
+        raw = response.fp
+        need, line, trailer = 0, b"", False
+        while True:
+            data = raw.read1(CHUNK)
+            if not data:
+                return False  # cut off before the end
+            h.wfile.write(data)
+            i, n = 0, len(data)
+            while i < n:
+                if need:  # inside a chunk (its bytes and the CRLF after them)
+                    take = min(need, n - i)
+                    i += take
+                    need -= take
+                    continue
+                j = data.find(b"\n", i)
+                if j < 0:
+                    line += data[i:]
+                    if len(line) > 4096:
+                        raise ValueError("bad chunk line")
+                    break
+                text, line, i = (line + data[i:j]).strip(), b"", j + 1
+                if trailer:
+                    if not text:
+                        return True  # the empty line after the last chunk (and its trailers): done
+                    continue
+                size = int(text.split(b";", 1)[0], 16)
+                if size:
+                    need = size + 2
+                else:
+                    trailer = True
 
     def read_body(self, h):
         if h.headers.get("Transfer-Encoding", "").lower() == "chunked":

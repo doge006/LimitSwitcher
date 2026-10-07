@@ -318,6 +318,49 @@ class WindowTests(unittest.TestCase):
         self.assertIn("shortened", answer["message"])
         self.assertEqual(self.window(window)["accountId"], self.account("c@example.com").id)  # no second switch
 
+    def test_after_a_switch_a_windows_old_numbers_never_count_for_its_new_account(self):
+        m = self.m
+        b, c = self.account("b@example.com").id, self.account("c@example.com").id
+
+        def report(window, five):
+            m.statusline({"five_hour": {"used_percentage": five, "resets_at": time.time() + 3600}}, "s-" + window, window=window)
+
+        def used(account):
+            return m.meta["accounts"][account]["usage"][0]["used"]
+
+        window = self.new_window()
+        m.swap_window(window, b)
+        report(window, 64.0)
+        report(window, 66.0)
+        self.assertEqual(used(b), 66.0)
+        m.swap_window(window, c)
+        report(window, 66.0)  # its status line, before a reply on c: still b's numbers
+        self.assertEqual(used(c), 30.0)
+        report(window, 41.0)  # its first reply on c
+        self.assertEqual(used(c), 41.0)
+        # a window switched by /swapaccount before it ever reported: its first report is the old account's
+        fresh = m.swap_account(None, "s-new", "b")["window"]
+        report(fresh, 99.0)
+        self.assertEqual(used(b), 66.0)
+        report(fresh, 70.0)
+        self.assertEqual(used(b), 70.0)
+
+    def test_a_dead_login_isnt_tried_again_on_every_request(self):
+        window = self.new_window()
+        b = self.window(window)["accountId"]
+        self.assertEqual(self.m.window_route(window)[0], b)
+        self.m.window_login_failed(window, b, "refused")
+        self.assertIsNone(self.m.window_route(window)[0])  # the session's own login, without asking again
+        self.m.swap_window(window, self.account("c@example.com").id)
+        self.m.swap_window(window, b)
+        self.assertEqual(self.m.window_route(window)[0], b)  # picked again by hand: tried again
+        self.m.window_login_failed(window, b, "refused")
+        secret = self.vault.read_secret(b)
+        secret["credentials"]["claudeAiOauth"]["refreshToken"] = "rt-b-new"
+        from account_switcher.providers import LiveLogin
+        self.m.adopt("claude", LiveLogin("uuid-b", "b@example.com", "Max", secret))  # signed in again
+        self.assertEqual(self.m.window_route(window)[0], b)
+
     def test_a_login_that_cant_be_used_is_said_once(self):
         window = self.new_window()
         b = self.window(window)["accountId"]
