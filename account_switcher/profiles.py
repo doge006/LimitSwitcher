@@ -148,7 +148,7 @@ def keep_changes(directory, home=None):
 
 
 def remove(directory, keychain=None):
-    """Delete a profile (take its login back first: LiveAccounts.sync_profiles). The links go,
+    """Delete a 1.3.x window folder (its login taken back first: LiveAccounts._retire_profiles). The links go,
     never what they point at."""
     directory = Path(directory)
     try:
