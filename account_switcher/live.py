@@ -217,6 +217,7 @@ class LiveAccounts:
         self.window_stale = {}        # window id -> numbers that are still its previous account's (after a switch)
         self.windows_checked = 0.0
         self.legacy_checked = 0.0
+        self.legacy_held = {}         # account id -> the 1.3.x window folder whose Claude Code holds its login
 
     # ---------- account list ----------
     def accounts(self):
@@ -365,14 +366,17 @@ class LiveAccounts:
         """Windows from before the router (1.3.x) had a config folder with their own login: its newest
         tokens come back here, and the folder goes once its window has closed."""
         changed = False
+        held = {}
         for name, directory in profiles.existing(self.vault.root).items():
             login = profiles.provider(directory, self._keychain()).read_live()
-            if login is not None:
-                self.adopt("claude", login, source=f"a window from before 1.4 ({name})")
+            account_id = self.adopt("claude", login, source=f"a window from before 1.4 ({name})") if login else None
             window = profiles.info(directory)
             if window.get("how") != "manual" and not profiles.alive(window.get("pid")):
                 profiles.remove(directory, self._keychain())
                 changed = True
+            elif account_id:
+                held[account_id] = directory  # its Claude Code renews that login: never the app, until it closes
+        self.legacy_held = held
         return changed
 
     def window_account(self, window_id, session=None):
@@ -637,8 +641,10 @@ class LiveAccounts:
             live = entry is not None and account_id == self.live_ids.get("claude")
         if entry is None:
             raise ValueError("Unknown account")
-        if live:
-            login = provider.read_live()
+        holder = provider if live else profiles.provider(self.legacy_held[account_id], self._keychain()) \
+            if account_id in self.legacy_held else None
+        if holder is not None:  # a Claude Code renews this login: its current token, never renewed here
+            login = holder.read_live()
             if login is not None and login.identity == entry["identity"]:
                 return login.secret["credentials"]["claudeAiOauth"]["accessToken"]
         with self._token_lock(account_id):
@@ -745,7 +751,7 @@ class LiveAccounts:
                 if only is not None and i != only:
                     continue
                 is_active = i == self.active.get(m["provider"])
-                is_live = i == self.live_ids.get(m["provider"])
+                is_live = i == self.live_ids.get(m["provider"]) or i in self.legacy_held  # a client's to renew
                 if max_age is not None:
                     due = m.get("updatedAt", 0.0) + (max_age if is_active else max(max_age, UI_FRESH_IDLE))
                 else:
@@ -767,7 +773,7 @@ class LiveAccounts:
             with self._token_lock(account_id):
                 with self.lock:  # switched to since the list was made: no longer ours to renew
                     is_active = account_id == self.active.get(meta["provider"])
-                    is_live = is_live or account_id == self.live_ids.get(meta["provider"])
+                    is_live = is_live or account_id == self.live_ids.get(meta["provider"]) or account_id in self.legacy_held
                 try:
                     secret = self.vault.read_secret(account_id)
                 except (OSError, ValueError):

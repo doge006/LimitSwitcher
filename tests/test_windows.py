@@ -377,6 +377,25 @@ class WindowTests(unittest.TestCase):
         self.assertEqual((self.window(window)["accountId"], self.window(window)["how"]), (b, "terminal"))
         self.assertEqual(self.m.claude_windows[window]["pid"], os.getpid())
 
+    def test_a_window_from_before_the_router_keeps_its_login_until_it_closes(self):
+        """While a 1.3.x window is open its Claude Code renews its account's login: the app never does
+        (that would sign it out), and a window given that account goes with that Claude Code's token."""
+        folder = profiles.root(self.vault.root) / "window-1a2b3c4d"
+        folder.mkdir(parents=True)
+        own = Claude(config_dir=folder, keychain=False)
+        b = self.account("b@example.com").id
+        secret = self.vault.read_secret(b)
+        secret["credentials"]["claudeAiOauth"].update(accessToken="at-b7", refreshToken="rt-b7", expiresAt=int(time.time() * 1000) + 60_000)
+        own.write_live(secret)
+        profiles.set_info(folder, pid=os.getpid(), started=time.time() - 3600, how="wrapper")  # still open
+        self.m.sync_windows(force=True)
+        self.assertTrue(folder.exists())
+        self.api.claude_usage["at-b7"] = claude_usage(20, 20)
+        self.api.refreshes.clear()
+        self.m.refresh(force=True)
+        self.assertEqual(self.m.window_token(b, renew=True), "at-b7")
+        self.assertNotIn(("/claude/token", "rt-b7"), self.api.refreshes)
+
     def test_windows_from_before_the_router_give_their_login_back_and_go(self):
         """1.3.x: a window had a config folder of its own. Its newest tokens come back; once its window
         has closed, the folder goes (its links, never what they point at)."""

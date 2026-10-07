@@ -52,9 +52,14 @@ flowchart LR
 
 ## Separate accounts per window
 
-A small `claude` wrapper goes first on your PATH (Windows: your user PATH, for terminals opened from then on; elsewhere, add the folder the app names). Each new interactive window asks the app for a free account and starts with its own config folder (`CLAUDE_CONFIG_DIR`, under `profiles/` in the app's data folder) holding only that login. Settings, CLAUDE.md, plugins, skills and session history are linked to `~/.claude`, so `/resume` sees every window's sessions. If the app isn't running, the window shares the main login. The app never renews a window's tokens itself.
+Every window is an ordinary Claude Code window on `~/.claude` (its settings, plugins, sessions and its own login). What differs is where its requests go: `ANTHROPIC_BASE_URL` points at a small router in the app (`127.0.0.1`, with a random secret and the window's id in the path), which puts the window's account's login on each request and passes everything else on to Anthropic unchanged, answers streamed straight back. A window on the main account sends Claude Code's own login through untouched.
 
-From a terminal: `python -m account_switcher.profiles list | open EMAIL | env EMAIL | remove window-<id>`.
+- **Getting a window there:** `/swapaccount` (the mod) sets those two variables in the running window, for its next request on; Claude Code reads them again for each one. With the setting on, a small `claude` wrapper goes first on your PATH (Windows: your user PATH, for terminals opened from then on; elsewhere, add the folder the app names) and starts each new interactive window with them. No process of the wrapper's stays (on Windows its Python only writes the two variables for `claude.cmd`). A window that already had its own `ANTHROPIC_BASE_URL` (a gateway) keeps it: the router forwards there.
+- **Logins:** the main login is Claude Code's, which renews it as usual; the router only reads it. Any other account's login is renewed by the app shortly before it expires (or once when Anthropic refuses it), since no Claude Code holds it. If it can't be used (signed out), the window's messages go with its own login until you sign that account in again, and the app says so once.
+- **Cheap:** one thread per open connection (an idle one closes after two minutes), nothing kept but each window's account (`windows.json` in the data folder, so windows keep their account across an app restart), connections to Anthropic kept open and reused. A long streamed answer costs the router a few milliseconds of CPU.
+- **Before 1.4** a window had a config folder of its own (`profiles/` in the data folder) with links into `~/.claude`, which Claude Code's own saves could break (on Windows its settings, and so its plugins, then drifted apart). The app takes each such folder's newest login back and deletes the folder once its window has closed.
+
+From a terminal: `python -m account_switcher.profiles list` (each account and where it's in use).
 
 ## What the app changes in Codex's config
 

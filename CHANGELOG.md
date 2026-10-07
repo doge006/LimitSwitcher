@@ -2,6 +2,14 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.0](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.0) (2026-10-07)
+
+- New `/swapaccount <name or email>` (Claude Code Status mod): puts the window it's typed in, and only that one, on another Claude account from its next message. New windows stay on the main account. A wrong or missing name lists the accounts (names only in name mode).
+- Separate accounts per window, rebuilt: every window is your usual Claude Code (settings, plugins, mods, `/resume`, agents mode, history); only the account its messages go to differs, through a small router in the app. Fixed: a separate window could lose its plugins (and `/jevcompact`) after a settings change on Windows, and its sessions were missing from agents mode.
+- A window on its own account gets the same Auto swap, Auto resume and Jev compaction as the main account, moving alone to the best other account. Accounts can be shared between windows; a window moves onto the main account only when no other has room.
+- The Windows list shows windows on the main account too, and any window can be moved to any account (the main one included).
+- No wrapper process stays open per window on Windows.
+
 ## [1.3.10](https://github.com/doge006/LimitSwitcher/releases/tag/v1.3.10) (2026-10-06)
 
 - Windows list: each window shows its session's title (its /rename name, Claude Code's title, or its first prompt), then "Window N", its folder and its model. The folder now shows for windows opened with New window too.

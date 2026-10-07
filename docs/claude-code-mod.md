@@ -8,7 +8,7 @@
 
 Optional. Claude Code mods (early access; Claude Code 2.1.287 or later) run inside Claude Code. The mod is two TypeScript plugins from this repository, installed together:
 
-- **limitswitcher** (`mods/limitswitcher`; called limit-status before 1.3.8, which updating replaces) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, runs the Jev compaction below, shows the reset alerts (Settings) as a toast, and adds [`/limits`](#limits). LimitSwitcher's line itself is in Claude Code's [status line](how-it-works.md#claude-code-status-line), where it can't be dismissed; installing the mod turns that on.
+- **limitswitcher** (`mods/limitswitcher`; called limit-status before 1.3.8, which updating replaces) gives LimitSwitcher Claude Code's live usage after every turn, straight from Claude Code, runs the Jev compaction below, shows the reset alerts (Settings) as a toast, and adds [`/limits`](#limits) and [`/swapaccount`](#swapaccount). LimitSwitcher's line itself is in Claude Code's [status line](how-it-works.md#claude-code-status-line), where it can't be dismissed; installing the mod turns that on.
 - **jev-compact** (`mods/jev-compact`) is the compaction. It is a plugin of its own because Claude Code skips a plugin's own compaction hook when that plugin starts the compaction.
 
 Install it from **Settings → Claude Code Status mod → Install**. The app runs `claude plugin marketplace add` and `claude plugin install` for you (this repository is the marketplace) and tells the plugins where the app's files are. The row then shows **Active** while a session is reporting, **Installed** until one is, **Update** when only an older limitswitcher is there, or **Not installed**. Open sessions pick it up after `/reload-plugins`. Without the mod everything keeps working through the status line script (without Jev compaction).
@@ -29,6 +29,20 @@ Every Claude account's usage at a glance, in any Claude Code session with the mo
 ```
 
 The dot is each line's level (green, yellow under 30% left, red under 10%), and a used-up limit shows when it resets. The reply is markdown (a table with the bars, a list of the other accounts), which Claude Code and the Claude app draw without colours, hence the dots. The mod answers it from the app's numbers, so it costs no Claude usage; the reply is part of the conversation, so the model reads it with your next message (a few hundred tokens).
+
+### /swapaccount
+
+`/swapaccount <name or email>` moves the window it's typed in, and only that one, to another Claude account from its next message; every other window, and new ones, stay as they are. See [Separate accounts per window](usage.md#separate-accounts-per-window). In name mode a name or an email picks the account, otherwise an email (or the part before the @). `/swapaccount main` puts the window back on the main account. With nothing after it, or a name that doesn't match:
+
+```
+No Claude account called nope.
+
+Claude accounts (/swapaccount <name or email>, or main)
+
+- 🟢 doge1 · 5h 92% · 1w 71% · this window · main
+- 🟡 doge2 · 5h 63% · 1w 13% · window 2
+- 🔴 doge3 · 5h 0% · 1w 40%
+```
 
 ## Jev compaction
 

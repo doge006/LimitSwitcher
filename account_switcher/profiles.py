@@ -308,7 +308,7 @@ def install_wrapper(vault_root, python, state_file):
                 f'PATH=$(printf %s "$PATH" | sed "s#{folder}:##")\n'
                 'exec claude "$@"\n')
         target = folder / "claude"
-    target.write_text(text, encoding="utf-8")
+    target.write_bytes(text.encode("utf-8"))  # as written: Windows text mode would double the \r of \r\n
     if sys.platform != "win32":
         target.chmod(0o755)
     return folder

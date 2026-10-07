@@ -74,7 +74,7 @@ def write_env(state_file, path):
         return 0
     env = ask(state_file, os.getppid())
     if env:
-        with open(path, "w", encoding="utf-8") as handle:
+        with open(path, "w", encoding="utf-8", newline="") as handle:  # \r\n as written
             handle.write("".join(f'set "{k}={v}"\r\n' for k, v in env.items()))
     return 0
 
