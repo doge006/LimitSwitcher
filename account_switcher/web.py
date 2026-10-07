@@ -425,8 +425,8 @@ class Controller:
                     self.gateway.manager.add(body["provider"], expect=expect)  # expect: the account to sign back in
                 elif action == "remove":
                     self.gateway.manager.remove(body["id"])
-                elif action == "openWindow":  # a Claude Code window that keeps this account (profiles.py)
-                    self.gateway.manager.open_profile(body["id"])
+                elif action == "openWindow":  # a new Claude Code window on this account (claude_router.py)
+                    self.gateway.manager.open_window(body["id"])
                 elif action == "swapWindow":  # second click: only that window moves to this account
                     self.gateway.manager.swap_window(body["window"], body["id"])
                 elif action == "reset":
@@ -582,8 +582,8 @@ class Controller:
 
     def statusline_limits(self, body=None):
         body = body or {}
-        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
-        return self.gateway.manager.claude_limits(config_dir, str(body.get("session") or "")[:100] or None) if self.live else None
+        window = body.get("window") if isinstance(body.get("window"), str) else None
+        return self.gateway.manager.claude_limits(window, str(body.get("session") or "")[:100] or None) if self.live else None
 
     def statusline(self, body):
         """Live Claude usage from Claude Code's status line; returns the line to show there."""
@@ -592,11 +592,12 @@ class Controller:
         session = str(body.get("session") or "")[:100] or None
         model = body.get("model") if isinstance(body.get("model"), str) else None
         effort = body.get("effort") if isinstance(body.get("effort"), str) else None
-        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        window = body.get("window") if isinstance(body.get("window"), str) else None
         cwd = body.get("cwd") if isinstance(body.get("cwd"), str) else None
         transcript = body.get("transcript") if isinstance(body.get("transcript"), str) else None
-        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, config_dir=config_dir,
-                                               cwd=cwd, transcript=transcript)
+        parent = body.get("parent") if type(body.get("parent")) is int else None
+        line = self.gateway.manager.statusline(body.get("rate_limits"), session, model=model, effort=effort, window=window,
+                                               cwd=cwd, transcript=transcript, parent=parent)
         if session and model:
             self.session_models[session] = (model, effort)
             if len(self.session_models) > 200:  # sessions come and go
@@ -619,7 +620,7 @@ class Controller:
             return "LimitSwitcher is in demo mode."
         from .statusline import tokens_text
         session = str(body.get("session") or "")[:100] or None
-        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        window = body.get("window") if isinstance(body.get("window"), str) else None
         model, effort = self.session_models.get(session or "") or (body.get("model"), None)
         model = model if isinstance(model, str) and model else None
         context, ctx = body.get("context"), None
@@ -627,7 +628,20 @@ class Controller:
             percent = context.get("percent")
             ctx = (tokens_text(int(context["tokens"])),
                    max(0, min(100, 100 - int(percent))) if isinstance(percent, (int, float)) else None)
-        return self.gateway.manager.limits_text(session, model, effort, ctx, config_dir)
+        return self.gateway.manager.limits_text(session, model, effort, ctx, window)
+
+    def swap_account(self, body):
+        """`/swapaccount <name or email>` from the mod: this window on another account (claude_router.py)."""
+        if not self.live:
+            return {"text": "LimitSwitcher is in demo mode."}
+        window = body.get("window") if isinstance(body.get("window"), str) else None
+        session = str(body.get("session") or "")[:100] or None
+        query = body.get("account") if isinstance(body.get("account"), str) else ""
+        cwd = body.get("cwd")[:500] if isinstance(body.get("cwd"), str) else None
+        upstream = body.get("upstream") if isinstance(body.get("upstream"), str) and body["upstream"].startswith(("https://", "http://")) else None
+        answer = self.gateway.manager.swap_account(window, session, query[:200], cwd, upstream[:500] if upstream else None)
+        self.notify("changed", None)
+        return answer
 
     def compaction_request(self, body):
         """For a session's mod: the Jev compaction to run before it goes on, if one is due."""
@@ -664,13 +678,14 @@ class Controller:
         """A Claude Code session hit a usage limit (from the AFK hook): what should it do?"""
         if not self.live or body.get("provider") != "claude":
             return {"action": "stop"}
-        config_dir = body.get("configDir") if isinstance(body.get("configDir"), str) else None
+        window = body.get("window") if isinstance(body.get("window"), str) else None
         manager = self.gateway.manager
         session = str(body.get("session") or "")[:100] or None
-        own = manager.profile_account(config_dir, session)
-        if own:  # a window with its own account: only that window moves (profiles.py)
+        own = manager.window_account(window, session)
+        if own:  # a window with its own account: only that window moves (claude_router.py)
             with manager.afk_lock:
-                answer = manager.window_limit(own, session, body.get("contextTokens") if type(body.get("contextTokens")) is int else None)
+                answer = manager.window_limit(own, session, body.get("contextTokens") if type(body.get("contextTokens")) is int else None,
+                                              window)
             self.notify("changed", None)
             return answer
         answer = self.gateway.manager.claude_limit(
@@ -679,15 +694,17 @@ class Controller:
         return answer
 
     def window_start(self, body):
-        """The `claude` wrapper starts a window: the profile it should use, if any (profiles.py)."""
+        """The `claude` wrapper starts a window: {"window", "baseUrl"} for the router, or none (window.py)."""
         if not self.live:
-            return {"configDir": None}
+            return {"window": None}
         pid = body.get("pid") if type(body.get("pid")) is int else None
         cwd = body.get("cwd")[:500] if isinstance(body.get("cwd"), str) else None
-        directory = self.gateway.manager.allocate_window(pid, cwd)
-        if directory is not None:
-            self.notify("changed", None)
-        return {"configDir": str(directory) if directory else None}
+        upstream = body.get("upstream") if isinstance(body.get("upstream"), str) and body["upstream"].startswith(("https://", "http://")) else None
+        answer = self.gateway.manager.allocate_window(pid, cwd, upstream[:500] if upstream else None)
+        if answer is None:
+            return {"window": None}
+        self.notify("changed", None)
+        return answer
 
     def close(self):
         with self.condition:
@@ -804,6 +821,18 @@ def make_server(controller, port=0):
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"text": None, "error": str(error)})
                 return
+            if self.path == "/api/swapaccount":  # the mod's /swapaccount: this window on another account
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, controller.swap_account(body if isinstance(body, dict) else {}))
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"text": f"LimitSwitcher couldn't move this window: {error}"})
+                return
             if self.path == "/api/compaction":  # the mod: a Jev compaction started by hand, or one it ran is done
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
@@ -829,7 +858,7 @@ def make_server(controller, port=0):
                     body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
                     self.respond(200, controller.window_start(body if isinstance(body, dict) else {}))
                 except (ValueError, RuntimeError, OSError) as error:
-                    self.respond(200, {"configDir": None, "error": str(error)})
+                    self.respond(200, {"window": None, "error": str(error)})
                 return
             if self.path == "/api/afk":  # the Claude Code AFK hook, with its own narrow token
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

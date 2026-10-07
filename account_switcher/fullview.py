@@ -149,6 +149,7 @@ class UI:
         self.fades = {}            # what is animating right now: hover amounts, toggle positions, the spin
         self.window = None         # the window picked in the Windows list (separate accounts per window)
         self.window_number = None  # its number ("Window 2"), for the cards' "Use in Window 2"
+        self.window_account = None  # the account it is on now (None: the main account), which isn't offered
         self.per_window = False    # the setting is on: cards offer "New window"
         self.own_windows = 0       # how many windows have an account of their own (the main account is shared by the rest)
 
@@ -182,7 +183,8 @@ class FullView:
         self.shown = None          # (frame, device boxes the overlays drew in) while menus or toasts show
         self.overlays_moving = False
         self.take_log(state)
-        self.ui.per_window, self.ui.own_windows = bool(state.get("perWindow")), len(state.get("windows") or [])
+        self.ui.per_window = bool(state.get("perWindow"))
+        self.ui.own_windows = sum(1 for w in state.get("windows") or [] if w.get("accountId"))
         try:
             controller.action("refresh", {"ifOlderThan": 60})  # fresh numbers when the window opens
         except (RuntimeError, ValueError):
@@ -200,7 +202,7 @@ class FullView:
         if ui.confirm not in ids:
             ui.confirm = None
         windows = state.get("windows") or []
-        ui.per_window, ui.own_windows = bool(state.get("perWindow")), len(windows)
+        ui.per_window, ui.own_windows = bool(state.get("perWindow")), sum(1 for w in windows if w.get("accountId"))
         self.pick_window(ui.window)  # None when that window closed
         if ui.editing and ui.editing[0] not in ids and ui.editing[0] != JEV_KEY:
             ui.editing = None
@@ -906,6 +908,7 @@ class FullView:
         window = next((w for w in self.state.get("windows") or [] if w["id"] == window_id), None)
         self.ui.window = window["id"] if window else None
         self.ui.window_number = window.get("number") if window else None
+        self.ui.window_account = window.get("accountId") if window else None  # None: on the main account
 
     def char(self, value):
         ui = self.ui

@@ -1,40 +1,26 @@
-"""Separate accounts per window: each Claude Code window with a login of its own.
+"""Separate accounts per window: the `claude` wrapper, opening a window, and windows from before the router.
 
-A profile is a Claude Code config folder (CLAUDE_CONFIG_DIR) inside LimitSwitcher's data folder,
-`profiles/window-<id>`, holding one account's login. A window started with it uses that account, and
-switching it rewrites only that folder's login (the window picks it up on its next request, like a
-switch today). Settings, CLAUDE.md, plugins, skills and session history are linked to ~/.claude, so
-the window works like any other and /resume sees every window's sessions; only the login differs.
+Since 1.4 a window with an account of its own is an ordinary Claude Code window on ~/.claude: the
+wrapper (window.py) points it at the app's router (claude_router.py), which puts that account's login
+on its requests. This module installs the wrapper, opens "New window" terminals and reads a window's
+session title for the Windows list.
 
-Where profiles come from:
-- the setting "Separate accounts per window": a `claude` wrapper first on PATH (window.py) asks the
-  app for a profile each time a new interactive window starts;
-- "Own window" on an account's card, or `python -m account_switcher.profiles open EMAIL`.
-`window.json` in the folder says which process is the window; once it has ended, the app takes the
-login back and deletes the folder, which frees the account.
+Before 1.4 such a window had a config folder of its own (CLAUDE_CONFIG_DIR, `profiles/window-<id>` in
+the data folder) with links to ~/.claude, which Claude Code's own saves could break on Windows (its
+settings, and so its plugins, then drifted apart). What is left of that here: the app takes each such
+folder's newest login back and deletes the folder once its window has closed (LiveAccounts._retire_profiles).
 
-Claude's refresh tokens are single-use: once one copy of a login renews, every other copy of it is
-signed out. So an account is in one place at a time (the main login every other window shares, or one
-profile); the window owns its tokens (the app takes them over as Claude Code renews them and never
-renews them itself); and a limit in a profile window is handled for that window alone (the hook and
-the status line send their CLAUDE_CONFIG_DIR).
-
-    python -m account_switcher.profiles list
-    python -m account_switcher.profiles open you@example.com     # a new terminal on that account
-    python -m account_switcher.profiles env you@example.com      # CLAUDE_CONFIG_DIR=... for your own launcher
-    python -m account_switcher.profiles remove window-1a2b3c4d
+    python -m account_switcher.profiles list     # the saved Claude accounts, and where each is in use
 """
 import argparse
 import json
 import os
 from pathlib import Path
 import re
-import secrets
 import shlex
 import shutil
 import subprocess
 import sys
-import time
 
 from .providers import Claude, _read_json
 from .vault import Vault, atomic_write
@@ -42,15 +28,12 @@ from .vault import Vault, atomic_write
 FOLDER = "profiles"
 PREFIX = "window-"
 INFO = "window.json"
-PID_FILE = "window.pid"   # written by the macOS launcher script: the shell that becomes `claude`
-# Linked to ~/.claude, when there: everything but the login. settings.json carries LimitSwitcher's
-# own hook and status line too; they say which folder they run in (see web.py).
-# ide: the editors' lock files (/ide finds VS Code); file-history: /rewind's checkpoints, which must
-# outlive the window's folder for a session resumed elsewhere.
+PID_FILE = "window.pid"
+# What a folder from before 1.4 linked to ~/.claude: only the links go when it is deleted.
 SHARED = ("settings.json", "CLAUDE.md", "agents", "commands", "skills", "plugins", "output-styles",
           "projects", "todos", "history.jsonl", "keybindings.json", "ide", "file-history", "plans")
-SEED = ".claude.seed.json"  # the ~/.claude.json the profile started from: what the window changed goes back on removal
-KEEP_OWN = {"oauthAccount"}  # the profile's own login, never copied back
+SEED = ".claude.seed.json"  # the ~/.claude.json the folder started from: what the window changed goes back on removal
+KEEP_OWN = {"oauthAccount"}  # the folder's own login, never copied back
 
 
 def root(vault_root):
@@ -74,10 +57,6 @@ def key(path):
 
 def provider(directory, keychain=None):
     return Claude(config_dir=directory, keychain=keychain)
-
-
-def environment(directory):
-    return {"CLAUDE_CONFIG_DIR": str(directory)}
 
 
 def info(directory):
@@ -128,72 +107,6 @@ def _is_link(path):
         return False
 
 
-def _link(source, target):
-    """A link at `target` to `source`: a symlink, else (Windows without Developer Mode) a junction
-    for a folder or a hard link for a file (both need no rights), a copy only when the two are on
-    different drives. Returns how, for the log."""
-    try:
-        os.symlink(source, target, target_is_directory=source.is_dir())
-        return "linked"
-    except (OSError, NotImplementedError):
-        if sys.platform != "win32":
-            raise
-    if source.is_dir():
-        import _winapi
-        _winapi.CreateJunction(str(source), str(target))
-        return "junction"
-    try:
-        os.link(source, target)
-        return "hard link"
-    except OSError:
-        shutil.copy2(source, target)
-        return "copied"
-
-
-def _seed(directory, home):
-    """A new profile starts with the user's own Claude Code setup: ~/.claude.json (trusted folders,
-    MCP servers, onboarding done) without its login, and links to the shared parts of ~/.claude."""
-    claude_home = home / ".claude"
-    config = directory / ".claude.json"
-    if not config.exists():
-        base = _read_json(home / ".claude.json") or {}
-        base.pop("oauthAccount", None)
-        text = json.dumps(base, indent=2).encode()
-        atomic_write(config, text)
-        atomic_write(directory / SEED, text)
-    done = []
-    for name in SHARED:
-        source, target = claude_home / name, directory / name
-        if not source.exists() or target.exists() or _is_link(target):
-            continue
-        try:
-            done.append(f"{name} ({_link(source, target)})")
-        except OSError as error:
-            done.append(f"{name} (not shared: {error})")
-    return done
-
-
-def create(vault, account_id, home=None, keychain=None, **window):
-    """A new profile with this account's login; returns its folder. The caller makes sure the
-    account isn't in use anywhere else. window: pid, cwd, how (for window.json)."""
-    meta = (vault.load_meta().get("accounts") or {}).get(account_id)
-    if meta is None:
-        raise ValueError("Unknown account")
-    if meta.get("provider") != "claude":
-        raise ValueError("Only Claude Code accounts can have a window of their own for now")
-    secret = vault.read_secret(account_id)
-    if secret is None:
-        raise RuntimeError("This account's saved login is missing; sign in again")
-    home = Path(home) if home else Path.home()
-    # The real path: Claude Code names its Keychain item (macOS) after it.
-    directory = (root(vault.root) / (PREFIX + secrets.token_hex(4))).resolve()
-    directory.mkdir(parents=True)
-    _seed(directory, home)
-    set_info(directory, started=time.time(), home=str(home), **{k: v for k, v in window.items() if v is not None})
-    provider(directory, keychain).write_live(secret)
-    return directory
-
-
 def _merge(main, seed, own):
     """What the window changed in its .claude.json since `seed`, onto `main` (~/.claude.json now),
     where the main copy hasn't changed that same thing since: folder trust and a folder's allowed
@@ -235,7 +148,7 @@ def keep_changes(directory, home=None):
 
 
 def remove(directory, keychain=None):
-    """Delete a profile (take its login back first: LiveAccounts.sync_profiles). The links go,
+    """Delete a 1.3.x window folder (its login taken back first: LiveAccounts._retire_profiles). The links go,
     never what they point at."""
     directory = Path(directory)
     try:
@@ -252,22 +165,24 @@ def remove(directory, keychain=None):
     shutil.rmtree(directory, ignore_errors=True)
 
 
-def open_window(directory, title="Claude Code"):
-    """A new terminal window running `claude` on the profile; records which process is the window.
-    It starts in the home folder, like a terminal opened by hand (not the app's own folder)."""
-    env = environment(directory)
+def open_window(env, folder, window_id, title="Claude Code"):
+    """A new terminal window running `claude` with `env` (the router's address and the window's id),
+    in the home folder like a terminal opened by hand. Returns what tells when it has closed:
+    {"pid"} or, on macOS (Terminal runs the script), {"pidFile", "script"}."""
     home = str(Path.home())
     if sys.platform == "darwin":
         # Like "Add account": a .command file Terminal runs by itself (it has the user's PATH). Its
         # shell writes its pid, then becomes `claude`.
-        script = directory / "Open window.command"
-        script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(directory / PID_FILE)) + "\n"
+        folder = Path(folder)
+        folder.mkdir(parents=True, exist_ok=True)
+        script, pid_file = folder / f"{window_id}.command", folder / f"{window_id}.pid"
+        script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(pid_file)) + "\n"
                           + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
                           + f"cd {shlex.quote(home)}\n"
                           + f"printf '\\033]0;%s\\007' {shlex.quote(title)}\nexec claude\n")
         script.chmod(0o700)
         subprocess.Popen(["/usr/bin/open", "-a", "Terminal", str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return
+        return {"pidFile": str(pid_file), "script": str(script)}
     if not shutil.which("claude"):
         raise RuntimeError("Claude Code (claude) not found on PATH")
     if sys.platform == "win32":
@@ -279,7 +194,7 @@ def open_window(directory, title="Claude Code"):
         if terminal is None:
             raise RuntimeError("No terminal found; run `claude` with " + " ".join(f"{k}={v}" for k, v in env.items()))
         process = subprocess.Popen([terminal, "--" if terminal == "gnome-terminal" else "-e", "claude"], env=dict(os.environ, **env), cwd=home)
-    set_info(directory, pid=process.pid)
+    return {"pid": process.pid}
 
 
 # ---------- a window's session title ----------
@@ -347,6 +262,11 @@ def _best_title(seen):
 
 
 # ---------- the `claude` wrapper (the setting) ----------
+# Arguments that never start a window: they go straight to the real `claude` (window.py has the same list).
+PASS = ("auth", "mcp", "config", "update", "upgrade", "doctor", "install", "migrate-installer", "setup-token",
+        "plugin", "plugins", "--version", "-v", "-h", "--help", "-p", "--print")
+
+
 def wrapper_dir(vault_root):
     return Path(vault_root) / "bin"
 
@@ -354,19 +274,30 @@ def wrapper_dir(vault_root):
 def install_wrapper(vault_root, python, state_file):
     """Write the `claude` wrapper into the app's bin folder; returns that folder. (On Windows the
     folder goes first on the user's PATH: add_to_path.) If the app's Python is gone (uninstalled),
-    the wrapper steps aside and runs the real `claude`."""
+    the wrapper steps aside and runs the real `claude`.
+
+    No process of the wrapper's stays: on macOS and Linux it becomes `claude` (exec); on Windows its
+    Python only registers the window and writes the two variables to set into a file the .cmd reads,
+    then the .cmd runs the real `claude` itself."""
     folder = wrapper_dir(vault_root)
     folder.mkdir(parents=True, exist_ok=True)
     script = Path(__file__).with_name("window.py")
     if sys.platform == "win32":
+        skip = "".join(f'if /i "%~1"=="{arg}" goto plain\r\n' for arg in PASS)
         text = ("@echo off\r\n"
+                "setlocal\r\n"
                 f'if not exist "{python}" goto plain\r\n'
-                'set "LIMITSWITCHER_WRAPPER_DIR=%~dp0."\r\n'
-                f'"{python}" -B "{script}" "{state_file}" %*\r\n'
-                "exit /b %ERRORLEVEL%\r\n"
+                'if defined LIMITSWITCHER_WINDOW goto plain\r\n'
+                + skip +
+                'set "LIMITSWITCHER_ENV=%TEMP%\\limitswitcher-%RANDOM%%RANDOM%.cmd"\r\n'
+                f'"{python}" -B "{script}" "{state_file}" --env "%LIMITSWITCHER_ENV%"\r\n'
+                'if exist "%LIMITSWITCHER_ENV%" call "%LIMITSWITCHER_ENV%"\r\n'
+                'if exist "%LIMITSWITCHER_ENV%" del "%LIMITSWITCHER_ENV%"\r\n'
+                'set "LIMITSWITCHER_ENV="\r\n'
                 ":plain\r\n"
                 'set "PATH=%PATH:' + str(folder) + ';=%"\r\n'
-                "claude %*\r\n")
+                "claude %*\r\n"
+                "exit /b %ERRORLEVEL%\r\n")
         target = folder / "claude.cmd"
     else:
         q = shlex.quote
@@ -377,7 +308,7 @@ def install_wrapper(vault_root, python, state_file):
                 f'PATH=$(printf %s "$PATH" | sed "s#{folder}:##")\n'
                 'exec claude "$@"\n')
         target = folder / "claude"
-    target.write_text(text, encoding="utf-8")
+    target.write_bytes(text.encode("utf-8"))  # as written: Windows text mode would double the \r of \r\n
     if sys.platform != "win32":
         target.chmod(0o755)
     return folder
@@ -416,70 +347,24 @@ def add_to_path(folder, add=True):
 
 
 # ---------- command line ----------
-def _find(meta, query):
-    accounts = {i: m for i, m in (meta.get("accounts") or {}).items() if m.get("provider") == "claude"}
-    q = query.strip().lower()
-    hits = [i for i, m in accounts.items() if q in (i.lower(), (m.get("email") or "").lower(),
-                                                    (m.get("label") or "").lower(), str(m.get("identity")).lower())]
-    if len(hits) != 1:
-        known = ", ".join(sorted(m.get("email") or i for i, m in accounts.items())) or "none saved yet"
-        raise SystemExit(f"No single Claude account matches {query!r} (accounts: {known})")
-    return hits[0]
-
-
-def _held(vault):
-    """{account identity: where it's in use} for the main login and every profile."""
-    held = {}
-    live = Claude().read_live()
-    if live:
-        held[live.identity] = "every other window"
-    for name, directory in existing(vault.root).items():
-        login = provider(directory).read_live()
-        if login:
-            held[login.identity] = name
-    return held
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="python -m account_switcher.profiles",
-                                     description="Claude Code windows that keep their own account.")
+                                     description="Claude Code windows with an account of their own.")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("list", help="the saved Claude accounts, and where each is in use")
-    for name, text in (("open", "open a terminal on the account"), ("env", "print the variable that selects it")):
-        commands.add_parser(name, help=text).add_argument("account", help="email, name or id")
-    commands.add_parser("remove", help="delete a profile (close its window first)").add_argument("window", help="window-<id>")
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     vault = Vault()
     meta = vault.load_meta()
-    if args.command == "list":
-        held = _held(vault)
-        for account_id, m in sorted((meta.get("accounts") or {}).items(), key=lambda kv: kv[1].get("email") or ""):
-            if m.get("provider") == "claude":
-                print(f"{m.get('email') or account_id:40} {held.get(m.get('identity'), 'free')}")
-        return 0
-    if args.command == "remove":
-        directory = existing(vault.root).get(args.window)
-        if directory is None:
-            raise SystemExit("No such profile")
-        login = provider(directory).read_live()
-        account_id = next((i for i, m in (meta.get("accounts") or {}).items() if login and m.get("identity") == login.identity), None)
-        if account_id:
-            vault.write_secret(account_id, login.secret)  # its newest tokens
-        remove(directory)
-        print("Removed")
-        return 0
-    account_id = _find(meta, args.account)
-    where = _held(vault).get(meta["accounts"][account_id]["identity"])
-    if where:
-        raise SystemExit(f"That account is in use ({where}); one copy of its login would be signed out")
-    directory = create(vault, account_id, how="manual" if args.command == "env" else "terminal")
-    if args.command == "env":
-        for k, value in environment(directory).items():
-            print(f"{k}={value}")
-        return 0
-    email = meta["accounts"][account_id].get("email") or account_id
-    open_window(directory, f"Claude Code · {email}")
-    print(f"Opened a window on {email}")
+    windows = _read_json(vault.root / "windows.json") or {}
+    live = Claude().read_live()
+    held = {}
+    for window_id, window in sorted(windows.items(), key=lambda kv: kv[1].get("started") or 0):
+        if isinstance(window, dict) and window.get("account"):
+            held.setdefault(window["account"], []).append(f"window {window_id}")
+    for account_id, m in sorted((meta.get("accounts") or {}).items(), key=lambda kv: kv[1].get("email") or ""):
+        if m.get("provider") == "claude":
+            where = held.get(account_id, []) + (["main"] if live and live.identity == m.get("identity") else [])
+            print(f"{m.get('email') or account_id:40} {', '.join(where) or 'free'}")
     return 0
 
 

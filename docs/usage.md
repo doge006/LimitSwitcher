@@ -31,16 +31,18 @@ Check the providers' terms for using several subscriptions this way; that's your
 
 ## Separate accounts per window
 
-Claude Code, prototype; off by default, in Settings. Normally every Claude Code window shares one account, and **Swap to this** moves them all. With this on, each Claude Code terminal you open from then on starts on an account no other window is using, so two windows can work on two accounts at once.
+Claude Code. Normally every Claude Code window shares one account, and **Swap to this** moves them all. You can give one window an account of its own instead, so two windows work on two accounts (two sets of limits) at once. Everything else about the window is your usual Claude Code: the same settings, plugins and mods, `/resume`, agents mode (`claude agents`), history and Remote Control. Only the account its messages go to differs.
 
-- **What you see:** a **Windows** list appears above the accounts, one row per window that has its own account: its session's title (its `/rename` name, Claude Code's title, or its first prompt), its folder and model, and the account it's on. That account's card says **In Window 1** (and so on); the card marked **In use** is the main account, shared by every other window.
-- **Moving one window to another account:** click the window in the list (it's outlined on screen, and its taskbar button flashes on Windows), then click **Use in Window 1** on the account you want. Only that window changes, on its next request. Click the window again, or press Esc, to cancel. **New window** on a card (shown on hover) opens a new terminal on that account straight away, in your home folder.
-- **Limits:** when a window hits a usage limit, Auto swap moves that window alone to a free account, and Auto resume continues it.
+- **`/swapaccount <name or email>`** (with the [Claude Code Status mod](claude-code-mod.md#swapaccount)) in any open window: that window, and only that one, goes on that account from its next message. Other windows, and new ones, stay on the main account. In name mode you can type the name or the email; otherwise the email (or the part before the @, when only one account has it). `/swapaccount main` puts the window back on the main account. With nothing after it, or a name that doesn't match, it lists the accounts you can pick, with what each has left (names only, in name mode).
+- **Settings → Separate accounts per window** (off by default): every Claude Code terminal you open from then on starts on an account no other window is using, when there is one (else on the main account).
+- **What you see:** a **Windows** list above the accounts, one row per window that went through LimitSwitcher: its session's title (its `/rename` name, Claude Code's title, or its first prompt), its folder and model, and its account (**Main account** when it's on the main one). That account's card says **In Window 1**; the card marked **In use** is the main account.
+- **Moving a window from the app:** click the window in the list (it's outlined on screen, and its taskbar button flashes on Windows), then click **Use in Window 1** on the account you want (the main account's card puts it back on the main account). Click the window again, or press Esc, to cancel. **New window** on a card (shown on hover) opens a new terminal on that account straight away, in your home folder.
+- **Limits:** a window on an account of its own is handled like the main account: when it hits a usage limit, Auto swap moves that window alone to the best other account (the one whose weekly limit resets first, as for the main account), Jev compaction runs if it's on, and Auto resume continues it, or waits for a reset when no account has room. A window moves onto the main account only when no other account has room, so it keeps its own limit. Two windows (or a window and the main account) can share an account: when it runs out, each moves on by itself.
 - **Good to know:**
-  - Only terminals opened after you turn it on get their own account; windows already open keep sharing the main one. The VS Code extension isn't covered.
-  - Each window needs an account nobody else is using. When none is left, a new window shares the main account as before.
-  - An account is in one place at a time (the main account or one window), because a login renewed in one place is signed out everywhere else. When a window closes, its account is free again.
-  - Turning the setting off doesn't touch windows that already have their own account; they keep it until they close.
+  - LimitSwitcher has to be running for a window with its own account: the window's messages go through the app. Restarting or updating the app is fine (the window carries on when it's back).
+  - `/swapaccount` needs the mod. Without it, use the Windows list (for windows opened with the setting on or with **New window**).
+  - Background sessions started with `claude --bg` run in Claude Code's own background service, so they use the main account.
+  - The VS Code extension isn't covered.
 - **How it works:** see [How it works](how-it-works.md#separate-accounts-per-window).
 
 ## Auto swap and Auto resume

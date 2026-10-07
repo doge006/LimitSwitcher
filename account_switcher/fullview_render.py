@@ -530,7 +530,8 @@ def card_key(account, ui, name_mode, live, locked):
     fades = sorted((k, quantize(v)) for k, v in ui.fades.items() if k.endswith(":" + aid) and v > 0)
     return json.dumps([account, fades, ui.pending == aid, ui.confirm == aid, editing, aid in ui.revealed,
                        name_mode, live, locked, CLOCK_24, int(time.time() // 60), getattr(ui, "window", None),
-                       getattr(ui, "window_number", None), getattr(ui, "per_window", False), getattr(ui, "own_windows", 0)],
+                       getattr(ui, "window_number", None), getattr(ui, "window_account", None), getattr(ui, "per_window", False),
+                       getattr(ui, "own_windows", 0)],
                       sort_keys=True, default=str)
 
 
@@ -710,10 +711,12 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         # not while its login has expired (that needs signing in first) or its limit is reached
         own = (live and provider == "claude" and getattr(ui, "per_window", False) and not active
                and not account.get("pinned") and not relogin and eligible)
-        # a window picked in the Windows list: the button gives it this account ("Use in Window 2")
+        # a window picked in the Windows list: the button gives it this account ("Use in Window 2"), any
+        # but the one it is on (the main account's card puts it back on the main account)
         number = getattr(ui, "window_number", None)
-        pick = (getattr(ui, "window", None) and provider == "claude" and eligible and not active
-                and not account.get("pinned") and not relogin)
+        now_on = getattr(ui, "window_account", None)
+        pick = (getattr(ui, "window", None) and provider == "claude" and eligible and not relogin
+                and account["id"] != now_on and not (active and now_on is None))
         pick = (f"Use in Window {number}" if number else "Use in window") if pick else None
         bw = max(124, text_w(pick, 13, True) + 24) if pick else 124
         if relogin:
@@ -745,17 +748,17 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
             c.text(18, fy + 21, hint, 12, color)
         bx = w - 18 - bw
         pinned = account.get("pinned")
-        if active and not switching:
-            c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
-        elif pinned:  # a window of its own has it: never in a second place (one copy of a login)
-            c.text(bx + bw / 2, fy + 16, f"In Window {account.get('window') or '?'}", 13, accent, True, anchor="mm")
-        elif pick:  # a window is picked (separate accounts per window): this account goes to that window only
+        if pick:  # a window is picked (separate accounts per window): this account goes to that window only
             t = 0.0 if locked else a("swapWindow")
             fill = mixc(accent, blend((255, 255, 255), accent, .1), t)
             c.rect(bx, fy - t, bw, 32, 8, fill + (255,))
             c.text(bx + bw / 2, fy + 16 - t, pick, 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
                 hit(bx, fy, bw, 32, "swapWindow")
+        elif active and not switching:
+            c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
+        elif pinned:  # a window has it as its own (another window can have it too, from the Windows list)
+            c.text(bx + bw / 2, fy + 16, f"In Window {account.get('window') or '?'}", 13, accent, True, anchor="mm")
         elif switching:
             c.rect(bx, fy, bw, 32, 8, accent + (230,))
             c.text(bx + bw / 2, fy + 16, "Switching…", 13, ON_ACCENT, True, anchor="mm", bg=over(SURFACE, accent + (230,)))
@@ -938,7 +941,7 @@ def no_window_lines(state, w):
     if free_for_window(state):
         text = "Open a new terminal and run claude: it starts on an account no other window is using, and shows up here."
     else:
-        text = "Every Claude account is in use, so new windows share the main one. Add an account to give each its own."
+        text = "Open a new terminal and run claude: it starts on the main account (no other is free) and shows up here."
     return wrap(text, 12.5, w - 32)
 
 
@@ -980,7 +983,9 @@ def windows_content(c, state, w, ui):
     if windows:
         n = len(windows)
         # the setting is off: these are left from when it was on; new ones share the main account
-        caption = f"{n} {'' if state.get('perWindow') else 'still '}on {'its' if n == 1 else 'their'} own account"
+        own = sum(1 for window in windows if window.get("accountId"))
+        caption = (f"{own} of {n} on {'its' if own == 1 else 'their'} own account" if own
+                   else f"{n} on the main account") + ("" if state.get("perWindow") else " · the setting is off")
     else:
         caption = "Each new Claude Code terminal gets its own account"
     c.text(2 + text_w("Windows", 15, True) + 10, 22, caption, 12, MUTED)
@@ -1010,7 +1015,7 @@ def windows_content(c, state, w, ui):
         # has one; then "Window N" (what the account cards call it), its folder and model
         number = f"Window {window['number']}"
         account = accounts.get(window.get("accountId"))
-        who = display_name(account) if account else "No account"
+        who = display_name(account) if account else "Main account"
         who_w = text_w(who, 13, True)
         title = fit(window["title"], 13, True, (w - who_w) * .5) if window.get("title") else number
         c.text(16, mid, title, 13, TEXT, True, anchor="lm", bg=base)
@@ -1149,7 +1154,8 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets f
 
 
 PER_WINDOW = ("perWindow", "Separate accounts per window",
-              "Each new Claude Code terminal starts on an account no other window is using. Open windows stay as they are.")
+              "Each new Claude Code terminal starts on an account no other window is using, and any window can be "
+              "moved to another. Everything else stays your usual Claude Code.")
 ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"

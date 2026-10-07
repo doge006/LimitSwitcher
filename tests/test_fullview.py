@@ -225,7 +225,7 @@ class FullViewTests(unittest.TestCase):
         self.assertTrue(any(i[0] == "windows" for i in self.view.items))
         self.assertIn("run claude", " ".join(vr.no_window_lines(state(perWindow=True), 900)))
         taken = state(perWindow=True, accounts=[account(1, "claude", active=True), account(2, "claude", eligible=False)])
-        self.assertIn("in use", " ".join(vr.no_window_lines(taken, 900)))
+        self.assertIn("main account", " ".join(vr.no_window_lines(taken, 900)))  # nothing free: it starts on the main one
 
     def test_pick_a_window_then_an_account_for_it(self):
         windows = [{"id": "window-0000000a", "number": 1, "accountId": "claude-3", "cwd": "/x/proj", "model": "Opus"}]
@@ -237,7 +237,8 @@ class FullViewTests(unittest.TestCase):
         self.click("window:window-0000000a")
         self.assertEqual(self.view.ui.window_number, 1)
         self.assertIn(("highlightWindow", {"window": "window-0000000a"}), self.controller.calls)
-        self.assertEqual(self.hits("swapWindow:"), ["swapWindow:claude-2"])  # not the main account, its own, or Codex
+        # any Claude account but its own (the main one puts it back on the main account); never Codex
+        self.assertEqual(sorted(self.hits("swapWindow:")), ["swapWindow:claude-1", "swapWindow:claude-2"])
         self.view.key("escape")  # changed my mind
         self.view.frame()
         self.assertIsNone(self.view.ui.window)

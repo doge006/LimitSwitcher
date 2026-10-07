@@ -86,7 +86,8 @@ def report(state, data, cache=None):
                            "session": str(data.get("session_id") or "")[:100],
                            "model": model.get("display_name") or model.get("id"),
                            "effort": effort.get("level"),
-                           "configDir": os.environ.get("CLAUDE_CONFIG_DIR") or None,
+                           "window": os.environ.get("LIMITSWITCHER_WINDOW") or None,
+                           "parent": os.getppid(),
                            "cwd": str(workspace.get("current_dir") or data.get("cwd") or "")[:500] or None,
                            "transcript": str(data.get("transcript_path") or "")[:1000] or None}).encode()
         status, payload = post(state["url"].rsplit("/", 1)[0] + "/statusline", state["token"], body, 0.6)

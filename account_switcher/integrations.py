@@ -4,7 +4,8 @@
   and path secret are kept across restarts, so sessions that are already open reconnect
   after an update or restart (Codex retries a refused connection).
 - Claude Code: the AFK hook (claude_hooks.py) while AFK is on, and the small file that tells
-  the hook how to reach the app.
+  the hook how to reach the app; the router for separate accounts per window (claude_router.py),
+  with its port and path secret kept across restarts like Codex's, and the `claude` wrapper.
 - Windows: start with Windows (on by default), because Codex's requests go through the app.
 Quit undoes the Codex and Claude changes and writes the chosen Codex account into
 ~/.codex/auth.json, so Codex keeps working, on that account, without the app.
@@ -20,7 +21,7 @@ import sys
 import threading
 import time
 
-from . import claude_hooks, codex_config
+from . import claude_hooks, claude_router, codex_config
 from .codex_proxy import DEFAULT_PORT, CodexProxy, ThreadState
 from .vault import atomic_write
 
@@ -251,6 +252,7 @@ class Integrations:
         self.codex_home, self.claude_root = codex_home, claude_root
         self.upstream = upstream
         self.proxy = None
+        self.claude_router = None
         self.watch = None
 
     @property
@@ -277,6 +279,7 @@ class Integrations:
 
     def start(self):
         self.apply_afk()
+        self.start_claude_router()
         self.apply_per_window()
         self.keep_claude_settings()
         threading.Thread(target=self.refresh_mod_config, daemon=True, name="mod-config").start()
@@ -326,6 +329,28 @@ class Integrations:
                     threading.Thread(target=step, kwargs={"quiet": 30}, daemon=True).start()
         self.manager.on_swap = after_swap
 
+    def start_claude_router(self):
+        """The router windows started with separate accounts per window go through. It runs whenever the
+        app does (an idle thread and a socket): windows keep their account across a restart or an update."""
+        path = self.root / "claude-router.json"
+        try:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            saved = {}
+        port = saved.get("port") if isinstance(saved.get("port"), int) else claude_router.DEFAULT_PORT
+        secret = saved.get("secret") if isinstance(saved.get("secret"), str) and saved["secret"].isalnum() else None
+        router = claude_router.ClaudeRouter(self.manager, port=port, secret=secret)
+        try:
+            router.start()
+        except Exception as error:
+            router.close()
+            log.warning("claude router failed: %s", error)
+            self.manager.notify("log", f"Separate accounts per window is off: {error}")
+            return
+        atomic_write(path, json.dumps({"port": router.port, "secret": router.secret}).encode())
+        self.claude_router = router
+        self.manager.router_url = router.base_url
+
     def keep_claude_settings(self):
         """Claude Code (updating itself, /config) and other tools rewrite settings.json, which can
         drop our status line. Check whenever the file changes and put it back: without it there
@@ -351,6 +376,10 @@ class Integrations:
     def stop(self):
         if getattr(self, "settings_stop", None):
             self.settings_stop.set()
+        if self.claude_router:
+            self.manager.router_url = None
+            self.claude_router.close()
+            self.claude_router = None
         if self.watch:
             self.watch.close()
         if self.proxy:
@@ -387,8 +416,8 @@ class Integrations:
     # ---------- separate accounts per window (profiles.py, window.py) ----------
     def apply_per_window(self):
         """While the setting is on and the app runs, `claude` in a new terminal is the wrapper, which
-        asks the app for a profile of its own. Off (or the app quits): the wrapper goes, and new windows
-        share the main login again; windows already open keep theirs until they close."""
+        has the app register the window and points it at the router. Off (or the app quits): the wrapper
+        goes, and new windows are plain ones again; windows already open keep their account."""
         from . import profiles
         try:
             if self.manager.meta.get("perWindow"):

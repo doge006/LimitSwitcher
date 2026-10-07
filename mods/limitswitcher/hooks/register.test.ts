@@ -21,13 +21,13 @@ async function bandOf($: any): Promise<string> {
 }
 const MARKER = 'limitswitcher:jev-compact'
 
-type World = { posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[] }
+type World = { env?: Record<string, string | undefined>; posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[] }
 
 /**
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void> } = {}): World {
+function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void> } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -37,7 +37,11 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
   })
   on('session.id', () => ({ value: 'session-1' }))
   on('session.model', () => ({ value: 'Opus 5.5' }))
-  mock.env(on, options.env ?? {})
+  on('session.cwd', () => ({ value: '/work/app' }))
+  const env: Record<string, string | undefined> = { ...(options.env ?? {}) }  // read and written, as the process's
+  on('env.get', ($, e) => ({ value: env[e.name] }))
+  on('env.set', ($, e) => { env[e.name] = e.value; return { value: undefined } })
+  w.env = env
   on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('ui.render', ($, e) => h($.ui.resolve(e).Box, null))  // the engine's own: nothing in the band
@@ -57,6 +61,7 @@ function world(on: On, options: { compact?: string | null; outcomes?: ({ skip: s
     }
     if (path === '/api/compaction' && body.resume) answer = options.oldApp ? { ok: true } : { ok: !options.jevOff, resume: true }
     if (path === '/api/limits') answer = { text: '**⇄ a@example.com** · Opus 5.5 (high)' }
+    if (path === '/api/swapaccount') answer = options.swap ?? { text: 'Window 1 now uses **Work**' }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
   })
   const outcomes = [...(options.outcomes ?? [])]
@@ -208,10 +213,53 @@ describe('limitswitcher', () => {
     expect(sent.body).toEqual({ session: 'session-1', model: 'Opus 5.5', context: { tokens: 10, window: 1000, percent: 1 } })
   })
 
-  test('/limits in a window with an account of its own sends its folder', { options: { statePath: STATE } }, async ($, on) => {
-    const w = world(on, { env: { CLAUDE_CONFIG_DIR: '/data/profiles/window-2' } })
+  test('/limits in a window with an account of its own sends its window', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { env: { LIMITSWITCHER_WINDOW: '1a2b3c4d' } })
     await $.command.run({ command: 'limits' })
-    expect(w.posts.find((p) => p.path === '/api/limits')!.body.configDir).toBe('/data/profiles/window-2')
+    expect(w.posts.find((p) => p.path === '/api/limits')!.body.window).toBe('1a2b3c4d')
+  })
+
+  test('/swapaccount moves a window that isn\'t routed yet, in place', { options: { statePath: STATE } }, async ($, on) => {
+    const answer = { text: 'Window 1 now uses **Work**', window: '1a2b3c4d', baseUrl: 'http://127.0.0.1:47831/s3cret/1a2b3c4d' }
+    const w = world(on, { swap: answer })
+    const registered: string[] = []
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => { registered.push(e.name); return { value: { command: e.name } } })
+    await $.session.start({ cwd: '/' })
+    expect(registered).toContain('swapaccount')
+    const done = await $.command.run({ command: 'swapaccount', args: ' Work ' })
+    expect(done.text).toBe('Window 1 now uses **Work**')
+    expect(w.posts.find((p) => p.path === '/api/swapaccount')!.body).toEqual({ session: 'session-1', account: 'Work', cwd: '/work/app' })
+    expect(w.env!.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:47831/s3cret/1a2b3c4d')  // its next request: the router
+    expect(w.env!.LIMITSWITCHER_WINDOW).toBe('1a2b3c4d')
+    await $.command.run({ command: 'limits' })  // and from then on it says which window it is
+    expect(w.posts.find((p) => p.path === '/api/limits')!.body.window).toBe('1a2b3c4d')
+  })
+
+  test('/swapaccount in a routed window just asks; a list of accounts changes nothing', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { env: { LIMITSWITCHER_WINDOW: '1a2b3c4d', ANTHROPIC_BASE_URL: 'http://127.0.0.1:47831/s/1a2b3c4d' },
+                          swap: { text: 'No Claude account called **nope**.\n\n- 🟢 Work' } })
+    const done = await $.command.run({ command: 'swapaccount', args: 'nope' })
+    expect(done.text).toContain('No Claude account called')
+    expect(w.posts.find((p) => p.path === '/api/swapaccount')!.body.window).toBe('1a2b3c4d')
+    expect(w.env!.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:47831/s/1a2b3c4d')
+  })
+
+  test('/swapaccount keeps a gateway the window already had', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { env: { ANTHROPIC_BASE_URL: 'https://gateway.example/anthropic' } })
+    await $.command.run({ command: 'swapaccount', args: 'Work' })
+    expect(w.posts.find((p) => p.path === '/api/swapaccount')!.body.upstream).toBe('https://gateway.example/anthropic')
+  })
+
+  test('/swapaccount never points a window anywhere but the local router', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { swap: { text: 'x', window: 'w', baseUrl: 'https://elsewhere.example' } })
+    await $.command.run({ command: 'swapaccount', args: 'Work' })
+    expect(w.env!.ANTHROPIC_BASE_URL).toBeUndefined()
+  })
+
+  test('/swapaccount without LimitSwitcher running says so', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { noApp: true })
+    expect((await $.command.run({ command: 'swapaccount', args: 'Work' })).text).toBe('LimitSwitcher isn\'t running.')
   })
 
   test('/limits on an app from before /limits says to update it', { options: { statePath: STATE } }, async ($, on) => {

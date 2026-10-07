@@ -1,7 +1,7 @@
 {
   "name": "limitswitcher",
-  "version": "0.9.0",
-  "description": "Feeds Claude Code's live usage to LimitSwitcher after every turn, adds /limits (every Claude account at a glance), runs the Jev compaction LimitSwitcher asks for before a swapped session goes on and before an old session is resumed (with the jev-compact plugin), and toasts when a used-up limit has room again.",
+  "version": "0.10.0",
+  "description": "Feeds Claude Code's live usage to LimitSwitcher after every turn, adds /limits (every Claude account at a glance) and /swapaccount (this window on another account), runs the Jev compaction LimitSwitcher asks for before a swapped session goes on and before an old session is resumed (with the jev-compact plugin), and toasts when a used-up limit has room again.",
   "types": "./types/index.d.ts",
   "userConfig": {
     "statePath": {

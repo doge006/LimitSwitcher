@@ -14,6 +14,11 @@ import type { Register } from 'claude-code'
 // `/limits` shows every Claude account's limits at a glance, from the app's numbers (the status
 // line doesn't show on the phone over Remote Control).
 //
+// `/swapaccount <name or email>` moves this window, and only this one, to another account: the app's
+// router puts that account's login on the window's requests. A window that isn't going through the
+// router yet is pointed at it here, in place (ANTHROPIC_BASE_URL, read again for each request), and
+// joins the app's Windows list; everything else stays this Claude Code window as it was.
+//
 // When an old session is resumed (Claude Code's "Resume this conversation?" said it costs a share
 // of the usage limit: none of it is cached any more), it has Jev compact the session before the
 // first message goes, holds that message meanwhile, then says how much less there is to load. The
@@ -87,8 +92,10 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
   }
   try {
     const session = String(await $.session.id())
+    const window = await $.env.get('LIMITSWITCHER_WINDOW')
     const answer = await post($, app, '/api/statusline', {
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
+      ...(window ? { window: String(window) } : {}),
     })
     const on = answer?.jevResume === true
     jevResume = on
@@ -239,20 +246,47 @@ function startCompaction($: any, e: Resume, agreed: Agreed): void {
   resuming = running
 }
 
+/** `/swapaccount <name or email>`: this window on another account (see the top of this file). */
+async function swapAccount($: any, statePath: string, account: string): Promise<string> {
+  const app = await appOf($, statePath)
+  if (!app) return 'LimitSwitcher isn\'t running.'
+  try {
+    const window = await $.env.get('LIMITSWITCHER_WINDOW')
+    const base = await $.env.get('ANTHROPIC_BASE_URL')  // a gateway of the person's own: the router forwards there
+    const answer = await post($, app, '/api/swapaccount', {
+      session: String(await $.session.id()),
+      account,
+      cwd: await $.session.cwd(),
+      ...(window ? { window: String(window) } : {}),
+      ...(base && !window ? { upstream: String(base) } : {}),
+    })
+    if (answer === null) return 'This LimitSwitcher is too old for /swapaccount: update it (Settings → Update).'
+    if (typeof answer.window === 'string' && typeof answer.baseUrl === 'string' && answer.baseUrl.startsWith('http://127.0.0.1:')) {
+      // from the next request on, this window goes through the router (and its hooks, status line and
+      // tools, started from now on, know which window they are in)
+      await $.env.set('ANTHROPIC_BASE_URL', answer.baseUrl)
+      await $.env.set('LIMITSWITCHER_WINDOW', answer.window)
+    }
+    return typeof answer.text === 'string' && answer.text ? answer.text : 'LimitSwitcher didn\'t say.'
+  } catch {
+    return 'LimitSwitcher didn\'t answer; try again in a moment.'
+  }
+}
+
 /** `/limits`: every Claude account at a glance, as the app has them (for the phone over Remote
- * Control, where the status line doesn't show). Answered here, so it costs no model turn. The
- * window's own folder says which account it is on, with separate accounts per window. */
+ * Control, where the status line doesn't show). Answered here, so it costs no model turn. With
+ * separate accounts per window, the window's id (LIMITSWITCHER_WINDOW) says which account it is on. */
 async function limitsText($: any, statePath: string): Promise<string> {
   const app = await appOf($, statePath)
   if (!app) return 'LimitSwitcher isn\'t running.'
   try {
     const { context } = await $.session.usage()
-    const configDir = await $.env.get('CLAUDE_CONFIG_DIR')
+    const window = await $.env.get('LIMITSWITCHER_WINDOW')
     const answer = await post($, app, '/api/limits', {
       session: String(await $.session.id()),
       model: await $.session.model(),
       context: context ? { tokens: context.tokens, window: context.window, percent: context.percent } : null,
-      ...(configDir ? { configDir: String(configDir) } : {}),
+      ...(window ? { window: String(window) } : {}),
     })
     if (answer === null) return 'This LimitSwitcher is too old for /limits: update it (Settings → Update).'
     return typeof answer.text === 'string' && answer.text ? answer.text : 'LimitSwitcher has no limits to show yet.'
@@ -398,10 +432,17 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'limits' }, async $ => ({ text: await limitsText($, statePath) }))
 
+  on('command.run', { command: 'swapaccount' }, async ($, e) => ({ text: await swapAccount($, statePath, String(e.args || '').trim()) }))
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'limits',
       description: 'Every Claude account\'s usage limits at a glance (LimitSwitcher)',
+    })
+    await $.command.register({
+      name: 'swapaccount',
+      description: 'Move this window (only this one) to another Claude account (LimitSwitcher)',
+      argumentHint: '<name or email>',
     })
     await $.command.register({
       name: 'jevcompact',

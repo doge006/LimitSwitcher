@@ -21,7 +21,7 @@ A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage
 - **Every limit at a glance:** 5-hour, weekly and per-model caps for every Claude and Codex account, with reset times and subscription renewals, in the tray panel, a full view, and right on the Windows taskbar.
 - **One-click switching that open sessions pick up:** Claude Code and Codex sessions move to the new account on their next request. Nothing needs restarting.
 - **Auto swap and Auto resume:** when an account hits its limit, the app moves to the account whose weekly limit resets first, and the stopped Claude Code session continues by itself. Codex requests are retried on the next account before the session ever sees the error.
-- **Separate accounts per window** (preview): each new Claude Code terminal can run on its own account, so two windows can work on two accounts at once.
+- **Separate accounts per window**: `/swapaccount <name>` puts one Claude Code window on another account (its own limits), everything else as usual; or every new terminal gets an account of its own.
 - **Jev compaction** (optional): before a swapped session continues, old tool outputs it no longer needs are shrunk, so the new account loads less. On a real 512k-token session it cut the conversation by 44% and lost 2 facts Claude needed later, against 353 to 499 for other tools.
 - **Live usage in Claude Code's status line,** through an optional Claude Code mod.
 - **Lightweight:** native windows, no browser or Electron. About 13 MB in the Windows tray and 47 MB in the macOS menu bar, with no CPU use between checks ([measurements](docs/performance.md)).
