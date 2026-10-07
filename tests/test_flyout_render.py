@@ -73,6 +73,22 @@ class FlyoutRenderTests(unittest.TestCase):
         normal, _ = fr.render(state)
         self.assertEqual(taller.height - normal.height, fr.ROW_H + 2)
 
+    def test_a_limit_nobody_has_started_says_it_starts_with_a_message(self):
+        """No reset time yet and nothing used: the taskbar and the panel say when it starts (the full
+        view says "Starts with your first message"), rather than leaving the space empty."""
+        state = self.controller.snapshot()
+        claude = next(a for a in state["accounts"] if a["provider"] == "claude" and a["active"])
+        five = next(w for w in claude["windows"] if w["key"] == "five_hour")
+        five.update(used=0.0, resetsAt=None)
+        texts = [t[2] for t in fr.build_block(state, "claude")[0].texts]
+        self.assertIn("starts with a message", texts)
+        self.assertTrue(any(t.startswith("resets in ") for t in texts))  # the weekly one, as before
+        texts = [t[2] for t in fr.build(state)[0].texts]
+        self.assertTrue(any(t in fr.STARTS for t in texts), texts)
+        five.update(used=12.0)  # used, but no reset time reported: nothing claimed
+        texts = [t[2] for t in fr.build_block(state, "claude")[0].texts]
+        self.assertFalse(any(t in fr.STARTS for t in texts))
+
     def test_names_are_emails_resets_and_subscription(self):
         layout, _ = fr.build(self.state)
         texts = [t[2] for t in layout.texts]

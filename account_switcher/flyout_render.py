@@ -494,6 +494,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
                         else:  # three meters: a small clock and the time
                             L.icon("clock", bar_x + 4, ly + 14, 3.6, FAINT)
                             L.text(bar_x + 11, ly + 14, until(window["resetsAt"]), 10, FAINT)
+                    elif starts_text(window, right_edge - text_w("left", 10) - 6 - bar_x):
+                        L.text(bar_x, ly + 14, starts_text(window, right_edge - text_w("left", 10) - 6 - bar_x), 10, FAINT)
             if switchable:
                 L.hit(8, top, W - 16, ROW_H, key)
             if not account["eligible"]:
@@ -629,6 +631,8 @@ def _compact_row(L, W, account, fx, top, right):
             elif text_w(until(window["resetsAt"]), 10) + 11 <= room:  # a clock and the time
                 L.icon("clock", bar_x + 4, ly + 13, 3.5, FAINT)
                 L.text(bar_x + 11, ly + 13, until(window["resetsAt"]), 10, FAINT)
+        elif starts_text(window, pct_right - text_w("left", 10) - 5 - bar_x):
+            L.text(bar_x, ly + 13, starts_text(window, pct_right - text_w("left", 10) - 5 - bar_x), 10, FAINT)
             # no room at all: the reset time is in the full panel and the full view
 
 
@@ -1053,7 +1057,20 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
             else:
                 L.icon("clock", x + 4, y3, 3.5, theme["faint"])
                 L.text(x + 11, y3, until(window["resetsAt"]), 10, theme["faint"])
+        elif starts_text(window, BLOCK_COL):
+            L.text(x, y3, starts_text(window, BLOCK_COL), 10, theme["faint"])
     return math.ceil(x + BLOCK_COL + BLOCK_PAD_R)
+
+
+STARTS = ("starts with your first message", "starts with a message", "starts w/ message", "not started")
+
+
+def starts_text(window, room, size=10):
+    """For a limit nobody has used yet (no reset time, nothing used): it starts with the first
+    message, in the longest wording that fits `room`; None for any other limit."""
+    if window.get("resetsAt") or window.get("used", 0):
+        return None
+    return next((t for t in STARTS if text_w(t, size) <= room), None)
 
 
 # A taskbar block shows a slot: a provider's account in use ("claude", "codex"), or one account

@@ -2,6 +2,11 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.1](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.1) (2026-10-07)
+
+- Fixed: Claude Code could say "Not logged in" after a restart when its login had expired and nobody renewed it. The app now renews it (under Claude Code's own locks); a login that can't be renewed is marked "Sign in again" and Auto swap moves Claude Code to the best other account, as a swap by hand did.
+- The taskbar and the panel say "starts with a message" under a limit that hasn't started yet, like the full view.
+
 ## [1.4.0](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.0) (2026-10-07)
 
 - New `/swapaccount <name or email>` (Claude Code Status mod): puts the window it's typed in, and only that one, on another Claude account from its next message. New windows stay on the main account. A wrong or missing name lists the accounts (names only in name mode).

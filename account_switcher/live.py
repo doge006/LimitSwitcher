@@ -17,9 +17,10 @@ How it works
   requests are spaced out, and 429s back off exponentially (up to an hour).
 - Subscription renewal / end dates are checked at most once a day per account; a date you
   enter by hand always wins.
-- Tokens in the official login files belong to the official clients and are never rotated
-  here. Other saved accounts are refreshed here when needed (for usage checks, and by the
-  Codex router just before their access token expires).
+- Tokens in the official login files belong to the official clients and are not rotated here,
+  with one exception: Claude Code's login when it has expired and Claude Code hasn't renewed it
+  (recover_claude_login, under Claude Code's own locks). Other saved accounts are refreshed here
+  when needed (for usage checks, and by the routers just before their access token expires).
 """
 import contextlib
 import faulthandler
@@ -765,6 +766,7 @@ class LiveAccounts:
         targets.sort(key=lambda target: (not target[2], not target[3]))
         fetched = False
         subscriptions = []
+        recover = []  # Claude Code's login, refused and not renewed: renewed here once the loop is done
         for account_id, meta, is_active, is_live in targets:
             provider = self.providers.get(meta["provider"])
             # One renewal at a time per login, reading the saved login inside the lock: a renewal
@@ -790,6 +792,7 @@ class LiveAccounts:
                     if since and time.time() - since > SIGNED_OUT_AFTER and not meta.get("status", "").startswith("Signed out"):
                         client = "Claude Code" if meta["provider"] == "claude" else meta["provider"].title()
                         self._set(account_id, status=f"Signed out · sign in to {client} again")
+                        recover.append((account_id, login_mark(secret)))  # once more (the last try may have been offline)
                     continue
                 if fetched:
                     time.sleep(self.spacing)
@@ -832,6 +835,7 @@ class LiveAccounts:
                         message = "Waiting for Claude Code" if meta["provider"] == "claude" else f"Waiting for {meta['provider'].title()}"  # short: it must fit a card's hint line
                         if meta.get("waitingMark") != login_mark(secret):
                             self._set(account_id, waitingMark=login_mark(secret), waitingSince=time.time())
+                        recover.append((account_id, login_mark(secret)))
                     elif error.relogin:
                         self._set(account_id, deadLogin=login_mark(secret))
                     self._set(account_id, status=message)
@@ -851,12 +855,67 @@ class LiveAccounts:
             subscriptions.append((account_id, meta, provider, secret))
             if len(targets) > 1:
                 self.notify("accounts", None)  # show each account as it arrives, not after all of them
+        for account_id, mark in recover:
+            self.recover_claude_login(account_id, mark)
         for account_id, meta, provider, secret in subscriptions:  # renewal dates after every account's usage
             self.check_subscription(account_id, meta, provider, secret)
         self.last_refresh = time.monotonic()
         with self.lock:
             self.save()
         self.notify("accounts", None)
+
+    def recover_claude_login(self, account_id, mark):
+        """Claude Code's login was refused (its token expired, or it was revoked) and Claude Code hasn't
+        renewed it: Claude Code isn't running, or its own renewal failed and it says "Not logged in".
+        Under Claude Code's own locks (it waits, then reads the login again), the app renews it and
+        writes it back. A login that can't be renewed is marked to sign in again, and with Auto swap
+        Claude Code moves to the best other account, as a swap by hand would. Returns "renewed",
+        "switched", "dead", or None (nothing done: renewed or switched meanwhile, or offline)."""
+        provider = self.providers.get("claude")
+        entry = self.meta["accounts"].get(account_id)
+        if provider is None or entry is None or account_id != self.live_ids.get("claude") or account_id in self.legacy_held:
+            return None
+        log = logging.getLogger("account_switcher")
+        try:
+            with self._token_lock(account_id), provider.locked():
+                login = provider.read_live()
+                if login is None or login.identity != entry["identity"] or login_mark(login.secret) != mark:
+                    return None  # Claude Code renewed it, or another login is there now
+                expires = (login.secret["credentials"]["claudeAiOauth"].get("expiresAt") or 0) / 1000
+                if expires and expires > time.time() + 60:
+                    return None  # refused before it expired: revoked, not for renewing (that could only loop)
+                try:
+                    fresh = provider.refresh(login.secret, "Claude Code's login was refused and not renewed")
+                except ProviderError as error:
+                    if not error.relogin:
+                        return None  # offline, or the token service busy: the next check tries again
+                    fresh = None
+                if fresh is not None:
+                    provider.write_live(fresh)
+                    self.vault.write_secret(account_id, fresh)
+                    with self.lock:
+                        self.signatures["claude"] = provider.signature()
+                    self._set(account_id, waitingMark=None, waitingSince=None, status="", deadLogin=None, attemptedAt=0.0)
+                    log.warning("Claude Code's login (%s) was refused and not renewed: renewed it", entry.get("email") or "?")
+                    self.notify("log", f"Renewed Claude Code's login on {self.shown_name(account_id)} (it had expired)")
+                    self.notify("accounts", None)
+                    return "renewed"
+        except RuntimeError as error:  # Claude Code holding its lock (renewing it right now)
+            log.warning("Claude Code's login: not renewed here (%s)", error)
+            return None
+        self.notify("log", f"Claude Code was signed out of {self.shown_name(account_id)}: sign in to it again")
+        best = self.confirmed_other("claude", account_id) if self.meta["autoSwap"] else None
+        outcome = "dead"
+        if best is not None:
+            try:
+                self.swap(best.id, reason="auto")
+                outcome = "switched"
+            except (RuntimeError, ValueError, OSError) as error:
+                self.notify("log", f"Automatic switch failed: {error}")
+        # after the switch: reading the outgoing login on the way out takes "Login expired" off it
+        self._set(account_id, status="Login expired; sign in again", deadLogin=mark, waitingMark=None, waitingSince=None)
+        self.notify("accounts", None)
+        return outcome
 
     def check_subscription(self, account_id, meta, provider, secret):
         """Renewal / end date, at most once a day, never when a manual date is set."""
