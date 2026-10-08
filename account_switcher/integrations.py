@@ -278,12 +278,31 @@ class Integrations:
         else:
             log.warning("could not point the Claude Code Status mod at %s: %s", path, error)
 
+    def sync_mod(self):
+        """The installed mod follows the app: after the app updates (or on the first start that keeps
+        track), Claude Code's copy of both plugins is updated from this repository, so a fix in the mod
+        reaches it with the app's release instead of waiting for Settings → Install. Only where the mod
+        is installed; tried again at the next start when it fails. Then the data folder's path, as before."""
+        from .version import VERSION
+        meta = self.manager.meta
+        if (self.mod_in_use() or meta.get("jevModInstalled")) and meta.get("modVersion") != VERSION:
+            from . import mod
+            error = mod.install(self.state_file)
+            if error is None:
+                with self.manager.lock:
+                    meta["modVersion"] = VERSION
+                    self.manager.save()
+                log.info("Claude Code mod updated for %s: open sessions pick it up after /reload-plugins", VERSION)
+            else:
+                log.warning("could not update the Claude Code mod for %s: %s", VERSION, error)
+        self.refresh_mod_config()
+
     def start(self):
         self.apply_afk()
         self.start_claude_router()
         self.apply_per_window()
         self.keep_claude_settings()
-        threading.Thread(target=self.refresh_mod_config, daemon=True, name="mod-config").start()
+        threading.Thread(target=self.sync_mod, daemon=True, name="mod-sync").start()
         if codex_present(self.codex_home):
             self.start_codex()
         meta = self.manager.meta

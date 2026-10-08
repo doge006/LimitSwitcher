@@ -5,6 +5,8 @@ The highlights of each release, newest first. The full notes for each version ar
 ## [1.4.5](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.5) (2026-10-08)
 
 - Fixed: Jev compacted every resumed session over 100k tokens, and said "Jev compaction is on" when you opened `/resume`, even when Claude Code never asked "Resume this conversation?". Jev now compacts on resume only when that question actually shows (Claude Code asks only when the resume would use a real share of your 5-hour limit), and the note shows beside the question only.
+- The note is shorter: `💡 Jev compaction ready: upon resume, Jev will compact, saving usage`.
+- The Claude Code mod now updates itself with the app: the first start after an update brings the installed mod up to the new release, so its fixes no longer wait for Settings → Install. Before, it stayed on the version first installed (why the 1.4.4 toast fix didn't show for everyone).
 
 ## [1.4.4](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.4) (2026-10-08)
 

@@ -48,7 +48,7 @@ type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
 // What shows beside "Resume this conversation?", while Settings → Jev compaction is on
-export const RESUME_TOAST = '💡 Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
+export const RESUME_TOAST = '💡 Jev compaction ready: upon resume, Jev will compact, saving usage'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
 // Auto resume holds a large session for an OK (Settings → Skip large sessions): asked here, in the band
 export const ASKING = '⇄ LimitSwitcher · Auto resume is waiting for your OK'

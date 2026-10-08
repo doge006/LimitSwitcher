@@ -101,6 +101,31 @@ class ModConfigAtStartTests(unittest.TestCase):
             configure.assert_called_once_with(integrations.state_file)
             self.assertEqual(manager.meta["modStatePath"], str(integrations.state_file))
 
+    def test_the_installed_mod_is_updated_once_per_app_version(self):
+        from account_switcher.version import VERSION
+        with tempfile.TemporaryDirectory() as tmp:
+            integrations, manager = self.make(tmp, time.time())
+            manager.meta["modVersion"] = "1.4.3"  # last synced by an older app
+            with mock.patch("account_switcher.mod.install", return_value=None) as install, \
+                    mock.patch("account_switcher.mod.configure", return_value=None):
+                integrations.sync_mod()
+                integrations.sync_mod()
+            install.assert_called_once_with(integrations.state_file)
+            self.assertEqual(manager.meta["modVersion"], VERSION)
+
+    def test_a_failed_mod_update_is_tried_again_and_no_mod_is_left_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            integrations, manager = self.make(tmp, time.time())
+            with mock.patch("account_switcher.mod.install", return_value="offline") as install, \
+                    mock.patch("account_switcher.mod.configure", return_value=None):
+                integrations.sync_mod()
+            install.assert_called_once()
+            self.assertNotIn("modVersion", manager.meta)  # the next start tries again
+            integrations, manager = self.make(tmp, 0)  # never installed
+            with mock.patch("account_switcher.mod.install") as install:
+                integrations.sync_mod()
+            install.assert_not_called()
+
     def test_nothing_is_asked_without_the_mod_or_when_it_failed(self):
         with tempfile.TemporaryDirectory() as tmp:
             integrations, manager = self.make(tmp, 0)  # never reported: not in use
