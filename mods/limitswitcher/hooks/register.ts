@@ -189,11 +189,19 @@ export function coldResume(e: Resume): boolean {
     && e.prompt_cache_likely_expired === true && (e.context_tokens ?? 0) >= RESUME_MIN
 }
 
+/** "~31k of 342k tokens (9%)": what a compaction saved, of the session's whole context (Claude
+ * Code's count) and the share of that. Never of Jev's own tokensBefore: that estimates only the
+ * messages and tool results it can prune, not the system prompt and tools, so it is far smaller
+ * than the context and made the share look several times bigger. No context known: the count alone. */
+export function savedOf(saved: number, context?: number): string {
+  const k = (tokens: number) => `${Math.round(tokens / 1000)}k`
+  if (!context || context <= saved) return `~${k(saved)} tokens`
+  return `~${k(saved)} of ${k(context)} tokens (${Math.round((saved / context) * 100)}%)`
+}
+
 /** What the toast says after a compaction on resume: tokens saved, of how many, and the share. */
-export function resumeSavedText(saved: number, before: number, context?: number): string {
-  const share = before > 0 ? Math.round((saved / before) * 100) : 0
-  const of = context && context > saved ? ` of ${Math.round(context / 1000)}k` : ''
-  return `✅ Jev saved ~${Math.round(saved / 1000)}k${of} tokens (${share}%) before this resume`
+export function resumeSavedText(saved: number, context?: number): string {
+  return `✅ Jev saved ${savedOf(saved, context)} before this resume`
 }
 
 /** The compaction on resume: asks the app first (it says whether Jev compaction is on, and shows
@@ -231,7 +239,7 @@ async function compactOnResume($: any, e: Resume, { app, session, id }: Agreed):
         saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
         if (saved > 0) {
-          toast($, resumeSavedText(saved, before, e.context_tokens), SAVED_FOR)
+          toast($, resumeSavedText(saved, e.context_tokens), SAVED_FOR)
         }
       } else {
         outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
@@ -341,6 +349,13 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
   let outcome = 'skipped'
   let saved = 0
   let skip: string | undefined
+  let context: number | undefined
+  try {
+    const tokens = (await $.session.usage())?.context?.tokens
+    context = typeof tokens === 'number' ? tokens : undefined
+  } catch {
+    // no usage yet: the toast gives the count alone
+  }
   try {
     const result = await $.session.compact({ instructions: MARKER })
     skip = result.skip
@@ -348,7 +363,7 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
       const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
       saved = before && typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
       outcome = 'done'
-      text = `Jev compacted: saved ~${Math.round(saved / 1000)}k` + (before ? ` of ${Math.round(before / 1000)}k tokens` : ' tokens')
+      text = `Jev compacted: saved ${savedOf(saved, context)}`
     } else {
       outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       text = `No Jev compaction: ${skip}`
