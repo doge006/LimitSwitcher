@@ -704,7 +704,7 @@ class Flyout(Popup):
 
     def render(self, hover):
         state = self.tray.state
-        if self.pending and any(a["id"] == self.pending and a["active"] for a in state["accounts"]):
+        if self.pending and any(a["id"] == self.pending and a["active"] and not a.get("signed_out") for a in state["accounts"]):
             self.pending = None  # the switch landed
         return fr.render(state, hover, self.scale, pending=self.pending, pinned=self.pinned, fx=self.fx, armed=self.armed,
                          only=self.only, painter=self.painter)

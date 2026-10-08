@@ -185,6 +185,7 @@ class LiveAccounts:
         self.live_ids = {}       # provider -> account in the official login file
         self.live_since = {}     # provider -> when the account in the login file last changed
         self.routed = set()      # providers whose requests go through the local router
+        self.signed_out = set()  # providers whose login file has no login: the account in use is the last one
         self.token_locks = {}
         self.afk_sessions = {}   # Claude session -> {"continues": [times], "waiting": bool}
         self.afk_lock = threading.Lock()  # one limit report at a time (several hooks can ask at once)
@@ -238,7 +239,8 @@ class LiveAccounts:
                                     usage=project(m.get("usage") or [], now),
                                     status=status, updated_at=m.get("updatedAt", 0.0),
                                     subscription=subscription_view(m), credits=m.get("credits"),
-                                    pinned=account_id in pinned, window=numbers.get(account_id, 0)))
+                                    pinned=account_id in pinned, window=numbers.get(account_id, 0),
+                                    signed_out=m["provider"] in self.signed_out and self.active.get(m["provider"]) == account_id))
             order = {"claude": 0, "codex": 1}
             return sorted(rows, key=lambda a: (order.get(a.provider, 9), a.email or a.alias))
 
@@ -263,8 +265,22 @@ class LiveAccounts:
                 if login is None:
                     self.live_ids.pop(name, None)
                     if name not in self.routed:
-                        changed |= self.active.pop(name, None) is not None
+                        # Signed out (Claude Code drops a login it can't renew), or the file caught
+                        # mid-write: the last account stays in use, marked, so the panel and the
+                        # taskbar keep it and a switch to it puts its saved login back.
+                        kept = self.active.get(name) or self.meta.get("lastLive", {}).get(name)
+                        if kept in self.meta["accounts"] and self.meta["accounts"][kept]["provider"] == name:
+                            if name not in self.signed_out:
+                                logging.getLogger("account_switcher").warning(
+                                    "%s's login file has no login (signed out?); keeping %s in use", name.title(),
+                                    self.meta["accounts"][kept].get("email") or "?")
+                            changed |= self.active.get(name) != kept or name not in self.signed_out
+                            self.active[name] = kept
+                            self.signed_out.add(name)
+                        else:
+                            changed |= self.active.pop(name, None) is not None
                     continue
+                self.signed_out.discard(name)
                 account_id = self.adopt(name, login)
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
                 if previous != account_id:
@@ -277,6 +293,9 @@ class LiveAccounts:
                 follow = name not in self.routed or previous != account_id or name not in self.active
                 if follow and self.active.get(name) != account_id:
                     self.active[name] = account_id
+                    changed = True
+                if self.meta.setdefault("lastLive", {}).get(name) != account_id:
+                    self.meta["lastLive"][name] = account_id  # kept in use if the login goes (see above)
                     changed = True
             changed |= self.sync_windows(force)
             if changed:
@@ -1014,6 +1033,7 @@ class LiveAccounts:
                     self.live_ids[name] = account_id
                     self._login_changed(name, previous)
             self.active[name] = account_id
+            self.signed_out.discard(name)
             if name in self.routed:
                 self.meta["selected"][name] = account_id
             self.save()

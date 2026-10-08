@@ -96,6 +96,8 @@ def stale(account):
 def status_note(account):
     """Short warning when usage could not be fetched or is old, else None."""
     status = account.get("status") or ""
+    if account.get("signed_out") and not status:
+        return "Signed out"  # the client lost its login: switching to the account puts it back
     if not status:
         return age_text(account) if stale(account) else None
     if "sign in" in status.lower() or "missing" in status.lower():
@@ -406,7 +408,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
             top = y
             marks = (len(L.shapes), len(L.texts), len(L.images))
             # a login to sign in again first is no account to switch to: its "Sign in again" is the button
-            switchable = (account["eligible"] and not account["active"] and not busy and not pending
+            switchable = (account["eligible"] and (not account["active"] or account.get("signed_out")) and not busy and not pending
                           and status_note(account) != "Sign in again")
             act = fx.get(("active", account["id"]), 0.0)
             confirming = switchable and armed == account["id"]
@@ -422,7 +424,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
             right = W - 22
             if pending == account["id"]:
                 status, color = "Switching…", TEXT
-            elif account["active"]:
+            elif account["active"] and not (account.get("signed_out") and (confirming or hov > 0)):
                 status, color = "In use", fade(GOOD, max(act, 0.35))
             elif not account["eligible"]:
                 status, color = "Limit", BAD
@@ -435,7 +437,7 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
             if status:
                 L.text(right, cy, status, 11, color, bold=True, anchor="rm")
                 right -= text_w(status, 11, True)
-                if account["active"] and pending != account["id"]:
+                if status == "In use":
                     L.dot(right - 6, cy, 3, fade(GOOD, max(act, 0.35)))
                     right -= 10
                 right -= 12

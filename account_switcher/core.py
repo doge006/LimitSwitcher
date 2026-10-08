@@ -27,6 +27,7 @@ class Account:
     credits: dict = None        # Codex credits / Claude extra usage, as reported
     pinned: bool = False        # held by a window of its own (profiles.py)
     window: int = 0             # that window's number in the list
+    signed_out: bool = False    # in use, but the client's login file has no login: a switch to it puts it back
 
     def account_windows(self):
         return [w for w in self.windows() if w["scope"] == "account"]
