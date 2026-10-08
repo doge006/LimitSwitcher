@@ -156,6 +156,25 @@ class Controller:
         compaction), so `/resume` can say so before one is picked."""
         return body.get("source") == "mod" and self.live and bool(self.gateway.manager.meta.get("jevCompact"))
 
+    def resume_ask(self, body):
+        """For a session's mod: its large session is waiting for an OK to continue on the new account
+        (Settings → Skip large sessions), {"tokens"} so it can ask in Claude Code; else None."""
+        if body.get("source") != "mod" or not self.live:
+            return None
+        session = str(body.get("session") or "")
+        return next(({"tokens": p["tokens"]} for p in self.gateway.manager.pending_list() if p["session"] == session), None)
+
+    def resume_ok(self, body):
+        """`/resumeok` from the mod: the session's answer to "continue this large session?"."""
+        if not self.live:
+            return "LimitSwitcher is in demo mode."
+        session = str(body.get("session") or "")[:100]
+        if self.resume_ask({"source": "mod", "session": session}) is None:
+            return "Nothing is waiting for an OK in this session."
+        self.gateway.manager.resume_decision(session, True)
+        self.notify("changed", None)
+        return "Auto resume goes on with this session."
+
     def names(self, accounts):
         """Add each account's name ("label") and, in name mode, show it instead of the email, so
         every surface (tray, taskbar, notifications) follows. An account without a name shows as
@@ -223,6 +242,7 @@ class Controller:
                 "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
+                "afkAll": not (bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large),
                 "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
                 "jevKey": self.jev_key_source(),
                 "perWindow": bool(self.gateway.manager.meta.get("perWindow")) if self.live else False,
@@ -296,12 +316,15 @@ class Controller:
             self.set_jev_key(body.get("key"))
             self.notify("changed", None)
             return
-        if action == "afkSkipLarge":  # Auto resume leaves large sessions alone; instant
+        if action == "afkSkipLarge":  # Auto resume asks before large sessions (off: Continue every session); instant
             on = bool(body.get("on"))
             if self.live:
                 with self.gateway.manager.lock:
                     self.gateway.manager.meta["afkSkipLarge"] = on
                     self.gateway.manager.save()
+                if not on:  # Continue every session: one already waiting for an OK goes on too
+                    for pending in self.gateway.manager.pending_list():
+                        self.gateway.manager.resume_decision(pending["session"], True)
             self.afk_skip_large = on
             self.notify("changed", None)
             return
@@ -805,7 +828,8 @@ def make_server(controller, port=0):
                                        "compact": controller.compaction_request(body),
                                        "compacted": controller.compacted_context(body),
                                        "alerts": controller.alerts_for(body),
-                                       "jevResume": controller.jev_on_resume(body)})
+                                       "jevResume": controller.jev_on_resume(body),
+                                       "resumeAsk": controller.resume_ask(body)})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"line": None, "error": str(error)})
                 return
@@ -820,6 +844,18 @@ def make_server(controller, port=0):
                     self.respond(200, {"text": controller.limits_text(body if isinstance(body, dict) else {})})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"text": None, "error": str(error)})
+                return
+            if self.path == "/api/resumeok":  # the mod's /resumeok: yes to continuing a large session
+                if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
+                        self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
+                    self.respond(403, {"error": "Forbidden"})
+                    return
+                try:
+                    size = int(self.headers.get("Content-Length", "0"))
+                    body = json.loads(self.rfile.read(size)) if 0 < size <= 4096 else {}
+                    self.respond(200, {"text": controller.resume_ok(body if isinstance(body, dict) else {})})
+                except (ValueError, RuntimeError, OSError) as error:
+                    self.respond(200, {"text": f"LimitSwitcher couldn't answer: {error}"})
                 return
             if self.path == "/api/swapaccount":  # the mod's /swapaccount: this window on another account
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(

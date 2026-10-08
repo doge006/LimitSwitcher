@@ -467,6 +467,29 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
         self.assertEqual(self.manager.pending_list(), [])
 
+    def test_large_session_asks_in_claude_code_and_resumeok_answers(self):
+        from account_switcher.web import Controller
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        self.gateway.set_afk(True)
+        self.manager.claude_limit("s1", 600_000)
+        self.assertEqual(controller.resume_ask({"source": "mod", "session": "s1"}), {"tokens": 600_000})  # the mod asks
+        self.assertIsNone(controller.resume_ask({"source": "mod", "session": "other"}))
+        self.assertEqual(controller.resume_ok({"session": "other"}), "Nothing is waiting for an OK in this session.")
+        self.assertEqual(controller.resume_ok({"session": "s1"}), "Auto resume goes on with this session.")
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
+
+    def test_continue_every_session_lets_one_already_waiting_go_on(self):
+        from account_switcher.web import Controller
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        self.gateway.set_afk(True)
+        self.assertFalse(controller.snapshot()["afkAll"])  # asks first by default
+        self.manager.claude_limit("s1", 600_000)
+        controller.action("afkSkipLarge", {"on": False})  # Settings → Continue every session
+        self.assertTrue(controller.snapshot()["afkAll"])
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
+
     def test_declined_large_session_is_left_alone(self):
         self.gateway.set_afk(True)
         self.manager.claude_limit("s1", 600_000)
@@ -627,10 +650,12 @@ class AfkTests(unittest.TestCase):
         text = controller.limits_text({"session": "s", "model": "ignored", "context": {"tokens": 183_000, "percent": 18}})
         lines = text.split("\n")
         self.assertEqual(lines[0], "**⇄ a@example.com** · Opus 5.5 (high)")  # no windows of their own: no "main"
-        self.assertTrue(lines[4].startswith("| 🔴 **5h** | `░░░░░░░░░░` | 0% left · ↻"), lines[4])  # used up: when it resets
-        self.assertEqual(lines[5], "| 🟢 **1w** | `█████░░░░░` | 50% left |")
-        self.assertEqual(lines[6], "| 🟢 **ctx** | `████████░░` | 82% left · 183k |")
-        self.assertEqual(lines[-1], "- 🟢 b@example.com · 5h **90%** · 1w **90%**")
+        self.assertEqual(lines[2], "```")  # a code block: the bars and numbers line up
+        self.assertTrue(lines[3].startswith("🔴 5h   ░░░░░░░░░░    0% left · resets in "), lines[3])  # used up: when it resets
+        self.assertEqual(lines[4], "🟢 1w   █████░░░░░   50% left")
+        self.assertEqual(lines[5], "🟢 ctx  ████████░░   82% left · 183k")
+        self.assertEqual(lines[6], "```")
+        self.assertEqual(lines[-5:], ["**Other accounts**", "", "```", "🟢 b@example.com  5h  90%  1w  90%", "```"])
         self.assertNotIn("x@example.com", text)  # Codex accounts aren't Claude's
         self.assertNotIn("Jev", text)
         # A session whose status line never reported: the mod's own model, no effort

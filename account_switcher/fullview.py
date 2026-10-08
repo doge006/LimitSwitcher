@@ -343,7 +343,7 @@ class FullView:
         self.scrolled = self.follow_scroll()
         ui.fades = {key[1]: value for key, value in motion.values.items() if key[0] in ("h", "tog", "spin") and value}
         vr.CLOCK_24 = self.state.get("clock24")
-        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkSkipLarge", "waitNearReset", "jevCompact", "perWindow", "resetAlerts")}
+        prefs = {k: self.prefs.get(k, bool(self.state.get(k))) for k in ("autoSwap", "afk", "nameMode", "taskbar", "launchAtLogin", "clock24", "afkAll", "waitNearReset", "jevCompact", "perWindow", "resetAlerts")}
         for key, on in prefs.items():
             motion.to(("tog", "tog:" + key), 1.0 if on else 0.0, 0.2)
             ui.fades["tog:" + key] = motion.get(("tog", "tog:" + key))
@@ -740,8 +740,8 @@ class FullView:
                 self.act("waitNearReset", {"on": not state.get("waitNearReset", True)})
             elif arg == "jevCompact":
                 self.act("jevCompact", {"on": not state.get("jevCompact")})
-            elif arg == "afkSkipLarge":
-                self.act("afkSkipLarge", {"on": not state.get("afkSkipLarge", True)})
+            elif arg == "afkAll":  # Continue every session: Skip large sessions, the other way round
+                self.act("afkSkipLarge", {"on": bool(state.get("afkAll"))})
             elif arg == "perWindow":
                 self.act("perWindow", {"on": not state.get("perWindow")})
             elif arg == "launchAtLogin":

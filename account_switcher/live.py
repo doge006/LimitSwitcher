@@ -704,7 +704,8 @@ class LiveAccounts:
             before = ""
         if login_mark(login.secret) != before:  # where each saved login came from, for "sign in again" puzzles
             logging.getLogger("account_switcher").warning(
-                "%s login of %s saved from %s", provider.title(), login.email or login.identity, source)
+                "%s login of %s saved from %s #%s", provider.title(), login.email or login.identity, source,
+                login_mark(login.secret)[:8] or "none")
             entry.pop("deadLogin", None)
             self.window_failures = {f for f in self.window_failures if f[1] != account_id}  # windows may use it again
             entry.pop("waitingMark", None)
@@ -993,6 +994,7 @@ class LiveAccounts:
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("This account's saved login is missing; sign in again")
+            logging.getLogger("account_switcher").warning("handing %s the saved login #%s", name.title(), login_mark(secret)[:8] or "none")
             # Claude Code's own locks: a renewal of the outgoing login finishes first (and is
             # saved below), and none starts in the middle of the switch (claude_locks.py).
             with (provider.locked() if hasattr(provider, "locked") else contextlib.nullcontext()):
@@ -1367,25 +1369,29 @@ class LiveAccounts:
             if account.id == current:
                 lines.append(f"**⇄ {name}**" + (f" · {model[:40]}" + (f" ({effort[:12]})" if effort else "") if model else "")
                              + where(account))
-                lines += ["", "| | | |", "|:--|:--|--:|"]
-                for label, left, reset in shown:
-                    lines.append(f"| {level_dot(left)} **{label}** | `{bar(left)}` | {left}% left" + (f" · ↻{reset}" if reset else "") + " |")
+                # A code block: the bars and the numbers line up, in the terminal and in the Claude app alike
+                meters = [f"{level_dot(left)} {label:<3}  {bar(left)}  {left:>3}% left" + (f" · resets in {reset}" if reset else "")
+                          for label, left, reset in shown]
                 if context:
                     tokens, left = context
-                    lines.append(f"| {level_dot(left)} **ctx** | `{bar(left)}` | {left}% left · {tokens} |" if left is not None
-                                 else f"| ⚪ **ctx** | | {tokens} |")
-                if not shown and not context:
-                    lines = lines[:-3] + ["", account.status or "No usage read yet."]
+                    meters.append(f"{level_dot(left)} ctx  {bar(left)}  {left:>3}% left · {tokens}" if left is not None
+                                  else f"⚪ ctx  {tokens}")
+                lines += ["", "```", *meters, "```"] if meters else ["", account.status or "No usage read yet."]
                 jev = self.jev_text(session, now)
                 if jev:
                     lines += ["", jev]
             else:
-                parts = [f"{label} **{left}%**" + (f" ↻{reset}" if reset else "") for label, left, reset in shown]
-                dot = level_dot(min(left for _, left, _ in shown)) if shown else "⚪"
-                others.append(f"- {dot} {name} · " + (" · ".join(parts) if parts else account.status or "no usage read yet")
-                              + where(account))
+                others.append((account, name, shown))
         if others:
-            lines += ["", "**Other accounts**", ""] + others
+            width = max(len(name) for _, name, _ in others)
+            block = []
+            for account, name, shown in others:
+                dot = level_dot(min(left for _, left, _ in shown)) if shown else "⚪"
+                parts = [f"{label} {left:>3}%" for label, left, _ in shown]
+                resets = [f"↻ {reset}" for _, _, reset in shown if reset]
+                block.append(f"{dot} {name:<{width}}  " + ("  ".join(parts + resets[:1]) if parts
+                                                         else account.status or "no usage read yet") + where(account))
+            lines += ["", "**Other accounts**", "", "```", *block, "```"]
         if current not in {a.id for a in rows}:
             lines = ["Claude Code's login isn't one of LimitSwitcher's accounts.", ""] + lines
         return "\n".join(lines).strip()
@@ -1443,6 +1449,8 @@ class LiveAccounts:
             # Continuing would load the whole session uncached on the new account: ask the user
             # first instead of spending their usage.
             self.pending_resumes[session or "?"] = {"tokens": tokens, "at": now, "seen": now, "status": "pending"}
+            logging.getLogger("account_switcher").warning("auto resume: session %s (~%dk tokens) waits for an OK to continue",
+                                                          (session or "?")[:8], tokens // 1000)
             self.notify("log", f"Large session (~{tokens // 1000}k tokens) is waiting for your OK to continue on the new account")
             return {"action": "wait", "seconds": 5}
         if not afk:

@@ -81,10 +81,10 @@ class FlyoutRenderTests(unittest.TestCase):
         five = next(w for w in claude["windows"] if w["key"] == "five_hour")
         five.update(used=0.0, resetsAt=None)
         texts = [t[2] for t in fr.build_block(state, "claude")[0].texts]
-        self.assertTrue(any(t in fr.STARTS for t in texts), texts)  # the longest that fits (fonts differ)
+        self.assertTrue(any(t in fr.BLOCK_STARTS for t in texts), texts)  # the longest that fits (fonts differ)
         self.assertTrue(any(t.startswith("resets in ") for t in texts))  # the weekly one, as before
         texts = [t[2] for t in fr.build(state)[0].texts]
-        self.assertTrue(any(t in fr.STARTS for t in texts), texts)
+        self.assertTrue(any(t in fr.PANEL_STARTS for t in texts), texts)
         five.update(used=12.0)  # used, but no reset time reported: nothing claimed
         texts = [t[2] for t in fr.build_block(state, "claude")[0].texts]
         self.assertFalse(any(t in fr.STARTS for t in texts))
@@ -122,6 +122,9 @@ class FlyoutRenderTests(unittest.TestCase):
         layout, _ = fr.build(state)
         self.assertIn("Sign in again", [t[2] for t in layout.texts])
         self.assertIn("relogin:" + state["accounts"][1]["id"], [a for _, a in layout.hits])  # one click to sign in
+        self.assertNotIn("swap:" + state["accounts"][1]["id"], [a for _, a in layout.hits])  # no switching to it first
+        layout, _ = fr.build(state, hover="swap:" + state["accounts"][1]["id"])
+        self.assertNotIn("Switch", [t[2] for t in layout.texts])
 
     def test_painter_frames_match_whole_redraws(self):
         """The panel draws again only what changed since its last frame (a hover fade, a switch

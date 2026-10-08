@@ -274,8 +274,8 @@ class WindowTests(unittest.TestCase):
         text = self.m.limits_text("win-1", "Opus 5.5", None, None, window)
         lines = text.split("\n")
         self.assertEqual(lines[0], "**⇄ b@example.com** · Opus 5.5 · window 1")
-        self.assertIn("- 🟢 a@example.com · 5h **90%** · 1w **90%** · main", lines)
-        self.assertIn("- 🟢 c@example.com · 5h **70%** · 1w **70%**", lines)  # free: in use nowhere
+        self.assertIn("🟢 a@example.com  5h  90%  1w  90% · main", lines)
+        self.assertIn("🟢 c@example.com  5h  70%  1w  70%", lines)  # free: in use nowhere
         self.assertTrue(self.m.limits_text("win-1").startswith("**⇄ b@example.com** · window 1\n"))  # remembered
         self.assertTrue(self.m.limits_text("other").startswith("**⇄ a@example.com** · main\n"))
 

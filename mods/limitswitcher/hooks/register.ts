@@ -48,6 +48,11 @@ type App = { base: string; token: string }
 // What `/resume` says as its list opens, while Settings → Jev compaction is on
 export const RESUME_TOAST = '💡 Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
+// Auto resume holds a large session for an OK (Settings → Skip large sessions): asked here, in the band
+export const ASKING = '⇄ LimitSwitcher · Auto resume is waiting for your OK'
+export function askText(tokens: number): string {
+  return `${ASKING}: ~${Math.round(tokens / 1000)}k tokens to load on the new account · /resumeok to go on`
+}
 const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
 const SAVED_FOR = 15_000 // the toast says what Jev saved for this long
 const ANSWERED_AFTER = 1_500 // "Start a new conversation" ends the session within this (its /clear)
@@ -60,6 +65,7 @@ function toast($: any, text: string, timeoutMs?: number): void {
 }
 
 let jevResume = false // the app's last word on it (each report)
+let heard = false // the app has answered a report in this session (until then jevResume is only a guess)
 const handled = new Set<string>() // compaction ids already run (the app keeps asking until it hears back)
 const toasted = new Set<string>() // reset alerts already shown in this session (the app offers each for a few minutes)
 
@@ -82,6 +88,24 @@ async function post($: any, app: App, path: string, body: unknown): Promise<any>
   return reply.ok ? JSON.parse(reply.text) : null
 }
 
+let asked = false // the toast for the OK Auto resume is waiting for, shown (once per wait)
+
+/** The band (and once, a toast) while Auto resume waits for an OK to continue this large session;
+ * the band goes once it no longer waits (answered here or in the tray, or the session went on). */
+async function askForResume($: any, ask: unknown): Promise<void> {
+  const tokens = (ask as { tokens?: unknown } | null)?.tokens
+  const shown = await read($, band)
+  if (typeof tokens === 'number') {
+    const text = askText(tokens)
+    if (shown !== text) await update($, band, () => text)
+    if (!asked) toast($, text, NOTE_FOR)
+    asked = true
+  } else {
+    asked = false
+    if (typeof shown === 'string' && shown.startsWith(ASKING)) await update($, band, () => null)
+  }
+}
+
 async function report($: any, statePath: string, rateLimits: readonly Window[]): Promise<void> {
   const app = await appOf($, statePath)
   if (!app) return
@@ -97,8 +121,10 @@ async function report($: any, statePath: string, rateLimits: readonly Window[]):
       rate_limits: Object.keys(limits).length ? limits : null, session, source: 'mod',
       ...(window ? { window: String(window) } : {}),
     })
+    if (answer) heard = true
     const on = answer?.jevResume === true
     jevResume = on
+    await askForResume($, answer?.resumeAsk)
     for (const alert of Array.isArray(answer?.alerts) ? answer.alerts : []) {
       // Reset alerts (Settings): every account of a provider had hit its limit and one has room again
       if (typeof alert?.id !== 'string' || typeof alert?.text !== 'string' || toasted.has(alert.id)) continue
@@ -319,10 +345,10 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
     const result = await $.session.compact({ instructions: MARKER })
     skip = result.skip
     if (skip === undefined) {
-      saved = typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number'
-        ? Math.max(0, Math.round(result.tokensBefore - result.tokensAfter)) : 0
+      const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
+      saved = before && typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
       outcome = 'done'
-      text = `Jev saved ~${Math.round(saved / 1000)}k tokens`
+      text = `Jev compacted: saved ~${Math.round(saved / 1000)}k` + (before ? ` of ${Math.round(before / 1000)}k tokens` : ' tokens')
     } else {
       outcome = skip.startsWith(FAILED) ? 'failed' : 'skipped'
       text = `No Jev compaction: ${skip}`
@@ -353,6 +379,9 @@ export const register: Register = (on, options) => {
     const result = await next(e)
     pending = statePath && coldResume(e) ? e : null
     armed = false
+    // `claude --resume` / `--continue` loads it as the session starts, before the first report has
+    // had an answer: ask the app now, or the note would never show beside the question
+    if (pending && !heard) await poll($, statePath).catch(() => {})
     if (pending && jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question (loading cleared /resume's)
     return result
   })
@@ -413,12 +442,12 @@ export const register: Register = (on, options) => {
   })
 
   // The engine refuses a compaction under the command's own hook: it starts right after, outside
-  // this dispatch. LimitSwitcher's line in the status bar shows it; a toast only says what that
-  // line could not (no app running, or no compaction).
+  // this dispatch. LimitSwitcher's line in the status bar shows it while it runs; how it went is a
+  // line of its own under the command's "Jev compacting…", in the conversation.
   on('command.run', { command: 'jevcompact' }, async $ => {
     $.clock.after(0, async () => {
-      const { text, shown } = await compactByHand($, statePath)
-      if (!shown) toast($, text)
+      const { text } = await compactByHand($, statePath)
+      $.ui.log(text)
     })
     return { text: 'Jev compacting…' }
   })
@@ -432,6 +461,19 @@ export const register: Register = (on, options) => {
 
   on('command.run', { command: 'limits' }, async $ => ({ text: await limitsText($, statePath) }))
 
+  on('command.run', { command: 'resumeok' }, async $ => {
+    const app = await appOf($, statePath)
+    if (!app) return { text: 'LimitSwitcher isn\'t running.' }
+    try {
+      const answer = await post($, app, '/api/resumeok', { session: String(await $.session.id()) })
+      if (answer === null) return { text: 'This LimitSwitcher is too old for /resumeok: update it (Settings → Update).' }
+      await askForResume($, null)
+      return { text: String(answer.text || 'Done.') }
+    } catch {
+      return { text: 'LimitSwitcher didn\'t answer; try again in a moment.' }
+    }
+  })
+
   on('command.run', { command: 'swapaccount' }, async ($, e) => ({ text: await swapAccount($, statePath, String(e.args || '').trim()) }))
 
   on('session.start', async ($, e, next) => {
@@ -443,6 +485,10 @@ export const register: Register = (on, options) => {
       name: 'swapaccount',
       description: 'Move this window (only this one) to another Claude account (LimitSwitcher)',
       argumentHint: '<name or email>',
+    })
+    await $.command.register({
+      name: 'resumeok',
+      description: 'Let Auto resume go on with this large session on the new account (LimitSwitcher)',
     })
     await $.command.register({
       name: 'jevcompact',

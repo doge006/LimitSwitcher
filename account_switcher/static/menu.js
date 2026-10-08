@@ -41,7 +41,8 @@ async function api(path, body) {
 const act = (action, body) => api(`/api/${action}`, body).catch(() => {});
 
 function row(account) {
-  const switchable = account.eligible && !account.active && !pending && !state.busy;
+  const relogin = /sign in|expired|missing/i.test(account.status || '');
+  const switchable = account.eligible && !account.active && !pending && !state.busy && !relogin;  // signed in again first
   const confirming = switchable && armed === account.id;
   const r = el('div', 'row' + (account.active ? ' active' : '') + (account.eligible ? '' : ' spent')
     + (switchable ? ' switchable' : '') + (confirming ? ' confirm' : ''));
@@ -53,7 +54,6 @@ function row(account) {
     head.append(el('span', age >= 30 ? 'age old' : 'age', age < 1 ? 'now' : age < 60 ? `${age}m ago` : `${Math.floor(age / 60)}h ago`));
   }
   const windows = account.windows.slice(0, 3);
-  const relogin = /sign in|expired|missing/i.test(account.status || '');
   if (pending === account.id) head.append(el('span', 'state', 'Switching…'));
   else if (confirming) head.append(el('span', 'state confirm', 'Click again'));
   else if (relogin) {  // the text itself is the button: the app's own sign-in, other logins untouched

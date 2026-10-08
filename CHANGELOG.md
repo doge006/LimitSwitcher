@@ -2,6 +2,16 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.2](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.2) (2026-10-07)
+
+- Auto resume's question before continuing a very large session now shows in Claude Code itself (a band above the prompt; `/resumeok` says yes), not only in the tray. New **Continue every session** under Auto resume (replacing "Skip large sessions") continues every session without asking.
+- Fixed: the taskbar panel offered "Switch" on an account whose login has to be signed in again. Such an account now shows only "Sign in again".
+- `/limits` reads better: the bars and numbers line up, and the other accounts are a tidy list.
+- `/jevcompact` says how it went under the command (`Jev compacted: saved ~39k of 331k tokens`), not only in the status line.
+- Fixed: the Jev compaction note could miss "Resume this conversation?" when Claude Code was started with `--resume` or `--continue`.
+- Shorter "starts w your first message" in the panel and "starts w first msg" on the taskbar.
+- app.log tells saved copies of a login apart (a short fingerprint, never the token), to trace a login that had to be signed in again.
+
 ## [1.4.1](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.1) (2026-10-07)
 
 - Fixed: Claude Code could say "Not logged in" after a restart when its login had expired and nobody renewed it. The app now renews it (under Claude Code's own locks); a login that can't be renewed is marked "Sign in again" and Auto swap moves Claude Code to the best other account, as a swap by hand did.

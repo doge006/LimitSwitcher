@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { coldResume, COMPACTING, resumeSavedText, RESUME_TOAST } from './register.ts'
+import { askText, coldResume, COMPACTING, resumeSavedText, RESUME_TOAST } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 
@@ -27,7 +27,7 @@ type World = { env?: Record<string, string | undefined>; posts: { path: string; 
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void> } = {}): World {
+function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -56,10 +56,14 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
     w.posts.push({ path, body })
     let answer: unknown = { ok: true }
     if (path === '/api/statusline') {
-      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [], jevResume: options.jevResume ?? false }
+      answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [], jevResume: options.jevResume ?? false, resumeAsk: options.waiting ?? null }
       if (options.compact) asked = true
     }
     if (path === '/api/compaction' && body.resume) answer = options.oldApp ? { ok: true } : { ok: !options.jevOff, resume: true }
+    if (path === '/api/resumeok') {
+      answer = { text: options.waiting ? 'Auto resume goes on with this session.' : 'Nothing is waiting for an OK in this session.' }
+      options.waiting = null
+    }
     if (path === '/api/limits') answer = { text: '**⇄ a@example.com** · Opus 5.5 (high)' }
     if (path === '/api/swapaccount') answer = options.swap ?? { text: 'Window 1 now uses **Work**' }
     return { value: { status: 200, ok: true, headers: {}, text: JSON.stringify(answer) } }
@@ -153,12 +157,14 @@ describe('limitswitcher', () => {
     expect(w.compactions).toHaveLength(1)
   })
 
-  test('/jevcompact runs the compaction by hand and LimitSwitcher\'s line shows it', { options: { statePath: STATE } }, async ($, on) => {
+  test('/jevcompact runs the compaction by hand and says how it went under the command', { options: { statePath: STATE } }, async ($, on) => {
     const w = world(on, { outcomes: [{ saved: 30_000 }, { skip: 'no OpenRouter key (OPENROUTER_API_KEY)' }] })
     const registered: string[] = []
     const toasts: string[] = []
+    const lines: string[] = []
     on('session.start', ($, e) => ({ cwd: e.cwd }))
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('ui.log', ($, e) => { lines.push(String(e.text)); return { value: undefined } })
     on('command.register', ($, e) => { registered.push(e.name); return { value: { command: e.name } } })
     await $.session.start({ cwd: '/' })
     expect(registered).toContain('jevcompact')
@@ -169,21 +175,22 @@ describe('limitswitcher', () => {
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'session-1', outcome: 'running' })  // before it starts: the line says "Jev Compacting…"
     expect(told[1]).toMatchObject({ session: 'session-1', id: told[0].id, outcome: 'done', saved: 30_000 })
-    expect(toasts).toEqual([])                                                   // the line says what it saved
+    expect(lines).toEqual(['Jev compacted: saved ~30k of 50k tokens'])         // under "Jev compacting…", once done
+    expect(toasts).toEqual([])
     expect(w.statuses).toEqual([])
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
-    expect(toasts).toEqual(['No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)'])
+    expect(lines[1]).toBe('No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)')
     expect(w.compactions).toEqual([MARKER, MARKER])
   })
 
-  test('/jevcompact without LimitSwitcher running says how it went in a toast', { options: { statePath: STATE } }, async ($, on) => {
+  test('/jevcompact without LimitSwitcher running says how it went too', { options: { statePath: STATE } }, async ($, on) => {
     const w = world(on, { outcomes: [{ saved: 30_000 }], noApp: true })
-    const toasts: string[] = []
-    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    const lines: string[] = []
+    on('ui.log', ($, e) => { lines.push(String(e.text)); return { value: undefined } })
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
-    expect(toasts).toEqual(['Jev saved ~30k tokens'])
+    expect(lines).toEqual(['Jev compacted: saved ~30k of 50k tokens'])
   })
 
   test('shows each reset alert from the app as a toast, once', { options: { statePath: STATE } }, async ($, on) => {
@@ -415,6 +422,48 @@ describe('limitswitcher', () => {
     await $.command.run({ command: 'resume', args: '' })
     expect(toasts).toEqual([{ text: RESUME_TOAST, timeoutMs: 60_000 }]) // up while a session is picked (a toast's longest)
     expect(opened).toBe(1)                                              // Claude Code's own /resume still opens
+  })
+
+  test('claude --resume: the note shows beside the question before the app has been heard from', { options: { statePath: STATE } }, async ($, on) => {
+    world(on, { jevResume: true })
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    await $.classic.SessionStart(resumed)                                // loaded as the session starts: no report answered yet
+    expect(toasts).toEqual([RESUME_TOAST])
+  })
+
+  test('Auto resume waiting for an OK on a large session asks in Claude Code; /resumeok answers', { options: { statePath: STATE } }, async ($, on) => {
+    const options = { waiting: { tokens: 520_000 } as { tokens: number } | null }
+    const w = world(on, options)
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    await $.session.start({ cwd: '/' })                                    // reports now, then every 30 s
+    await (w as any).clock.advance(10)
+    expect(await bandOf($)).toBe(askText(520_000))                       // the band says so until it's answered
+    expect(toasts).toEqual([askText(520_000)])
+    await (w as any).clock.advance(30_000)                                 // asked again on the next report: no second toast
+    expect(toasts.length).toBe(1)
+    const answer = await $.command.run({ command: 'resumeok', args: '' })
+    expect(answer.text).toBe('Auto resume goes on with this session.')
+    expect(w.posts.find((p) => p.path === '/api/resumeok')?.body).toEqual({ session: 'session-1' })
+    expect(await bandOf($)).toBe('')
+    expect(askText(520_000)).toContain('/resumeok')
+  })
+
+  test('the OK answered in the tray takes the band away on the next report', { options: { statePath: STATE } }, async ($, on) => {
+    const options = { waiting: { tokens: 450_000 } as { tokens: number } | null }
+    const w = world(on, options)
+    on('ui.toast', () => ({ value: undefined }))
+    on('session.start', ($, e) => ({ cwd: e.cwd }))
+    on('command.register', ($, e) => ({ value: { command: e.name } }))
+    await $.session.start({ cwd: '/' })                                    // reports now, then every 30 s
+    await (w as any).clock.advance(10)
+    expect(await bandOf($)).toBe(askText(450_000))
+    options.waiting = null
+    await (w as any).clock.advance(30_000)
+    expect(await bandOf($)).toBe('')
   })
 
   test('/resume says nothing with Jev compaction off', { options: { statePath: STATE } }, async ($, on) => {

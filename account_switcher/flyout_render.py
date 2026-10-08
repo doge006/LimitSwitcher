@@ -405,7 +405,9 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
             key = "swap:" + account["id"]
             top = y
             marks = (len(L.shapes), len(L.texts), len(L.images))
-            switchable = account["eligible"] and not account["active"] and not busy and not pending
+            # a login to sign in again first is no account to switch to: its "Sign in again" is the button
+            switchable = (account["eligible"] and not account["active"] and not busy and not pending
+                          and status_note(account) != "Sign in again")
             act = fx.get(("active", account["id"]), 0.0)
             confirming = switchable and armed == account["id"]
             hov = max(h(key), 1.0 if confirming else 0.0) if switchable else 0.0
@@ -1057,20 +1059,22 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
             else:
                 L.icon("clock", x + 4, y3, 3.5, theme["faint"])
                 L.text(x + 11, y3, until(window["resetsAt"]), 10, theme["faint"])
-        elif starts_text(window, BLOCK_COL):
-            L.text(x, y3, starts_text(window, BLOCK_COL), 10, theme["faint"])
+        elif starts_text(window, BLOCK_COL, wordings=BLOCK_STARTS):
+            L.text(x, y3, starts_text(window, BLOCK_COL, wordings=BLOCK_STARTS), 10, theme["faint"])
     return math.ceil(x + BLOCK_COL + BLOCK_PAD_R)
 
 
-STARTS = ("starts with your first message", "starts with a message", "starts w/ message", "not started")
+PANEL_STARTS = ("starts w your first message", "starts w first msg", "not started")  # the panel
+BLOCK_STARTS = ("starts w first msg", "not started")                                 # the taskbar
+STARTS = PANEL_STARTS + BLOCK_STARTS
 
 
-def starts_text(window, room, size=10):
+def starts_text(window, room, size=10, wordings=PANEL_STARTS):
     """For a limit nobody has used yet (no reset time, nothing used): it starts with the first
-    message, in the longest wording that fits `room`; None for any other limit."""
+    message, in the longest of `wordings` that fits `room`; None for any other limit."""
     if window.get("resetsAt") or window.get("used", 0):
         return None
-    return next((t for t in STARTS if text_w(t, size) <= room), None)
+    return next((t for t in wordings if text_w(t, size) <= room), None)
 
 
 # A taskbar block shows a slot: a provider's account in use ("claude", "codex"), or one account

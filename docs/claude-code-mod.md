@@ -19,13 +19,17 @@ Every Claude account's usage at a glance, in any Claude Code session with the mo
 
 ```
 ⇄ doge2 · Opus 5.5 (medium) · window 1
-🟢 5h  ██████░░░░  63% left
-🟡 1w  █░░░░░░░░░  13% left
-🟢 ctx ████████░░  78% left · 217k
+
+🟢 5h   ██████░░░░   63% left
+🟡 1w   █░░░░░░░░░   13% left
+🟢 ctx  ████████░░   78% left · 217k
+
 🗜 Jev saved ~56k before the last swap (12m ago)
 
-🟢 doge1 · 5h 92% · 1w 71% · main
-🔴 doge3 · 5h 0% ↻38m · 1w 40%
+Other accounts
+
+🟢 doge1  5h  92%  1w  71% · main
+🔴 doge3  5h   0%  1w  40%  ↻ 38m
 ```
 
 The dot is each line's level (green, yellow under 30% left, red under 10%), and a used-up limit shows when it resets. The reply is markdown (a table with the bars, a list of the other accounts), which Claude Code and the Claude app draw without colours, hence the dots. The mod answers it from the app's numbers, so it costs no Claude usage; the reply is part of the conversation, so the model reads it with your next message (a few hundred tokens).
@@ -50,13 +54,13 @@ Optional. Swapping a long session to another account costs a cold start: the new
 
 1. The session hits its limit; the account is swapped at once.
 2. The session's mod runs the compaction (every shortened output keeps a note listing the names, paths and values it held). [Jev](https://openrouter.ai/typesafe/jev-1.13) (TypeSafe's decision model, through OpenRouter) scores the session's older tool outputs: still needed, unsure, or done with. Outputs it is done with become a one-line note, unsure ones keep their head and tail, the rest stay whole; a file view or search (cheap to read again) needs a higher score to stay whole than a test run or a web page. A file read again later is replaced by a note without asking, and long old scripts and file contents Claude wrote are shortened (what they did is on disk). Screenshots and other images in old outputs are judged too: one it is done with becomes a note (an image has no head and tail to keep, so an unsure one stays whole).
-3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev Compacting…` (also for `/jevcompact`).
+3. The session goes on (Auto resume) or waits for your next message (Auto swap alone). While it runs, Claude Code shows `⇄ LimitSwitcher · Jev Compacting…` (also for `/jevcompact`). If the session is very large, Auto resume may first ask for your OK: a band above the prompt says so, and `/resumeok` answers it ([Auto resume](usage.md#auto-swap-and-auto-resume)).
 
 What it never touches: anything you or Claude wrote, the first message, the 8 newest messages, calls still running, and error outputs. Nothing is summarised and no call is removed: Claude still sees every step it took, and each shortened output says so, so it re-runs the tool instead of guessing. Keys and tokens in the conversation are masked before anything is sent to Jev.
 
 **Resuming an old session.** On a Pro or Max plan, Claude Code asks "Resume this conversation?" when you load a conversation idle long enough that none of it is cached, and says what share of your 5-hour limit it will use. That usage is only spent when your first message goes. With Jev compaction on, a toast beside the question (and over `/resume`'s list of sessions) says `💡 Jev compaction is on: upon resuming, Jev will compact the context, saving usage.` Nothing happens while the question is up. Once you pick **Resume** (or press Esc), Jev compacts the session right away: an orange band above the prompt says `⇄ LimitSwitcher · Jev compacting the resumed session…`, then a toast says what it saved (`✅ Jev saved ~289k of 666k tokens (43%) before this resume`). A message you type meanwhile waits in Claude Code's own queue and goes, as typed, once Jev is done (one sent in the second before Jev starts is put back in the box instead, to send again). **Start a new conversation** compacts nothing. It only does this for a loaded conversation of 100k tokens or more that Claude Code says is no longer cached (an account switch is the swap's own compaction, above).
 
-You can also run it by hand in any session with `/jevcompact` (it works with the toggle off). Your earlier thinking stays wherever the API allows it (an edit invalidates the thinking after it on accounts created since Aug 31, 2026; Claude Code then drops those blocks and retries by itself). It costs no Claude usage (it works on a used-up account) and a fraction of a cent of OpenRouter credit per swap. If Jev fails, the mod waits 30 seconds and tries again, three tries in all; then (or after 4 minutes at most) the session goes on without it. `/compact` and auto-compaction stay Claude Code's own.
+You can also run it by hand in any session with `/jevcompact` (it works with the toggle off); a line under it then says what it saved (`Jev compacted: saved ~39k of 331k tokens`), or why it didn't run. Your earlier thinking stays wherever the API allows it (an edit invalidates the thinking after it on accounts created since Aug 31, 2026; Claude Code then drops those blocks and retries by itself). It costs no Claude usage (it works on a used-up account) and a fraction of a cent of OpenRouter credit per swap. If Jev fails, the mod waits 30 seconds and tries again, three tries in all; then (or after 4 minutes at most) the session goes on without it. `/compact` and auto-compaction stay Claude Code's own.
 
 **Setting it up:** install (or update) the mod, turn on Settings → **Jev compaction** (it sits under the mod's row and is off until you switch it on; off, the mod never asks for a compaction), and give it an [OpenRouter key](https://openrouter.ai/keys):
 

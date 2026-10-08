@@ -57,6 +57,7 @@ Claude Code. Normally every Claude Code window shares one account, and **Swap to
 - **Auto resume:** while it's on, a Claude Code session that stops on a usage limit continues by itself, with nobody typing.
   - When the hook fires, the app switches to an account with room (Auto swap) and Claude Code is told to continue where it left off.
   - If no account has room, it waits for the earliest reset (up to 6 hours) and then continues.
+  - A very large session (400k+ tokens, after Jev compaction) costs about 6% of a 5-hour limit to load on an account that has none of it cached, so Auto resume asks first. The question shows in that Claude Code window (a band above the prompt: type `/resumeok` to go on, with the mod) and in the tray menu and the panel. Turn on **Settings → Continue every session** to have it go on with every session without asking.
   - Codex needs no hook: its requests are retried on the next account automatically.
   - [How the hook works](how-it-works.md#the-auto-resume-hook).
 
