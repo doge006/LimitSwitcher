@@ -42,7 +42,7 @@ const act = (action, body) => api(`/api/${action}`, body).catch(() => {});
 
 function row(account) {
   const relogin = /sign in|expired|missing/i.test(account.status || '');
-  const switchable = account.eligible && !account.active && !pending && !state.busy && !relogin;  // signed in again first
+  const switchable = account.eligible && (!account.active || account.signed_out) && !pending && !state.busy && !relogin;  // signed in again first
   const confirming = switchable && armed === account.id;
   const r = el('div', 'row' + (account.active ? ' active' : '') + (account.eligible ? '' : ' spent')
     + (switchable ? ' switchable' : '') + (confirming ? ' confirm' : ''));
@@ -63,6 +63,7 @@ function row(account) {
     again.addEventListener('click', event => { event.stopPropagation(); act('add', { provider: account.provider, id: account.id }); });
     head.append(again);
   }
+  else if (account.signed_out) head.append(el('span', 'state note', 'Signed out · Switch'));  // switching to it puts its login back
   else if (account.active) head.append(el('span', 'state in-use', 'In use'));
   else if (!account.eligible) head.append(el('span', 'state limit', 'Limit'));
   else if (account.status && windows.length) head.append(el('span', 'state note', account.status));
@@ -296,7 +297,7 @@ async function follow() {
     try {
       state = await api(`/api/state?after=${revision}`);
       revision = state.revision;
-      if (pending && state.accounts.some(a => a.id === pending && a.active)) pending = null;
+      if (pending && state.accounts.some(a => a.id === pending && a.active && !a.signed_out)) pending = null;
       render();
     } catch {
       await new Promise(done => setTimeout(done, 1500));

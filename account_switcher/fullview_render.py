@@ -735,6 +735,8 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hints = [status] if status else [f"Numbers from {ago(age)} ago · checking", f"{ago(age)} ago · checking", f"{ago(age)} old"]
             else:  # what the account is doing, and how old its numbers are
                 main = "Shared by other windows" if getattr(ui, "own_windows", 0) else "Used by all sessions"
+                if account.get("signed_out"):
+                    main = f"{'Claude Code' if provider == 'claude' else provider.title()} is signed out · swap to put it back"
                 parts = [main] if active else [] if eligible else ["Waiting for reset"]
                 updated = (f"Updated {ago(age)} ago" if age >= 60 else "Updated now") if live and account.get("updated_at") else None
                 hints = [" · ".join(parts + [updated] if updated else parts)]
@@ -755,7 +757,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
             c.text(bx + bw / 2, fy + 16 - t, pick, 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
                 hit(bx, fy, bw, 32, "swapWindow")
-        elif active and not switching:
+        elif active and not switching and not account.get("signed_out"):
             c.text(bx + bw / 2, fy + 16, "In use", 13, accent, True, anchor="mm")
         elif pinned:  # a window has it as its own (another window can have it too, from the Windows list)
             c.text(bx + bw / 2, fy + 16, f"In Window {account.get('window') or '?'}", 13, accent, True, anchor="mm")

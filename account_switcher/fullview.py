@@ -195,7 +195,7 @@ class FullView:
         self.state = state
         ui = self.ui
         ui.signing_in = tuple(state.get("signingIn") or ())
-        if ui.pending and any(a["id"] == ui.pending and a["active"] for a in state["accounts"]):
+        if ui.pending and any(a["id"] == ui.pending and a["active"] and not a.get("signed_out") for a in state["accounts"]):
             ui.pending = None  # the switch landed
             self.host.kill_timer("pending")
         ids = {a["id"] for a in state["accounts"]}

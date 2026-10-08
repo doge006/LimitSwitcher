@@ -2,6 +2,11 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.3](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.3) (2026-10-08)
+
+- Fixed: when Claude Code signed itself out, LimitSwitcher could end up with no account in use, and the taskbar view disappeared until a switch by hand in full view. The last account now stays in use, marked "Signed out"; switching to it puts its saved login back.
+- Fixed: quitting the app took the Auto resume hook out of Claude Code, so sessions started while the app was closed never got Auto swap or Auto resume. The hook now stays (it does nothing while the app is closed); the installer, updater and uninstaller still take it out.
+
 ## [1.4.2](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.2) (2026-10-07)
 
 - Auto resume's question before continuing a very large session now shows in Claude Code itself (a band above the prompt; `/resumeok` says yes), not only in the tray. New **Continue every session** under Auto resume (replacing "Skip large sessions") continues every session without asking.

@@ -257,6 +257,38 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(b.status, "Login expired; sign in again")
         self.assertTrue(any("signed out of" in str(v) for k, v in self.logs if k == "log"))
 
+    def test_claude_code_signing_out_keeps_the_account_in_use_and_a_switch_puts_it_back(self):
+        """Claude Code dropped its login (signed out, or its file caught mid-write). The account in use
+        used to vanish with it, and the taskbar with it, until a switch by hand in full view."""
+        m = self.manager()
+        m.sync_live()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        b = self.by_email(m, "b@example.com")
+        (self.home / ".claude" / ".credentials.json").write_text("{}")  # Claude Code signs out
+        m.sync_live()
+        self.assertEqual(m.active["claude"], b.id)  # still shown as the one in use...
+        self.assertTrue(self.by_email(m, "b@example.com").signed_out)  # ...marked signed out
+        self.assertFalse(self.by_email(m, "a@example.com").signed_out)
+        m.swap(b.id)  # a switch to it puts its saved login back
+        self.assertEqual(self.live_claude().email, "b@example.com")
+        self.assertFalse(self.by_email(m, "b@example.com").signed_out)
+
+    def test_a_signed_out_claude_code_keeps_the_last_account_across_a_restart(self):
+        m = self.manager()
+        m.sync_live()
+        a = self.by_email(m, "a@example.com")
+        config = json.loads((self.home / ".claude.json").read_text())
+        config.pop("oauthAccount")
+        (self.home / ".claude.json").write_text(json.dumps(config))
+        m = self.manager()  # the app starts again
+        m.sync_live()
+        self.assertEqual(m.active["claude"], a.id)
+        self.assertTrue(self.by_email(m, "a@example.com").signed_out)
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")  # signed in again in Claude Code
+        m.sync_live()
+        self.assertFalse(self.by_email(m, "a@example.com").signed_out)
+
     def test_a_dead_login_stays_with_auto_swap_off(self):
         m = self.manager()
         m.meta["autoSwap"] = False
