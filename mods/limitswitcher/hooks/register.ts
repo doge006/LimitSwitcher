@@ -23,7 +23,9 @@ import type { Register } from 'claude-code'
 // of the usage limit: none of it is cached any more), it has Jev compact the session before the
 // first message goes, holds that message meanwhile, then says how much less there is to load. The
 // "Resume?" question itself is Claude Code's own and can't be changed by a mod: this starts right
-// after it is answered. It follows Settings → Jev compaction.
+// after it is answered, and only when it was asked (Claude Code asks only when the resume costs
+// enough of the limit; a mod can't read its rule, so it looks for the question itself). It follows
+// Settings → Jev compaction.
 //
 // And it shows the app's reset alerts as a toast: when every account of a provider had hit its
 // limit and one has room again, each open session hears of it on its next report.
@@ -45,17 +47,19 @@ const RESUME_LONGEST = 240_000 // never hold the first message longer than this
 type Window = { kind: string; percentUsed: number; resetsAt?: string }
 type App = { base: string; token: string }
 
-// What `/resume` says as its list opens, while Settings → Jev compaction is on
-export const RESUME_TOAST = '💡 Jev compaction is on: upon resuming, Jev will compact the context, saving usage.'
+// What shows beside "Resume this conversation?", while Settings → Jev compaction is on
+export const RESUME_TOAST = '💡 Jev compaction ready: upon resume, Jev will compact, saving usage'
 export const COMPACTING = '⇄ LimitSwitcher · Jev compacting the resumed session…'
 // Auto resume holds a large session for an OK (Settings → Skip large sessions): asked here, in the band
 export const ASKING = '⇄ LimitSwitcher · Auto resume is waiting for your OK'
 export function askText(tokens: number): string {
   return `${ASKING}: ~${Math.round(tokens / 1000)}k tokens to load on the new account · /resumeok to go on`
 }
-const NOTE_FOR = 60_000 // the note stays up while a session is picked and "Resume this conversation?" is answered (a toast's longest)
+const NOTE_FOR = 60_000 // the note stays up while "Resume this conversation?" is answered (a toast's longest)
 const SAVED_FOR = 15_000 // the toast says what Jev saved for this long
 const ANSWERED_AFTER = 1_500 // "Start a new conversation" ends the session within this (its /clear)
+const ASKED_WITHIN = 10_000 // Claude Code asks "Resume this conversation?" within this of the load, or not at all
+const LOOK_EVERY = 250 // how often to look for it meanwhile
 
 // The band above the prompt while a resumed session is compacted: a toast can't be taken down
 // once shown (they stack), so "compacting" is a band, gone when it is done.
@@ -266,6 +270,40 @@ let resuming: Promise<void> | null = null // the compaction on resume, while it 
 let started = false // the compaction itself has started: Claude Code queues a message sent now behind it
 let pending: Resume | null = null // an old conversation loaded: compacted once "Resume this conversation?" is answered
 let armed = false // the prompt area was drawn while one is pending: the compaction starts shortly unless it is dropped
+let questioned = false // "Resume this conversation?" was seen up for the pending one: only then is it compacted
+
+/** Whether a dialog holds the keys now: the prompt box refuses even an empty fill under one (its
+ * cause `dialog`; a cause a hook beneath words is dropped, so only "no box at all" counts as no
+ * dialog). In the moments after an old conversation loads, that dialog is "Resume this conversation?". */
+async function questionUp($: any): Promise<boolean> {
+  try {
+    const filled = await $.prompt.fill({ text: '', mode: 'insert' })
+    return filled?.isFilled === false && filled.refusal !== 'no_composer'
+  } catch {
+    return false
+  }
+}
+
+/** Looks for "Resume this conversation?" after an old conversation loads. Seen: the note shows
+ * beside it, and the compaction starts once it is answered. Not seen in time: Claude Code didn't
+ * ask (the resume costs too little of the limit, or it isn't asked on this plan), so nothing is
+ * compacted. */
+function lookForQuestion($: any, resumed: Resume, waited: number): void {
+  $.clock.after(waited ? LOOK_EVERY : 0, async () => {
+    if (pending !== resumed || questioned) return
+    if (await questionUp($)) {
+      if (pending !== resumed) return
+      questioned = true
+      if (jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question
+      return
+    }
+    if (waited + LOOK_EVERY >= ASKED_WITHIN) {
+      if (pending === resumed) pending = null // never asked: left alone
+      return
+    }
+    lookForQuestion($, resumed, waited + LOOK_EVERY)
+  })
+}
 
 /** Runs the compaction the app agreed to, outside the dispatch that started it. */
 function startCompaction($: any, e: Resume, agreed: Agreed): void {
@@ -386,18 +424,20 @@ export const register: Register = (on, options) => {
   const statePath = String(options.statePath ?? '')
   let last = '' // what was last sent: nothing new, nothing to send again
 
-  // An old conversation loaded: nothing yet. Claude Code may still be asking "Resume this
-  // conversation?", and "Start a new conversation" there drops it (a /clear, so session.end).
-  // Claude Code draws no prompt area while it asks: the first drawing after the load means it
-  // was answered (or never asked), and the compaction starts then, before anything is typed.
+  // An old conversation loaded: nothing yet. Claude Code asks "Resume this conversation?" only
+  // when the resume costs enough of the limit, and "Start a new conversation" there drops it (a
+  // /clear, so session.end). Only a resume it asked about is compacted: once the question is seen
+  // up, the first drawing of the prompt area after it means it was answered, and the compaction
+  // starts then, before anything is typed.
   on('classic.SessionStart', async ($, e, next) => {
     const result = await next(e)
     pending = statePath && coldResume(e) ? e : null
     armed = false
+    questioned = false
     // `claude --resume` / `--continue` loads it as the session starts, before the first report has
     // had an answer: ask the app now, or the note would never show beside the question
     if (pending && !heard) await poll($, statePath).catch(() => {})
-    if (pending && jevResume) toast($, RESUME_TOAST, NOTE_FOR) // beside the question (loading cleared /resume's)
+    if (pending) lookForQuestion($, pending, 0)
     return result
   })
 
@@ -414,6 +454,7 @@ export const register: Register = (on, options) => {
   on('prompt.submit', async ($, e, next) => {
     const kind = e.origin?.kind ?? 'composer' // absent: the person's own
     if (kind !== 'composer' && kind !== 'bridge') return next(e)
+    if (pending && !questioned) pending = null // a message, so no question is coming: left alone
     if (pending && !resuming && jevResume) { // a message sent before it started: start it now
       const resumed = pending
       pending = null
@@ -431,11 +472,13 @@ export const register: Register = (on, options) => {
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
-    if (pending && !armed && !resuming) {
+    if (pending && questioned && !armed && !resuming) {
       armed = true
       const resumed = pending
-      $.clock.after(ANSWERED_AFTER, () => {
+      $.clock.after(ANSWERED_AFTER, async () => {
         if (pending !== resumed || resuming || !jevResume) return // a new conversation, or already started
+        if (await questionUp($)) { armed = false; return } // still asking: the next drawing tries again
+        if (pending !== resumed || resuming) return
         pending = null
         void agreeOnResume($, statePath, resumed).then((agreed) => { if (agreed && !resuming) startCompaction($, resumed, agreed) })
       })
@@ -465,13 +508,6 @@ export const register: Register = (on, options) => {
       $.ui.log(text)
     })
     return { text: 'Jev compacting…' }
-  })
-
-  // `/resume` says Jev will compact an old session as its list of sessions opens (Claude Code's own
-  // "Resume this conversation?" can't carry a mod's note)
-  on('command.run', { command: 'resume' }, async ($, e, next) => {
-    if (jevResume) toast($, RESUME_TOAST, NOTE_FOR) // up while a session is picked (a click takes it off)
-    return next(e)
   })
 
   on('command.run', { command: 'limits' }, async $ => ({ text: await limitsText($, statePath) }))

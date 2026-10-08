@@ -24,6 +24,18 @@ from account_switcher.vault import Vault
 from account_switcher.web import Controller, make_server
 from tests.test_live import FakeAPI, claude_login, claude_usage, codex_login, codex_usage, point_at_fake
 
+
+# Integrations.start() brings the installed mod up to date in the background: never this machine's real Claude Code
+_no_real_mod = mock.patch.object(Integrations, "sync_mod", lambda self: None)
+
+
+def setUpModule():
+    _no_real_mod.start()
+
+
+def tearDownModule():
+    _no_real_mod.stop()
+
 LOCAL = build_opener(ProxyHandler({}))
 
 

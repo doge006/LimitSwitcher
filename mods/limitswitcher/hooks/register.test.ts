@@ -21,14 +21,14 @@ async function bandOf($: any): Promise<string> {
 }
 const MARKER = 'limitswitcher:jev-compact'
 
-type World = { env?: Record<string, string | undefined>; posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[] }
+type World = { env?: Record<string, string | undefined>; posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[]; asking: boolean; filled: string[] }
 
 /**
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
 function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null; context?: number } = {}): World {
-  const w: World = { posts: [], compactions: [], statuses: [] }
+  const w: World = { posts: [], compactions: [], statuses: [], asking: false, filled: [] }
   const clock = mock.clock(on)
   let asked = false
   on('fs.read', () => {
@@ -46,6 +46,12 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('ui.render', ($, e) => h($.ui.resolve(e).Box, null))  // the engine's own: nothing in the band
   on('classic.SessionStart', () => ({}))
+  // the prompt box: refused while a dialog ("Resume this conversation?") holds the keys
+  on('prompt.fill', ($, e) => {
+    if (w.asking) return { isFilled: false, refusal: 'dialog' as const }
+    if (e.text) w.filled.push(e.text)
+    return { isFilled: true }
+  })
   on('ui.status', ($, e) => {
     w.statuses.push(e.text)
     return { value: undefined }
@@ -313,18 +319,18 @@ describe('limitswitcher', () => {
     const toasts: string[] = []
     const sent: string[] = []
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
-    const filled: string[] = []
     on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
-    on('prompt.fill', ($, e) => { filled.push(e.text); return { isFilled: true } })
     await measure($)                                                       // the app: Jev compaction is on
+    w.asking = true                                                        // Claude Code asks "Resume this conversation?"
     await $.classic.SessionStart(resumed)
     await (w as any).clock.advance(60_000)
-    expect(w.compactions).toEqual([])                                      // nothing while "Resume this conversation?" is up
+    expect(w.compactions).toEqual([])                                      // nothing while it is up
+    w.asking = false                                                       // Resume
     const first = await $.prompt.submit({ text: 'where were we?' })        // a message before it started: it starts it
     expect(first.drop).toContain('back in the box')
     expect(sent).toEqual([])
     await (w as any).clock.advance(0)
-    expect(filled).toEqual(['where were we?'])                             // as typed, to send with Enter (as the person's own)
+    expect(w.filled).toEqual(['where were we?'])                             // as typed, to send with Enter (as the person's own)
     expect(await bandOf($)).toBe(COMPACTING)                                  // the band says so while it runs
     release()
     await (w as any).clock.settle()
@@ -343,9 +349,11 @@ describe('limitswitcher', () => {
     const w = world(on, { jevResume: true, outcomes: [{ saved: 20_000 }] })
     on('ui.toast', () => ({ value: undefined }))
     await measure($)
+    w.asking = true
     await $.classic.SessionStart(resumed)
     await (w as any).clock.advance(30_000)                                 // the question is up: no prompt area drawn
     expect(w.compactions).toEqual([])
+    w.asking = false
     await bandOf($)                                                        // answered: Claude Code draws the prompt area
     await (w as any).clock.advance(1_000)
     expect(w.compactions).toEqual([])                                      // a "Start a new conversation" would end it by now
@@ -362,7 +370,10 @@ describe('limitswitcher', () => {
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
     on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
     await measure($)
+    w.asking = true
     await $.classic.SessionStart(resumed)
+    await (w as any).clock.advance(0)                                      // the question is seen up
+    w.asking = false
     await bandOf($)                                                        // Resume
     await (w as any).clock.advance(1_500)
     expect(w.compactions).toEqual([MARKER])                                // running
@@ -380,7 +391,10 @@ describe('limitswitcher', () => {
     on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
     on('session.end', ($, e) => ({ sessionId: e.sessionId }))
     await measure($)
+    w.asking = true
     await $.classic.SessionStart(resumed)
+    await (w as any).clock.advance(0)
+    w.asking = false
     await bandOf($)                                                        // the question answered
     await $.session.end({ reason: 'clear', sessionId: 'old-1', resume: { id: 'old-1' } } as any)
     await (w as any).clock.advance(5_000)
@@ -396,7 +410,10 @@ describe('limitswitcher', () => {
       const sent: string[] = []
       on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
       await measure($)
+      w.asking = true
       await $.classic.SessionStart(resumed)
+      await (w as any).clock.advance(0)
+      w.asking = false
       await $.prompt.submit({ text: 'hello' })
       await (w as any).clock.settle()
       expect(w.compactions).toEqual([])
@@ -415,23 +432,77 @@ describe('limitswitcher', () => {
     expect(w.compactions).toEqual([])
     expect(w.posts.filter((p) => p.path === '/api/compaction')).toEqual([])
   })
-  test('/resume says Jev will compact an old session as its list opens, while Jev compaction is on', { options: { statePath: STATE } }, async ($, on) => {
+  test('no "Resume this conversation?" (it costs too little of the limit): no note, nothing compacted', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { jevResume: true })
+    const toasts: string[] = []
+    const sent: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
+    await measure($)
+    await $.classic.SessionStart(resumed)                                 // a cold resume Claude Code doesn't ask about
+    await bandOf($)                                                       // the prompt area is drawn at once
+    await (w as any).clock.advance(15_000)
+    expect(w.compactions).toEqual([])
+    expect(toasts).toEqual([])
+    await $.prompt.submit({ text: 'hello' })
+    await (w as any).clock.settle()
+    expect(sent).toEqual(['hello'])
+    expect(w.compactions).toEqual([])
+    expect(w.posts.filter((p) => p.path === '/api/compaction')).toEqual([])
+    expect(w.filled).toEqual([])                                          // looking for it never touched the box
+  })
+
+  test('a message sent before any question shows: it goes at once, nothing compacted', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { jevResume: true })
+    const sent: string[] = []
+    on('prompt.submit', ($, e) => { sent.push(e.text); return { text: e.text } })
+    await measure($)
+    await $.classic.SessionStart(resumed)
+    const typed = await $.prompt.submit({ text: 'hello' })
+    expect(typed.drop).toBeUndefined()
+    await (w as any).clock.settle()
+    expect(sent).toEqual(['hello'])
+    expect(w.compactions).toEqual([])
+  })
+
+  test('the question showing a moment after the load: a drawing before it starts nothing', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { jevResume: true, outcomes: [{ saved: 20_000 }] })
+    const toasts: string[] = []
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    await measure($)
+    await $.classic.SessionStart(resumed)
+    await bandOf($)                                                       // drawn before the question opens
+    await (w as any).clock.advance(1_000)
+    w.asking = true                                                       // now it asks
+    await (w as any).clock.advance(2_000)
+    expect(w.compactions).toEqual([])
+    expect(toasts).toEqual([RESUME_TOAST])                                // beside the question
+    w.asking = false
+    await bandOf($)                                                       // Resume
+    await (w as any).clock.advance(1_500)
+    await (w as any).clock.settle()
+    expect(w.compactions).toEqual([MARKER])
+  })
+
+  test('/resume says nothing as its list opens: the note waits for the question', { options: { statePath: STATE } }, async ($, on) => {
     world(on, { jevResume: true })
-    const toasts: { text: string; timeoutMs?: number }[] = []
+    const toasts: string[] = []
     let opened = 0
-    on('ui.toast', ($, e) => { toasts.push({ text: String(e.text), timeoutMs: e.timeoutMs }); return { value: undefined } })
+    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
     on('command.run', { command: 'resume' }, () => { opened++; return { text: '' } })
-    await measure($)                                                    // the app says it is on
+    await measure($)
     await $.command.run({ command: 'resume', args: '' })
-    expect(toasts).toEqual([{ text: RESUME_TOAST, timeoutMs: 60_000 }]) // up while a session is picked (a toast's longest)
-    expect(opened).toBe(1)                                              // Claude Code's own /resume still opens
+    expect(toasts).toEqual([])
+    expect(opened).toBe(1)                                              // Claude Code's own /resume opens
   })
 
   test('claude --resume: the note shows beside the question before the app has been heard from', { options: { statePath: STATE } }, async ($, on) => {
-    world(on, { jevResume: true })
+    const w = world(on, { jevResume: true })
     const toasts: string[] = []
     on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
+    w.asking = true
     await $.classic.SessionStart(resumed)                                // loaded as the session starts: no report answered yet
+    await (w as any).clock.advance(0)
     expect(toasts).toEqual([RESUME_TOAST])
   })
 
@@ -467,15 +538,5 @@ describe('limitswitcher', () => {
     options.waiting = null
     await (w as any).clock.advance(30_000)
     expect(await bandOf($)).toBe('')
-  })
-
-  test('/resume says nothing with Jev compaction off', { options: { statePath: STATE } }, async ($, on) => {
-    world(on, { jevResume: false })
-    const toasts: string[] = []
-    on('ui.toast', ($, e) => { toasts.push(String(e.text)); return { value: undefined } })
-    on('command.run', { command: 'resume' }, () => ({ text: '' }))
-    await measure($)
-    await $.command.run({ command: 'resume', args: '' })
-    expect(toasts).toEqual([])
   })
 })

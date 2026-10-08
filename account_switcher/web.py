@@ -593,8 +593,10 @@ class Controller:
             if not error:
                 self.note_mod_installed(mod.installed())
             if not error:
+                from .version import VERSION
                 with self.gateway.manager.lock:
                     self.gateway.manager.meta["modStatePath"] = str(state_file)
+                    self.gateway.manager.meta["modVersion"] = VERSION  # installed from this release: no sync at the next start
                     self.gateway.manager.save()
                 self.notify("log", "Claude Code mod installed: open sessions pick it up after /reload-plugins")
             self.notify("changed", None)
