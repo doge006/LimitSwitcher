@@ -4,6 +4,7 @@ The highlights of each release, newest first. The full notes for each version ar
 
 ## [1.4.2](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.2) (2026-10-07)
 
+- Auto resume's question before continuing a very large session now shows in Claude Code itself (a band above the prompt; `/resumeok` says yes), not only in the tray. New **Continue every session** under Auto resume (replacing "Skip large sessions") continues every session without asking.
 - Fixed: the taskbar panel offered "Switch" on an account whose login has to be signed in again. Such an account now shows only "Sign in again".
 - `/limits` reads better: the bars and numbers line up, and the other accounts are a tidy list.
 - `/jevcompact` says how it went under the command (`Jev compacted: saved ~39k of 331k tokens`), not only in the status line.

@@ -467,6 +467,29 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
         self.assertEqual(self.manager.pending_list(), [])
 
+    def test_large_session_asks_in_claude_code_and_resumeok_answers(self):
+        from account_switcher.web import Controller
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        self.gateway.set_afk(True)
+        self.manager.claude_limit("s1", 600_000)
+        self.assertEqual(controller.resume_ask({"source": "mod", "session": "s1"}), {"tokens": 600_000})  # the mod asks
+        self.assertIsNone(controller.resume_ask({"source": "mod", "session": "other"}))
+        self.assertEqual(controller.resume_ok({"session": "other"}), "Nothing is waiting for an OK in this session.")
+        self.assertEqual(controller.resume_ok({"session": "s1"}), "Auto resume goes on with this session.")
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
+
+    def test_continue_every_session_lets_one_already_waiting_go_on(self):
+        from account_switcher.web import Controller
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        self.gateway.set_afk(True)
+        self.assertFalse(controller.snapshot()["afkAll"])  # asks first by default
+        self.manager.claude_limit("s1", 600_000)
+        controller.action("afkSkipLarge", {"on": False})  # Settings → Continue every session
+        self.assertTrue(controller.snapshot()["afkAll"])
+        self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
+
     def test_declined_large_session_is_left_alone(self):
         self.gateway.set_afk(True)
         self.manager.claude_limit("s1", 600_000)

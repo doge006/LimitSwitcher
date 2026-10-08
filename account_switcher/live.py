@@ -1449,6 +1449,8 @@ class LiveAccounts:
             # Continuing would load the whole session uncached on the new account: ask the user
             # first instead of spending their usage.
             self.pending_resumes[session or "?"] = {"tokens": tokens, "at": now, "seen": now, "status": "pending"}
+            logging.getLogger("account_switcher").warning("auto resume: session %s (~%dk tokens) waits for an OK to continue",
+                                                          (session or "?")[:8], tokens // 1000)
             self.notify("log", f"Large session (~{tokens // 1000}k tokens) is waiting for your OK to continue on the new account")
             return {"action": "wait", "seconds": 5}
         if not afk:
