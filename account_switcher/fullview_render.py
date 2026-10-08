@@ -1133,20 +1133,21 @@ def panel(surface, scale, x, y, w, h):
     return c
 
 
-def toggle(c, x, y, pos, hot, bg):
-    """The web switch, 40x22: pos 0 (off) to 1 (on) as it slides, hot when hovered."""
+def toggle(c, x, y, pos, hot, bg, small=False):
+    """The web switch, 40x22 (a sub-setting's: 32x18): pos 0 (off) to 1 (on) as it slides, hot when hovered."""
+    w, h = (32, 18) if small else (40, 22)
     track = mixc(bg, GOOD, pos)
     if pos > 0:
-        c.rect(x, y, 40, 22, 11, (blend((255, 255, 255), track, .08) if hot and pos == 1 else track) + (255,))
+        c.rect(x, y, w, h, h / 2, (blend((255, 255, 255), track, .08) if hot and pos == 1 else track) + (255,))
     if pos < 1:
-        c.outline(x, y, 40, 22, 11, mixc(MUTED if hot else FAINT, GOOD, pos) + (255,), 1.5)
-    r = (7 if hot else 6.5)
-    c.dot(x + 10.5 + 19 * pos, y + 11, r, mixc(MUTED, (255, 255, 255), pos))
+        c.outline(x, y, w, h, h / 2, mixc(MUTED if hot else FAINT, GOOD, pos) + (255,), 1.5)
+    r = (h / 2 - 4 if hot else h / 2 - 4.5)
+    c.dot(x + h / 2 - 0.5 + (w - h) * pos, y + h / 2, r, mixc(MUTED, (255, 255, 255), pos))
 
 
 SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets first"),
             ("afk", "Auto resume", "Continue the session on another account"),
-            ("afkAll", "Continue every session", "Large ones too (400k+ tokens), without asking"),
+            ("afkAll", "Continue every session", "Including large sessions (400k+), automatically"),
             ("waitNearReset", "Wait for a near reset", "No switch when the 5-hour limit resets within 15 min"),
             ("resetAlerts", "Reset alerts", "A toast in Claude Code once a limit frees up"),
             ("nameMode", "Name mode", "Names instead of emails, for screen sharing"),
@@ -1248,8 +1249,12 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         locked = state.get("busy") and key in ("autoSwap", "afk")
         hot = ui.hover == "set:" + key and not locked
         dx = SUB_INDENT if key in SUB_SETTINGS else 0  # a setting of the one above it: set in under it
-        toggle(c, x + 14 + dx, ry + 6, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
-        c.text(x + 66 + dx, ry + 20, title, 14, TEXT if not locked else MUTED, True)
+        sub = key in SUB_SETTINGS
+        if sub:  # a smaller switch, its name a size down
+            toggle(c, x + 22 + dx, ry + 9, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3, small=True)
+        else:
+            toggle(c, x + 14 + dx, ry + 6, ui.fades.get("tog:" + key, 1.0 if on else 0.0), hot, SURFACE_3)
+        c.text(x + 66 + dx, ry + 20, title, 13 if sub else 14, TEXT if not locked else MUTED, True)
         for i, line in enumerate(lines):
             c.text(x + 66 + dx, ry + 36 + 16 * i, line, 12, MUTED)
         if not locked:
