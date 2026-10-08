@@ -3,12 +3,13 @@
 - Codex: the local router (codex_proxy.py) and the config lines pointing Codex at it. Port
   and path secret are kept across restarts, so sessions that are already open reconnect
   after an update or restart (Codex retries a refused connection).
-- Claude Code: the AFK hook (claude_hooks.py) while AFK is on, and the small file that tells
-  the hook how to reach the app; the router for separate accounts per window (claude_router.py),
+- Claude Code: the AFK hook (claude_hooks.py), and the small file that tells the hook how to
+  reach the app; the router for separate accounts per window (claude_router.py),
   with its port and path secret kept across restarts like Codex's, and the `claude` wrapper.
 - Windows: start with Windows (on by default), because Codex's requests go through the app.
 Quit undoes the Codex and Claude changes and writes the chosen Codex account into
-~/.codex/auth.json, so Codex keeps working, on that account, without the app.
+~/.codex/auth.json, so Codex keeps working, on that account, without the app. The one exception
+is the AFK hook on an ordinary quit (stop(keep_hook=True)): see stop().
 """
 import json
 import logging
@@ -373,7 +374,12 @@ class Integrations:
 
         threading.Thread(target=loop, daemon=True, name="claude-settings-watch").start()
 
-    def stop(self):
+    def stop(self, keep_hook=False):
+        """keep_hook: the person quit the app (not an install, update or uninstall, which run
+        `--quit` and take the hook out themselves). Claude Code reads its hooks when a session
+        starts, so a session opened while the app is closed would otherwise never have it, and
+        Auto swap / Auto resume would do nothing there after the app is opened again. Left in
+        place it is harmless: with the app closed it finds no state file and exits at once."""
         if getattr(self, "settings_stop", None):
             self.settings_stop.set()
         if self.claude_router:
@@ -396,10 +402,11 @@ class Integrations:
             self.remove_wrapper()
         except OSError as error:
             log.warning("could not remove the claude wrapper: %s", error)
-        try:
-            claude_hooks.uninstall(self.claude_root)
-        except OSError as error:
-            log.warning("could not remove the Claude hook: %s", error)
+        if not keep_hook:
+            try:
+                claude_hooks.uninstall(self.claude_root)
+            except OSError as error:
+                log.warning("could not remove the Claude hook: %s", error)
         try:
             claude_hooks.uninstall_statusline(self.state_file, self.claude_root)
         except OSError as error:

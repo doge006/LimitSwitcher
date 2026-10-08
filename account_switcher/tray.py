@@ -412,6 +412,14 @@ def main(argv=None):
                     if not Path(url_file).exists():
                         break
                     time.sleep(0.25)
+        # An ordinary quit leaves the Auto resume hook in Claude Code (Integrations.stop); the
+        # installer, updater and uninstaller come through here, so it goes now, also when no copy
+        # was running. An update's new copy puts it back when it starts.
+        from . import claude_hooks
+        try:
+            claude_hooks.uninstall()
+        except OSError as error:
+            logging.getLogger("account_switcher").warning("could not remove the Claude hook: %s", error)
         return
 
     if args.url_file:
@@ -463,7 +471,7 @@ def main(argv=None):
         done.append(True)
         try:
             if integrations:
-                integrations.stop()  # Codex and Claude Code keep working without the app
+                integrations.stop(keep_hook=True)  # Codex and Claude Code keep working without the app
         finally:
             controller.close()  # stops any proxy / Claude processes this app owns
             clear_url_file(args.url_file, server.launch_url)

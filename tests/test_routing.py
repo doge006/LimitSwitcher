@@ -1158,6 +1158,34 @@ class IntegrationTests(unittest.TestCase):
             self.assertEqual(json.loads((claude_root / "settings.json").read_text()), {"model": "opus"})
             self.assertFalse(integrations.state_file.exists())
 
+    def test_hook_is_installed_with_both_toggles_off_and_kept_on_an_ordinary_quit(self):
+        # Claude Code reads its hooks when a session starts: the hook is there whatever the toggles
+        # say (so turning one on applies to open sessions), and stays when the person quits the app
+        # (so sessions opened meanwhile have it once the app is back). --quit takes it out (test_tray).
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            claude_root = root / "claude"
+            claude_root.mkdir()
+            (claude_root / "settings.json").write_text('{"model": "opus"}')
+            gateway = LiveGateway(lambda *_: None, Vault(root / "store"), {"claude": Claude(config_dir=claude_root, home=root)},
+                                  background=False)
+            gateway.manager.meta.update(afk=False, autoSwap=False, startWithWindows=False)
+            integrations = Integrations(gateway, "http://127.0.0.1:1/api/afk", "t", codex_home=root / "no-codex",
+                                        claude_root=claude_root)
+            gateway.integrations = integrations
+            with mock.patch("account_switcher.integrations.codex_present", return_value=False):
+                integrations.start()
+            try:
+                self.assertIn(claude_hooks.MARK, (claude_root / "settings.json").read_text())
+                self.assertEqual(gateway.manager.claude_limit("s1"), {"action": "stop"})
+                gateway.set_afk(True)
+                self.assertIn(claude_hooks.MARK, (claude_root / "settings.json").read_text())
+            finally:
+                integrations.stop(keep_hook=True)
+            settings = json.loads((claude_root / "settings.json").read_text())
+            self.assertIn(claude_hooks.MARK, json.dumps(settings["hooks"]))
+            self.assertNotIn("autoContinueAtUsageLimit", settings)  # the rest is put back as on any quit
+            self.assertFalse(integrations.state_file.exists())  # so the hook finds no app and does nothing
 
     def test_status_line_off_leaves_claude_code_alone_unless_the_user_has_one(self):
         # Off (the default) and no status line of their own: ours would only add an empty line.
