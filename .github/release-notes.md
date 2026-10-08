@@ -1,10 +1,12 @@
-The app offers it in Settings → **Update to 1.4.4** (or download below).
+The app offers it in Settings → **Update to 1.4.5** (or download below).
 
-## Fixed: Jev's saved share was overstated
+## Fixed: Jev compacted resumes it wasn't asked about
 
-After Jev compacted a resumed session, the toast could say "saved ~31k of 342k tokens (34%)": the tokens saved were right, but the share was worked out against Jev's own estimate of the part it can prune (messages and tool results), not the whole context with Claude Code's system prompt and tools. It now reads "saved ~31k of 342k tokens (9%)".
+Jev's compaction on resume is meant for the resumes Claude Code warns about: "Resume this conversation?", which says the resume will use a share of your 5-hour limit. It ran on every resumed session over 100k tokens whose cache had expired instead, including the many Claude Code doesn't ask about (it asks only when reloading would use about 5% of the limit or more), and the "💡 Jev compaction is on" note showed every time `/resume` opened.
 
-`/jevcompact` had the same flaw in its "of" figure ("saved ~30k of 50k tokens"): it now gives the session's whole context and the share of it. The status line, `/limits` and the context count after a compaction were already right.
+Now LimitSwitcher looks for the question itself after a session loads. When it shows, the note sits beside it and Jev compacts once you pick **Resume**, as before. When it doesn't, nothing is compacted and no note shows. Updating the app updates its Claude Code mod.
+
+Also in 1.4.4 and later: the "Jev saved" toast's share is of the whole context (an older build could say "~13k of 246k tokens (22%)"; that is 5%).
 
 ## Download
 
