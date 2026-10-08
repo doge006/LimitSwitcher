@@ -27,7 +27,7 @@ type World = { env?: Record<string, string | undefined>; posts: { path: string; 
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null } = {}): World {
+function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null; context?: number } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -42,7 +42,7 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
   on('env.get', ($, e) => ({ value: env[e.name] }))
   on('env.set', ($, e) => { env[e.name] = e.value; return { value: undefined } })
   w.env = env
-  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: 10, percent: 1 }, rateLimits: [] } }))
+  on('session.usage', () => ({ value: { startedAt: 0, context: { window: 1000, tokens: options.context ?? 10, percent: 1 }, rateLimits: [] } }))
   on('session.measure', ($, e) => ({ changed: e.changed }))
   on('ui.render', ($, e) => h($.ui.resolve(e).Box, null))  // the engine's own: nothing in the band
   on('classic.SessionStart', () => ({}))
@@ -158,7 +158,7 @@ describe('limitswitcher', () => {
   })
 
   test('/jevcompact runs the compaction by hand and says how it went under the command', { options: { statePath: STATE } }, async ($, on) => {
-    const w = world(on, { outcomes: [{ saved: 30_000 }, { skip: 'no OpenRouter key (OPENROUTER_API_KEY)' }] })
+    const w = world(on, { outcomes: [{ saved: 30_000 }, { skip: 'no OpenRouter key (OPENROUTER_API_KEY)' }], context: 300_000 })
     const registered: string[] = []
     const toasts: string[] = []
     const lines: string[] = []
@@ -175,7 +175,7 @@ describe('limitswitcher', () => {
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'session-1', outcome: 'running' })  // before it starts: the line says "Jev Compacting…"
     expect(told[1]).toMatchObject({ session: 'session-1', id: told[0].id, outcome: 'done', saved: 30_000 })
-    expect(lines).toEqual(['Jev compacted: saved ~30k of 50k tokens'])         // under "Jev compacting…", once done
+    expect(lines).toEqual(['Jev compacted: saved ~30k of 300k tokens (10%)'])  // under "Jev compacting…", once done: of the whole context
     expect(toasts).toEqual([])
     expect(w.statuses).toEqual([])
     await $.command.run({ command: 'jevcompact' })
@@ -190,7 +190,7 @@ describe('limitswitcher', () => {
     on('ui.log', ($, e) => { lines.push(String(e.text)); return { value: undefined } })
     await $.command.run({ command: 'jevcompact' })
     await (w as any).clock.settle()
-    expect(lines).toEqual(['Jev compacted: saved ~30k of 50k tokens'])
+    expect(lines).toEqual(['Jev compacted: saved ~30k tokens'])   // the mock's context (10 tokens) is less than that: no share
   })
 
   test('shows each reset alert from the app as a toast, once', { options: { statePath: STATE } }, async ($, on) => {
@@ -301,7 +301,10 @@ describe('limitswitcher', () => {
     expect(coldResume({ ...resumed, prompt_cache_likely_expired: false })).toBe(false)   // still cached: cheap
     expect(coldResume({ ...resumed, context_tokens: 40_000 })).toBe(false)              // too small to matter
     expect(coldResume({ ...resumed, agent_id: 'a1' })).toBe(false)
-    expect(resumeSavedText(289_000, 512_000, 666_000)).toBe('✅ Jev saved ~289k of 666k tokens (56%) before this resume')
+    // the share is of the whole context, not of Jev's smaller estimate of what it can prune
+    expect(resumeSavedText(31_000, 342_000)).toBe('✅ Jev saved ~31k of 342k tokens (9%) before this resume')
+    expect(resumeSavedText(289_000, 666_000)).toBe('✅ Jev saved ~289k of 666k tokens (43%) before this resume')
+    expect(resumeSavedText(31_000)).toBe('✅ Jev saved ~31k tokens before this resume')                // no context known
   })
 
   test('a message sent in the moment before Jev starts starts it and goes back into the box', { options: { statePath: STATE } }, async ($, on) => {
@@ -329,7 +332,7 @@ describe('limitswitcher', () => {
     const told = w.posts.filter((p) => p.path === '/api/compaction').map((p) => p.body)
     expect(told[0]).toMatchObject({ session: 'old-1', outcome: 'running', resume: true })
     expect(told[1]).toMatchObject({ session: 'old-1', id: told[0].id, outcome: 'done', saved: 20_000 })
-    expect(toasts).toEqual([RESUME_TOAST, resumeSavedText(20_000, 50_000, 666_000)])
+    expect(toasts).toEqual([RESUME_TOAST, '✅ Jev saved ~20k of 666k tokens (3%) before this resume'])
     expect(await bandOf($)).toBe('')                                             // and the band is gone
     expect(sent).toEqual([])                                               // nothing sent by the mod
     await $.prompt.submit({ text: 'where were we?' })                      // Enter: it goes as typed
@@ -368,7 +371,7 @@ describe('limitswitcher', () => {
     expect(sent).toEqual(['where were we?'])                               // as typed, the person's own
     release()
     await (w as any).clock.settle()
-    expect(toasts).toEqual([RESUME_TOAST, resumeSavedText(20_000, 50_000, 666_000)]) // no "press Enter"
+    expect(toasts).toEqual([RESUME_TOAST, '✅ Jev saved ~20k of 666k tokens (3%) before this resume']) // no "press Enter"
   })
 
   test('"Start a new conversation" (a /clear): nothing is compacted, the message goes at once', { options: { statePath: STATE } }, async ($, on) => {

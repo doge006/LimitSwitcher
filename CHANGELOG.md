@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.4](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.4) (2026-10-08)
+
+- Fixed: the toast after Jev compacted a resumed session overstated the share it saved ("saved ~31k of 342k tokens (34%)" instead of 9%). The share is now of the whole context. `/jevcompact`'s "of" figure is now the whole context too, not Jev's smaller estimate of what it could prune.
+
 ## [1.4.3](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.3) (2026-10-08)
 
 - Fixed: when Claude Code signed itself out, LimitSwitcher could end up with no account in use, and the taskbar view disappeared until a switch by hand in full view. The last account now stays in use, marked "Signed out"; switching to it puts its saved login back.
