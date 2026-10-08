@@ -1,8 +1,12 @@
+import json
 import os
+from pathlib import Path
+import tempfile
 import threading
 import time
 import unittest
 from urllib.parse import parse_qs, urlsplit
+from unittest import mock
 from urllib.request import ProxyHandler, Request, build_opener
 
 os.environ["PYSTRAY_BACKEND"] = "dummy"  # menu/icon logic only; no desktop needed
@@ -11,6 +15,7 @@ try:
     from account_switcher import tray
 except ImportError as error:  # pystray/Pillow not installed
     raise unittest.SkipTest(f"tray dependencies missing: {error}")
+from account_switcher import claude_hooks
 from account_switcher.web import Controller, make_server
 
 
@@ -238,3 +243,19 @@ class LogTests(unittest.TestCase):
             files = sorted(os.listdir(folder))
             self.assertEqual(files, ["app.log", "app.log.1"])
             self.assertTrue(all(os.path.getsize(os.path.join(folder, f)) <= 2000 for f in files))
+
+
+class QuitTests(unittest.TestCase):
+    def test_quit_takes_the_claude_hook_out_also_with_no_copy_running(self):
+        # An ordinary quit leaves the Auto resume hook (Integrations.stop(keep_hook=True)); the
+        # installer, updater and uninstaller run --quit, which removes it, the user's hooks kept.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            theirs = {"model": "opus", "hooks": {"StopFailure": [{"hooks": [{"type": "command", "command": "notify.sh"}]}]}}
+            (root / "settings.json").write_text(json.dumps(theirs))
+            claude_hooks.install(root / "state.json", root)
+            self.assertIn(claude_hooks.MARK, (root / "settings.json").read_text())
+            with mock.patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(root)}), \
+                    mock.patch("account_switcher.tray.user_url_file", return_value=root / "running.url"):
+                tray.main(["--quit"])
+            self.assertEqual(json.loads((root / "settings.json").read_text()), theirs)

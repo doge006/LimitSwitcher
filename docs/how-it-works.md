@@ -73,7 +73,7 @@ While it runs, every line it adds to `~/.codex/config.toml` is tagged `# account
 
 ## The Auto resume hook
 
-- The app adds a `StopFailure` hook to `~/.claude/settings.json` while it runs, whatever the toggles say, and removes it when it quits (Claude Code reads hooks when a session starts, so a hook added later would miss open sessions); the app answers "do nothing" while Auto swap and Auto resume are both off. Only its own entry is added.
+- The app adds a `StopFailure` hook to `~/.claude/settings.json` while it runs, whatever the toggles say, and leaves it there when you quit the app (Claude Code reads hooks when a session starts, so a hook added later would miss sessions already open, including ones opened while the app was closed). With the app closed the hook does nothing. Installing, updating and uninstalling take it out (an update's new copy puts it back); the app answers "do nothing" while Auto swap and Auto resume are both off. Only its own entry is added.
 - While Auto resume is on, it also turns Claude Code's own wait (`autoContinueAtUsageLimit`) **on**. With it off, a usage limit opens a "What do you want to do?" dialog that holds the session until you answer it, and the app's continue waits behind it. With it on there is only a one-line wait, which Claude Code cancels by itself when the account is switched or a new turn starts. The hook also skips its continue if the session has already gone on by itself while it waited. Your own setting is put back when Auto resume is off or the app quits.
 
 ## Staying clear of rate limits
