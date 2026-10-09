@@ -266,13 +266,14 @@ describe('cheap to get again', () => {
     expect(cheapToRedo(call('WebFetch', { url: 'https://x' }))).toBe(false)
   })
 
-  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole', () => {
+  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole; a low score is stubbed either way', () => {
     const options = resolveOptions()
     const read = collectToolCalls([user('a'), use('r', 'Bash', { command: 'cat big.py' }), out('r', LOG), said('b')], 0)[0]!
     const run = collectToolCalls([user('a'), use('t', 'Bash', { command: 'npm test' }), out('t', LOG), said('b')], 0)[0]!
     expect(decide(read, 0.55, options).action).toBe('trim')
     expect(decide(run, 0.55, options).action).toBe('keep')
-    expect(decide(read, 0.4, options).action).toBe('stub')
+    expect(decide(read, 0.4, options).action).toBe('trim')
+    expect(decide(read, 0.2, options).action).toBe('stub')
     expect(decide(run, 0.4, options).action).toBe('trim')
   })
 })

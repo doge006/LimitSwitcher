@@ -159,7 +159,10 @@ async function run(judge: Judge, sessions: readonly Session[], spend: { spent: n
         if (now.get(call.tool_use_id) === call.resultText) continue
         const missing = [...factsIn(call.resultText)].filter((f) => !kept.has(f) && used.has(f))
         row.lost += missing.length
-        if (needed && missing.length >= 2) row.missed += 1
+        if (needed && missing.length >= 2) {
+          row.missed += 1
+          if (process.env.DEBUG_MISSED) { const d = result.decisions.find((x) => x.id === collectToolCalls(prefix, 8).find((c) => c.tool_use_id === call.tool_use_id)?.id); console.error(`MISSED ${judge.name} ${session.name}@${at} ${call.tool} ${call.resultText.length}ch ${JSON.stringify(call.input).slice(0, 80)} action=${d?.action} need=${d?.need?.toFixed(2)} missing=${missing.slice(0, 6).join(',')}`) }
+        }
       }
     }
   }
@@ -178,7 +181,7 @@ async function main(): Promise<void> {
   const synth = Number(arg('--synth') ?? (files.length ? 0 : 6))
   const tasks = Number(arg('--tasks') ?? 14)
   const root = process.env.SYNTH_ROOT ?? resolve(import.meta.dir, '../../..')
-  for (let seed = 1; seed <= synth; seed++) sessions.push({ name: `synth${seed}`, messages: synthSession({ seed, tasks: tasks + (seed % 3) * 6, root }) })
+  for (let seed = Number(process.env.SYNTH_FROM ?? 1); seed <= synth; seed++) sessions.push({ name: `synth${seed}`, messages: synthSession({ seed, tasks: tasks + (seed % 3) * 6, root }) })
   if (!sessions.length) throw new Error('no sessions')
 
   const judges = [...OFFLINE]
