@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.6](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.6) (2026-10-09)
+
+- Jev compaction loses far fewer details: outputs Jev is unsure about keep their start and end instead of being removed, and the notes left in place of removed outputs name what they held more completely, without repeating names. On 12 benchmark sessions, no output needed later was cut (36 were before) and lost details dropped from 173 to 18; the context still shrinks about 85% (87% before).
+
 ## [1.4.5](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.5) (2026-10-08)
 
 - Fixed: Jev compacted every resumed session over 100k tokens, and said "Jev compaction is on" when you opened `/resume`, even when Claude Code never asked "Resume this conversation?". Jev now compacts on resume only when that question actually shows (Claude Code asks only when the resume would use a real share of your 5-hour limit), and the note shows beside the question only.

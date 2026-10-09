@@ -70,7 +70,7 @@ describe('compact', () => {
       expect(m.toolUses.map((u) => u.tool_use_id)).toEqual(before[i]!.toolUses.map((u) => u.tool_use_id))
       expect((m.toolResults ?? []).map((r) => r.tool_use_id)).toEqual((before[i]!.toolResults ?? []).map((r) => r.tool_use_id))
     })
-    expect(byLabel(result.messages, 'b1').text).toContain(`${NOTE_TAG} removed this Bash output`)
+    expect(byLabel(result.messages, 'b1').text).toContain(`${NOTE_TAG} removed Bash output`)
     expect(byLabel(result.messages, 't1').text).toBe(FAIL)                 // an error: pinned
     expect(byLabel(result.messages, 'r1').text).toContain('read again later')  // superseded by r2
     expect(byLabel(result.messages, 'r2').text).toBe(FILE)                 // the latest read stays
@@ -266,13 +266,14 @@ describe('cheap to get again', () => {
     expect(cheapToRedo(call('WebFetch', { url: 'https://x' }))).toBe(false)
   })
 
-  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole', () => {
+  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole; a low score is stubbed either way', () => {
     const options = resolveOptions()
     const read = collectToolCalls([user('a'), use('r', 'Bash', { command: 'cat big.py' }), out('r', LOG), said('b')], 0)[0]!
     const run = collectToolCalls([user('a'), use('t', 'Bash', { command: 'npm test' }), out('t', LOG), said('b')], 0)[0]!
     expect(decide(read, 0.55, options).action).toBe('trim')
     expect(decide(run, 0.55, options).action).toBe('keep')
-    expect(decide(read, 0.4, options).action).toBe('stub')
+    expect(decide(read, 0.4, options).action).toBe('trim')
+    expect(decide(read, 0.2, options).action).toBe('stub')
     expect(decide(run, 0.4, options).action).toBe('trim')
   })
 })
@@ -287,7 +288,7 @@ describe('notes name what they removed', () => {
     expect(note).toContain('It held:')
     expect(note).toContain('resolve_account')
     expect(note).toContain('limit_retries=17')
-    expect(note).toContain('Re-run the tool before relying on its details')
+    expect(note).toContain('Re-run it for details')
     expect(note).not.toContain('npm run build') // still shown in the call itself: not named again
     const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
     expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
@@ -382,7 +383,7 @@ describe('images', () => {
     const old = byLabel(result.messages, 's1')
     expect(old.result).toBeUndefined() // the image goes with the record
     expect(old.text).toContain('an image, ~1534 tokens')
-    expect(old.text).toContain('Re-run the tool')
+    expect(old.text).toContain('Re-run it')
     expect(byLabel(result.messages, 's2').result).toEqual(shot(1600, 900)) // still needed: whole
     expect(result.stats.stubbed).toBe(1)
     expect(result.stats.tokensBefore - result.stats.tokensAfter).toBeGreaterThan(1400)

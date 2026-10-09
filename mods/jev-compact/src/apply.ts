@@ -3,7 +3,7 @@
 // inputs of file-writing tools and scripts are shortened (what they did is on disk). Every changed spot
 // says so, so the model re-runs a tool instead of guessing what was there.
 
-import { factIndex, factsIn } from './facts.ts'
+import { factIndex, factsIn, indexBudget } from './facts.ts'
 import { imageTokensOf } from './images.ts'
 import type { Decision, Message, ToolCall, ToolResult, ToolUse } from './types.ts'
 
@@ -27,11 +27,11 @@ function held(names: readonly string[]): string {
 }
 
 export function stubText(call: ToolCall, superseded: boolean, index: readonly string[] = []): string {
-  const why = superseded ? 'the same file is read again later in this conversation' : 'it was judged no longer needed'
+  const why = superseded ? 'file read again later' : 'judged not needed'
   const what = call.imageTokens > 0
-    ? `this ${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
-    : `this ${call.tool} output (${call.resultChars} chars)`
-  return `${NOTE_TAG} removed ${what} before an account swap: ${why}.${superseded ? '' : held(index)} Re-run the tool before relying on its details.]`
+    ? `${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
+    : `${call.tool} output (${call.resultChars} chars)`
+  return `${NOTE_TAG} removed ${what}, ${why}.${held(index)} Re-run it for details.]`
 }
 
 /** The middle of `text` replaced by a note (naming what it held), or `text` when there is nothing to cut. */
@@ -39,7 +39,7 @@ export function trimText(text: string, head: number, tail: number, known: Readon
   if (text.length <= head + tail) return text
   const middle = text.slice(head, text.length - tail)
   const omitted = middle.length
-  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, undefined, visible))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
+  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, indexBudget(middle.length), visible))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
 }
 
 /** A file-writing tool's input with each string longer than `max` cut to its head and tail. */
@@ -72,14 +72,25 @@ export function editsFor(
   const edits = new Map<string, Edit>()
   // What the assistant itself worked with (its tool inputs): those names come first in a note's index
   const known = factsIn(calls.map((call) => JSON.stringify(call.input)).join('\n'))
-  for (const decision of decisions) {
+  // Newest first: a name a newer note already gives is not repeated in an older one
+  const named = new Set(visible)
+  const index = (text: string) => {
+    const picked = factIndex(text, known, indexBudget(text.length), named)
+    for (const fact of picked) named.add(fact)
+    return picked
+  }
+  for (const decision of [...decisions].reverse()) {
     const call = byId.get(decision.id)
     if (!call || decision.action === 'pinned') continue
     const edit: Edit = {}
     if (decision.action === 'stub' || decision.action === 'superseded') {
-      edit.result = stubText(call, decision.action === 'superseded', factIndex(call.resultText, known, undefined, visible))
+      edit.result = stubText(call, decision.action === 'superseded', index(call.resultText))
     } else if (decision.action === 'trim') {
-      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, visible)
+      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, named)
+      if (text !== call.resultText) {
+        const middle = call.resultText.slice(options.trimHeadChars, call.resultText.length - options.trimTailChars)
+        for (const fact of factIndex(middle, known, indexBudget(middle.length), named)) named.add(fact)
+      }
       if (text !== call.resultText) edit.result = text
     }
     if (WRITE_TOOLS.has(call.tool) || SCRIPT_TOOLS.has(call.tool)) {
