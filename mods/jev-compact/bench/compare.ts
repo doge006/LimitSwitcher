@@ -20,7 +20,8 @@
 //             (0.5 = chance, 1 = perfect); n/a for constant judges
 //   ms        wall time per compaction (requests run in parallel, as in the mod); $ = summed usage.cost
 
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
 
 import { compact } from '../src/compact.ts'
@@ -137,7 +138,7 @@ async function run(judge: Judge, sessions: readonly Session[], spend: { spent: n
       const started = performance.now()
       let result
       try {
-        result = await compact(prefix, asker)
+        result = await compact(prefix, asker, JSON.parse(process.env.COMPACT_OPTIONS ?? '{}'))
       } catch (error) {
         row.errors += 1
         console.error(`  ${judge.name} ${session.name}@${at}: ${(error as Error).message}`)
@@ -171,7 +172,7 @@ function arg(name: string): string | undefined {
 }
 
 async function main(): Promise<void> {
-  const valued = new Set(['--synth', '--models', '--budget', '--tasks'])
+  const valued = new Set(['--synth', '--models', '--budget', '--tasks', '--cache'])
   const files = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && !valued.has(all[i - 1] ?? ''))
   const sessions: Session[] = files.map((f) => ({ name: basename(f).slice(0, 8), messages: messagesOf(readFileSync(f, 'utf8')).messages }))
   const synth = Number(arg('--synth') ?? (files.length ? 0 : 6))
@@ -189,7 +190,28 @@ async function main(): Promise<void> {
       const response = await fetch(url, init)
       return { status: response.status, ok: response.ok, text: await response.text() }
     }
-    for (const model of models) judges.push({ name: model, live: true, make: () => askerOver(transport, { apiKey: key, model }) })
+    // --cache file: answers recorded once (keyed by model, state and questions) replay for free
+    const cacheFile = arg('--cache')
+    const cache: Record<string, unknown> = cacheFile && existsSync(cacheFile) ? JSON.parse(readFileSync(cacheFile, 'utf8')) : {}
+    const save = () => { if (cacheFile) writeFileSync(cacheFile, JSON.stringify(cache)) }
+    for (const model of models) {
+      judges.push({
+        name: model, live: true,
+        make: () => {
+          const live = askerOver(transport, { apiKey: key, model })
+          return {
+            ask: async (state, questions) => {
+              const id = createHash('sha256').update(JSON.stringify([model, state, questions])).digest('hex')
+              if (cache[id]) return { ...(cache[id] as Awaited<ReturnType<JevAsker['ask']>>), usage: undefined }
+              const response = await live.ask(state, questions)
+              cache[id] = response
+              save()
+              return response
+            },
+          }
+        },
+      })
+    }
   }
 
   for (const s of sessions) {
