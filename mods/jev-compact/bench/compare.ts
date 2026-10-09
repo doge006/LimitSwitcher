@@ -117,6 +117,7 @@ const OFFLINE: Judge[] = [
   },
 ]
 
+const breakdown: Record<string, number> = {}
 type Row = { before: number; after: number; lost: number; needed: number; missed: number; ms: number; cost: number; requests: number; points: { p: number; y: boolean }[]; errors: number }
 
 async function run(judge: Judge, sessions: readonly Session[], spend: { spent: number; budget: number }): Promise<Row> {
@@ -145,6 +146,16 @@ async function run(judge: Judge, sessions: readonly Session[], spend: { spent: n
         continue
       }
       row.ms += performance.now() - started
+      if (process.env.BREAKDOWN && judge.live) {
+        const byUse = new Map(collectToolCalls(prefix, 8).map((c) => [c.tool_use_id, c] as const))
+        const action = new Map(result.decisions.map((d) => [d.id, d.action] as const))
+        const add = (k: string, n: number) => (breakdown[k] = (breakdown[k] ?? 0) + n)
+        for (const m of result.messages) {
+          add(`${m.role} text`, m.text.length)
+          for (const u of m.toolUses) add('tool inputs', JSON.stringify(u.input).length)
+          for (const t of m.toolResults ?? []) { const c = byUse.get(t.tool_use_id); add(`output:${c?.pinned ? 'pinned' : action.get(c?.id ?? '') ?? '?'}`, t.text.length) }
+        }
+      }
       row.before += result.stats.charsBefore
       row.after += result.stats.charsAfter
       row.cost += result.stats.jevCostUsd
@@ -228,10 +239,16 @@ async function main(): Promise<void> {
     const r = await run(judge, sessions, spend)
     const a = auc(r.points)
     const done = runs - r.errors
-    console.log(`${judge.name.padEnd(32)} ${`${Math.round((1 - r.after / Math.max(1, r.before)) * 100)}%`.padStart(6)} ${String(r.lost).padStart(6)} ` +
+    console.log(`${judge.name.padEnd(32)} ${`${((1 - r.after / Math.max(1, r.before)) * 100).toFixed(1)}%`.padStart(6)} ${String(r.lost).padStart(6)} ` +
       `${`${r.missed}/${r.needed}`.padStart(7)} ${(a === null || new Set(r.points.map((x) => x.p)).size < 2 ? 'n/a' : a.toFixed(3)).padStart(7)} ` +
       `${String(Math.round(r.ms / Math.max(1, done))).padStart(14)} ${String(r.requests).padStart(9)}  ${r.cost.toFixed(5)}${r.errors ? `  (${r.errors} failed)` : ''}`)
   }
 }
 
-if (import.meta.main) await main()
+if (import.meta.main) {
+  await main()
+  if (process.env.BREAKDOWN) {
+    const total = Object.values(breakdown).reduce((a, b) => a + b, 0)
+    for (const [k, v] of Object.entries(breakdown).sort((a, b) => b[1] - a[1])) console.log(`${(v / total * 100).toFixed(1).padStart(5)}%  ${k}`)
+  }
+}
