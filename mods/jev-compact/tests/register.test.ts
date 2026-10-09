@@ -59,7 +59,7 @@ describe('jev-compact', () => {
     expect(w.requests[0]!.body.model).toBe('typesafe/jev-1.13')
     expect(result.skip).toBeUndefined()
     expect(result.messages).toHaveLength(transcript().length)
-    expect(result.messages![2]!.toolResults![0]!.text).toContain('[LimitSwitcher removed this Bash output')
+    expect(result.messages![2]!.toolResults![0]!.text).toContain('[LimitSwitcher removed Bash output')
     expect(result.messages![0]!.handle).toBe('h0')
     if (result.skip !== undefined) throw new Error(result.skip)
     expect(result.tokensAfter!).toBeLessThan(result.tokensBefore!)

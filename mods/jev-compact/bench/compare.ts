@@ -176,7 +176,7 @@ async function main(): Promise<void> {
   const sessions: Session[] = files.map((f) => ({ name: basename(f).slice(0, 8), messages: messagesOf(readFileSync(f, 'utf8')).messages }))
   const synth = Number(arg('--synth') ?? (files.length ? 0 : 6))
   const tasks = Number(arg('--tasks') ?? 14)
-  const root = resolve(import.meta.dir, '../../..')
+  const root = process.env.SYNTH_ROOT ?? resolve(import.meta.dir, '../../..')
   for (let seed = 1; seed <= synth; seed++) sessions.push({ name: `synth${seed}`, messages: synthSession({ seed, tasks: tasks + (seed % 3) * 6, root }) })
   if (!sessions.length) throw new Error('no sessions')
 

@@ -8,7 +8,9 @@ const STDLIB = /^(time|json|os|sys|re|io|math|random|shutil|subprocess|threading
 // How much of a note may name what was removed (only what the conversation no longer shows anywhere
 // else). Measured live on the benchmark session (facts lost / outputs needed later / tokens after):
 // no index 27-32 / 12 / 108k; 600 chars 7 / 2 / 114k; 1200 chars 2 / 1 / 116k.
-export const INDEX_CHARS = 1200
+// With names given once across notes (newest note first), on 6 synthetic sessions (smaller / facts lost):
+// 900 chars 88% / 76; 1200 chars 88-89% / 64; 1600 chars 88% / 49.
+export const INDEX_CHARS = 1600
 const DEFINES = /\b(?:def|class|function|interface|type|enum|struct|fn|func|const|let|var)\s+([A-Za-z_][\w]*)/g
 
 /** Identifier-like (a _ . / = or digit, or mixedCase), not a standard-library call. */

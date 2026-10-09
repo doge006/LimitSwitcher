@@ -70,7 +70,7 @@ describe('compact', () => {
       expect(m.toolUses.map((u) => u.tool_use_id)).toEqual(before[i]!.toolUses.map((u) => u.tool_use_id))
       expect((m.toolResults ?? []).map((r) => r.tool_use_id)).toEqual((before[i]!.toolResults ?? []).map((r) => r.tool_use_id))
     })
-    expect(byLabel(result.messages, 'b1').text).toContain(`${NOTE_TAG} removed this Bash output`)
+    expect(byLabel(result.messages, 'b1').text).toContain(`${NOTE_TAG} removed Bash output`)
     expect(byLabel(result.messages, 't1').text).toBe(FAIL)                 // an error: pinned
     expect(byLabel(result.messages, 'r1').text).toContain('read again later')  // superseded by r2
     expect(byLabel(result.messages, 'r2').text).toBe(FILE)                 // the latest read stays
@@ -287,7 +287,7 @@ describe('notes name what they removed', () => {
     expect(note).toContain('It held:')
     expect(note).toContain('resolve_account')
     expect(note).toContain('limit_retries=17')
-    expect(note).toContain('Re-run the tool before relying on its details')
+    expect(note).toContain('Re-run it for details')
     expect(note).not.toContain('npm run build') // still shown in the call itself: not named again
     const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
     expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
@@ -382,7 +382,7 @@ describe('images', () => {
     const old = byLabel(result.messages, 's1')
     expect(old.result).toBeUndefined() // the image goes with the record
     expect(old.text).toContain('an image, ~1534 tokens')
-    expect(old.text).toContain('Re-run the tool')
+    expect(old.text).toContain('Re-run it')
     expect(byLabel(result.messages, 's2').result).toEqual(shot(1600, 900)) // still needed: whole
     expect(result.stats.stubbed).toBe(1)
     expect(result.stats.tokensBefore - result.stats.tokensAfter).toBeGreaterThan(1400)

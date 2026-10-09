@@ -27,11 +27,11 @@ function held(names: readonly string[]): string {
 }
 
 export function stubText(call: ToolCall, superseded: boolean, index: readonly string[] = []): string {
-  const why = superseded ? 'the same file is read again later in this conversation' : 'it was judged no longer needed'
+  const why = superseded ? 'file read again later' : 'judged not needed'
   const what = call.imageTokens > 0
-    ? `this ${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
-    : `this ${call.tool} output (${call.resultChars} chars)`
-  return `${NOTE_TAG} removed ${what} before an account swap: ${why}.${superseded ? '' : held(index)} Re-run the tool before relying on its details.]`
+    ? `${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
+    : `${call.tool} output (${call.resultChars} chars)`
+  return `${NOTE_TAG} removed ${what}, ${why}.${held(index)} Re-run it for details.]`
 }
 
 /** The middle of `text` replaced by a note (naming what it held), or `text` when there is nothing to cut. */
@@ -72,14 +72,22 @@ export function editsFor(
   const edits = new Map<string, Edit>()
   // What the assistant itself worked with (its tool inputs): those names come first in a note's index
   const known = factsIn(calls.map((call) => JSON.stringify(call.input)).join('\n'))
-  for (const decision of decisions) {
+  // Newest first: a name a newer note already gives is not repeated in an older one
+  const named = new Set(visible)
+  const index = (text: string) => {
+    const picked = factIndex(text, known, undefined, named)
+    for (const fact of picked) named.add(fact)
+    return picked
+  }
+  for (const decision of [...decisions].reverse()) {
     const call = byId.get(decision.id)
     if (!call || decision.action === 'pinned') continue
     const edit: Edit = {}
     if (decision.action === 'stub' || decision.action === 'superseded') {
-      edit.result = stubText(call, decision.action === 'superseded', factIndex(call.resultText, known, undefined, visible))
+      edit.result = stubText(call, decision.action === 'superseded', index(call.resultText))
     } else if (decision.action === 'trim') {
-      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, visible)
+      const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, named)
+      if (text !== call.resultText) for (const fact of factIndex(call.resultText.slice(options.trimHeadChars, call.resultText.length - options.trimTailChars), known, undefined, named)) named.add(fact)
       if (text !== call.resultText) edit.result = text
     }
     if (WRITE_TOOLS.has(call.tool) || SCRIPT_TOOLS.has(call.tool)) {
