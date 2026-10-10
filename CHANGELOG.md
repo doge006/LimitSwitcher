@@ -5,7 +5,6 @@ The highlights of each release, newest first. The full notes for each version ar
 ## [1.4.8](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.8) (2026-10-10)
 
 - Fixed: after `/compact` or one of Claude Code's own compactions, the status line's `ctx` kept the size from before it until the next reply. It now shows the compacted size right away.
-
 - Fixed: the taskbar view could stay on top of a full-screen video (Steam's player) until you clicked it, then stay away after the video was minimized. It now hides while any window covers the taskbar's display, whichever window has focus, and comes back as soon as that window is minimized or closed.
 
 ## [1.4.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.7) (2026-10-10)
