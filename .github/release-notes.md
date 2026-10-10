@@ -1,13 +1,9 @@
-The app offers it in Settings → **Update to 1.4.7** (or download below).
+The app offers it in Settings → **Update to 1.4.8** (or download below).
 
-## Taskbar view no longer covers the clock
+## Taskbar view and full-screen video
 
-On Windows 11 the taskbar view could overlap the clock and date, mostly when the date is wide (10/10/2026). The blocks kept clear of the notification area's window, but the clock can reach past that window's left edge. They now also keep clear of the clock and the notification area's icons themselves, so the space between them is never taken.
-
-## Full-screen apps
-
-- The taskbar view no longer stays on top of an app that goes full screen without another window coming forward (a browser's F11, a video's full-screen button), which made you click into the app first. Windows now tells LimitSwitcher the moment a full-screen app opens or closes.
-- It also no longer stays away after a full-screen app closes until you switch windows.
+- The taskbar view no longer stays on top of a full-screen video (Steam's player, for one) until you click it. It hides while any window covers the display, whichever window has focus, and it keeps watching for a few seconds after a window comes forward, since apps take a moment to go full screen.
+- It also comes back as soon as the full-screen window is minimized or closed, instead of staying away.
 
 ## Download
 

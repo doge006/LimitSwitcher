@@ -59,6 +59,7 @@ sig(shell32.SHQueryUserNotificationState, ctypes.c_long, ctypes.POINTER(ctypes.c
 sig(user32.GetAncestor, wintypes.HWND, wintypes.HWND, wintypes.UINT)
 WS_EX_TOOLWINDOW, WS_EX_APPWINDOW = 0x80, 0x40000
 sig(user32.GetWindow, wintypes.HWND, wintypes.HWND, wintypes.UINT)
+sig(user32.IsIconic, wintypes.BOOL, wintypes.HWND)
 sig(user32.GetWindowTextW, ctypes.c_int, wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
 try:
     dwmapi = ctypes.WinDLL("dwmapi")
@@ -288,8 +289,36 @@ def full_screen_app(bar_rect):
     if not rect:
         return False
     screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
-    return (rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right
-            and rect[3] >= screen.bottom)
+    return covers(rect, screen)
+
+
+def covers(rect, screen):
+    return bool(rect) and (rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right
+                           and rect[3] >= screen.bottom)
+
+
+def covered_from_above(bar_hwnd, bar_rect, ours, tool_windows):
+    """Is the taskbar under a window covering its whole display? Walks the windows above it in
+    z-order (those can hide it): visible, not minimized, not cloaked, not ours. The taskbar view's
+    own check that does not depend on which window has focus (a video switching to full screen
+    from its own button, Steam's player). Tool windows count only while Explorer says a full-screen
+    app is open (`tool_windows`): otherwise they are screenshot tools and overlays."""
+    screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
+    window = user32.GetWindow(bar_hwnd, 3)  # GW_HWNDPREV: the next window up
+    for _ in range(300):
+        if not window:
+            return False
+        if window not in ours and user32.IsWindowVisible(window) and not user32.IsIconic(window):
+            ex = user32.GetWindowLongW(window, -20)
+            cloaked = ctypes.c_int(0)
+            if dwmapi and dwmapi.DwmGetWindowAttribute(window, 14, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
+                pass
+            elif ex & 0x20:  # WS_EX_TRANSPARENT: a click-through overlay, never what hides the taskbar
+                pass
+            elif (tool_windows or not ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) and covers(window_rect(window), screen):
+                return True
+        window = user32.GetWindow(window, 3)
+    return False
 
 
 def button_windows(with_titles):
@@ -484,6 +513,7 @@ class TaskbarView:
         self.appbar_message = None
         self.appbar = False      # registered as an app bar: Explorer tells us when a full-screen app opens
         self.full_screen = False  # Explorer's word (ABN_FULLSCREENAPP): a full-screen app is open somewhere
+        self.settle_until = 0.0  # keep checking for full screen until then (an app takes a moment to get there)
 
     # ---------- wiring into pystray's hidden window ----------
     def attach(self, icon):
@@ -573,8 +603,6 @@ class TaskbarView:
             self.stale = True
             self.sync()
         elif wparam == TIMER_COVER:
-            if not any(self.covered.values()):
-                user32.KillTimer(self.hwnd, TIMER_COVER)
             self.follow_taskbar()
 
     def on_shell(self, wparam, lparam):
@@ -583,35 +611,39 @@ class TaskbarView:
         if code in (HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED):
             self.later()  # a taskbar button came or went: the free space moved
         elif code == HSHELL_WINDOWACTIVATED:  # includes full-screen ("rude") apps
-            self.follow_taskbar()
-            if not any(self.covered.values()):
-                user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
+            self.settle()
 
     def on_appbar(self, wparam, lparam):
         event(f"taskbar: app bar notice {wparam}")
         if wparam == ABN_FULLSCREENAPP:
             self.full_screen = bool(lparam)
-            self.follow_taskbar()
-            user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once the app has settled
+            self.settle()
         elif wparam in (ABN_STATECHANGE, ABN_POSCHANGED):
             self.later()
+
+    def settle(self, seconds=3.0):
+        """Check now, then a few times a second for a moment: a window going full screen (or
+        leaving it) gets there over a few frames, after the event that told us."""
+        self.settle_until = time.monotonic() + seconds
+        self.follow_taskbar()
 
     def follow_taskbar(self):
         """Hide a display's blocks when an app is full screen there, and bring them back after.
 
         Covered: the foreground window covers the whole display (games, video, a browser's F11),
-        or Explorer says a full-screen app is open (ABN_FULLSCREENAPP, which comes even when no
-        other window comes forward) and has taken this display's taskbar out of the always-on-top
-        band. The taskbar's band alone is not enough: Explorer sometimes leaves it out after the
-        app has gone, and the blocks then stayed away until another window came forward.
+        or a window above the taskbar in z-order covers it (whatever has focus: Steam's video
+        player). Explorer's ABN_FULLSCREENAPP, which comes even when no other window comes
+        forward, starts a check. Neither counts once that window is minimized or gone, so the
+        blocks come back as soon as the taskbar can be seen again.
         Screenshot tools and overlays are tool windows, so they never make the blocks hide.
         Instant, with no fade: the taskbar does not fade. Each display on its own: a game on one
         screen leaves the other screen's blocks up."""
         uncovered = False
+        ours = {block.hwnd for block in self.blocks.values() if block.hwnd} | set(fl.Popup._windows)
         for key, bar in self.bars.items():
-            lowered = not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST
             covered = bool(user32.IsWindow(bar.hwnd)
-                           and ((self.full_screen and lowered) or full_screen_app(bar.rect)))
+                           and (full_screen_app(bar.rect)
+                                or covered_from_above(bar.hwnd, bar.rect, ours, self.full_screen)))
             if covered == self.covered.get(key, False):
                 continue
             self.covered[key] = covered
@@ -619,8 +651,12 @@ class TaskbarView:
             for (display, _), block in self.blocks.items():
                 if display == key and block.hwnd and not block.closing:
                     user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
-        if any(self.covered.values()):  # the full-screen app may leave without activating anything
+        if time.monotonic() < self.settle_until:
+            user32.SetTimer(self.hwnd, TIMER_COVER, 250, None)
+        elif any(self.covered.values()) or self.full_screen:  # it may leave (or arrive) without activating anything
             user32.SetTimer(self.hwnd, TIMER_COVER, 1000, None)
+        elif self.hwnd:
+            user32.KillTimer(self.hwnd, TIMER_COVER)
         if uncovered:
             self.sync()  # blocks that were due while it was down
 
