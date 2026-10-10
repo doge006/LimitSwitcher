@@ -5,6 +5,7 @@ The highlights of each release, newest first. The full notes for each version ar
 ## [1.4.9](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.9) (2026-10-10)
 
 - Fixed: since 1.4.8 the taskbar view could disappear when you switched between ordinary windows. It now follows the same rule as the taskbar itself: it hides only while the app you are using is full screen on that display, and whenever the taskbar can be seen, so can the blocks.
+- Fixed: `/jevcompact`, the resume toast and the status line's ctx after a Jev compaction said Jev saved ~0k (0%). Claude Code now reports its own size after a compaction, on another scale than Jev's, and the two were subtracted. The saved figure is now measured from the conversation before and after.
 
 ## [1.4.8](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.8) (2026-10-10)
 

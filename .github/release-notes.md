@@ -6,6 +6,10 @@ The app offers it in Settings → **Update to 1.4.9** (or download below).
 
 Now the taskbar view follows the taskbar's own rule: it hides only while the app you are using is full screen on that display (a game, a video, a browser's F11), and comes back the moment you switch away, minimize or leave full screen. Whenever the taskbar can be seen, so can the blocks.
 
+## Jev compaction's saved figure
+
+Fixed: `/jevcompact`, the resume toast and the status line's ctx after a Jev compaction said Jev saved ~0k (0%). Claude Code now reports its own size after a compaction, on another scale than Jev's, and the two were subtracted. The saved figure is now measured from the conversation before and after.
+
 ## Download
 
 | | |
