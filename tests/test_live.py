@@ -877,24 +877,6 @@ class LiveTests(unittest.TestCase):
             fresh = providers.Claude.refresh(self.providers["claude"], secret)["credentials"]["claudeAiOauth"]
         self.assertEqual(fresh["refreshTokenExpiresAt"], 1)
 
-    def test_a_refused_usage_check_says_whose_login_and_whether_it_was_revoked_early(self):
-        from unittest import mock
-        from account_switcher import providers
-        self.assertIn("expired 30 min ago", providers.expiry_note(1000.0, now=2800.0))
-        self.assertIn("120 min left (revoked", providers.expiry_note(8200.0, now=1000.0))
-        secret = {"credentials": {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r",
-                                                    "expiresAt": int((time.time() + 7200) * 1000)}},
-                  "oauthAccount": {"accountUuid": "u", "emailAddress": "x@example.com"}}
-
-        def refused(*_, **__):
-            raise providers.ProviderError("Login expired", relogin=True)
-        with mock.patch.object(providers, "_http", refused), self.assertLogs("account_switcher.providers") as logs:
-            with self.assertRaises(providers.ProviderError):
-                self.providers["claude"].fetch(secret, allow_refresh=False)
-        line = "\n".join(logs.output)
-        self.assertIn("x@example.com " + providers.token_mark("r"), line)
-        self.assertIn("min left (revoked", line)
-
     def test_accounts_not_in_use_are_checked_every_few_minutes_even_after_rate_limits(self):
         from account_switcher.live import IDLE_PACE_CAP, PROVIDER_IDLE
         m = self.manager()

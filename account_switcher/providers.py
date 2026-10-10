@@ -35,17 +35,6 @@ def token_mark(token):
     return "#" + hashlib.sha256(token.encode()).hexdigest()[:8] if token else "#none"
 
 
-def expiry_note(expires, now=None):
-    """How a refused access token stood, for app.log: refused well before its expiry means the login
-    was revoked (signed in or renewed somewhere else), not simply out of date."""
-    if not expires:
-        return "access token expiry unknown"
-    minutes = round((expires - (now or time.time())) / 60)
-    if minutes <= 1:
-        return f"access token expired {-minutes} min ago"
-    return f"access token still had {minutes} min left (revoked: signed in or renewed elsewhere?)"
-
-
 class ProviderError(Exception):
     """Short, user-facing problem description."""
 
@@ -379,9 +368,6 @@ class Claude:
                                                   "anthropic-beta": "oauth-2025-04-20", "Accept": "application/json",
                                                   "User-Agent": CLAUDE_CODE_AGENT})
         except ProviderError as error:
-            if error.relogin:
-                log.warning("Claude login of %s %s: usage check refused, %s", (secret.get("oauthAccount") or {}).get("emailAddress") or "?",
-                            token_mark(oauth.get("refreshToken")), expiry_note(expires))
             # Anthropic answers an expired access token with 429, not 401: a saved login (ours to
             # renew) whose token has expired, or whose expiry is unknown, is renewed and asked again.
             expired = not expires or expires < time.time() + 60
@@ -409,10 +395,7 @@ class Claude:
             _, token = _http("POST", self.TOKEN_URL, {"Accept": "application/json", "User-Agent": CLAUDE_TOKEN_AGENT},
                              {"grant_type": "refresh_token", "refresh_token": oauth["refreshToken"], "client_id": self.CLIENT_ID})
         except ProviderError as error:
-            ends = oauth.get("refreshTokenExpiresAt")
-            log.warning("Claude login of %s: renewal refused (%s) %s: %s%s", who, why, token_mark(oauth["refreshToken"]), error,
-                        f" (its sign-in was due to end {datetime.fromtimestamp(ends / 1000):%Y-%m-%d %H:%M})"
-                        if isinstance(ends, (int, float)) and ends > 0 else "")
+            log.warning("Claude login of %s: renewal refused (%s) %s: %s", who, why, token_mark(oauth["refreshToken"]), error)
             if error.relogin or "error 400" in str(error):
                 raise ProviderError("Login expired; sign in again", relogin=True)
             raise
