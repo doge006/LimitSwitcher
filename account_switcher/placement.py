@@ -68,7 +68,7 @@ def taskbar_buttons(spans, rect):
             and top >= rect[1] - 2 and bottom <= rect[3] + 2]
 
 
-WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_LAYERED, WS_EX_NOACTIVATE = 0x20, 0x80, 0x80000, 0x08000000
+WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x20, 0x80, 0x08000000
 
 
 def covers(rect, screen):
@@ -86,14 +86,12 @@ def full_screen_window(windows, foreground_pid, skip_pids, screen):
     Windows' own taskbar: it stays up over a full-screen app you are not using, so the blocks do
     too, and a window of any other app (or an overlay) covering the display never hides them.
     skip_pids: Explorer (desktop, Alt+Tab, Task view: full-screen windows of its own) and this app.
-    Click-through overlays, layered tool windows (screenshot tools) and windows that never take
+    Click-through overlays, tool windows (screenshot tools' overlays) and windows that never take
     focus don't count either."""
     if not foreground_pid or foreground_pid in skip_pids:
         return False
     for pid, rect, ex, cloaked, minimized in windows:
-        if pid != foreground_pid or cloaked or minimized or ex & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE):
-            continue
-        if ex & WS_EX_TOOLWINDOW and ex & WS_EX_LAYERED:
+        if pid != foreground_pid or cloaked or minimized or ex & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW):
             continue
         if covers(rect, screen):
             return True

@@ -64,7 +64,7 @@ class PlacementTests(unittest.TestCase):
         maximized = (11, (-8, -8, 1928, 1040), 0, False, False)       # stops at the taskbar
         video = (22, (0, 0, 1920, 1080), 0, False, False)             # Steam's player, full screen
         shell = (33, (0, 0, 1920, 1080), 0x80, False, False)           # Explorer: desktop, Alt+Tab host
-        overlay = (44, (0, 0, 1920, 1080), 0x80 | 0x80000, False, False)  # a layered tool window
+        overlay = (44, (0, 0, 1920, 1080), 0x80, False, False)          # a screenshot tool's overlay
         click_through = (22, (0, 0, 1920, 1080), 0x20 | 0x80000, False, False)
         self.assertTrue(full_screen_window([maximized, video], 22, {33, 99}, screen))
         self.assertFalse(full_screen_window([maximized, video], 11, {33, 99}, screen))  # using another app: taskbar is up

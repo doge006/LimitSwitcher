@@ -270,7 +270,7 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     user32.SetForegroundWindow(overlay)
     user32.keybd_event(0x12, 0, 2, 0)
     pump(1.5)
-    check(not taskbar.full_screen_app(info.rect), "a screenshot overlay does not count as a full-screen app")
+    check(not taskbar.full_screen_app(info.hwnd, info.rect), "a screenshot overlay does not count as a full-screen app")
     print("blocks during the overlay:", len(blocks()), "of", len(found), "· taskbar on top:",
           bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
     user32.DestroyWindow(overlay)
