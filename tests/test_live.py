@@ -863,6 +863,38 @@ class LiveTests(unittest.TestCase):
             providers.Claude.refresh(self.providers["claude"], secret)
         self.assertTrue(sent[0]["User-Agent"].startswith("claude-cli/"))
 
+    def test_a_renewal_keeps_the_sign_ins_end_as_claude_code_does(self):
+        from unittest import mock
+        from account_switcher import providers
+        secret = {"credentials": {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r", "refreshTokenExpiresAt": 1}},
+                  "oauthAccount": {"accountUuid": "u", "emailAddress": "x@example.com"}}
+        answer = {"access_token": "at-new", "refresh_token": "rt-new", "expires_in": 3600, "refresh_token_expires_in": 86400}
+        with mock.patch.object(providers, "_http", lambda *_, **__: (200, answer)):
+            fresh = providers.Claude.refresh(self.providers["claude"], secret)["credentials"]["claudeAiOauth"]
+        self.assertAlmostEqual(fresh["refreshTokenExpiresAt"] / 1000, time.time() + 86400, delta=5)
+        answer.pop("refresh_token_expires_in")  # not sent: the saved one stays, as Claude Code leaves it
+        with mock.patch.object(providers, "_http", lambda *_, **__: (200, answer)):
+            fresh = providers.Claude.refresh(self.providers["claude"], secret)["credentials"]["claudeAiOauth"]
+        self.assertEqual(fresh["refreshTokenExpiresAt"], 1)
+
+    def test_a_refused_usage_check_says_whose_login_and_whether_it_was_revoked_early(self):
+        from unittest import mock
+        from account_switcher import providers
+        self.assertIn("expired 30 min ago", providers.expiry_note(1000.0, now=2800.0))
+        self.assertIn("120 min left (revoked", providers.expiry_note(8200.0, now=1000.0))
+        secret = {"credentials": {"claudeAiOauth": {"accessToken": "a", "refreshToken": "r",
+                                                    "expiresAt": int((time.time() + 7200) * 1000)}},
+                  "oauthAccount": {"accountUuid": "u", "emailAddress": "x@example.com"}}
+
+        def refused(*_, **__):
+            raise providers.ProviderError("Login expired", relogin=True)
+        with mock.patch.object(providers, "_http", refused), self.assertLogs("account_switcher.providers") as logs:
+            with self.assertRaises(providers.ProviderError):
+                self.providers["claude"].fetch(secret, allow_refresh=False)
+        line = "\n".join(logs.output)
+        self.assertIn("x@example.com " + providers.token_mark("r"), line)
+        self.assertIn("min left (revoked", line)
+
     def test_accounts_not_in_use_are_checked_every_few_minutes_even_after_rate_limits(self):
         from account_switcher.live import IDLE_PACE_CAP, PROVIDER_IDLE
         m = self.manager()
