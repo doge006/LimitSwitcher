@@ -1,13 +1,10 @@
-The app offers it in Settings → **Update to 1.4.8** (or download below).
+The app offers it in Settings → **Update to 1.4.9** (or download below).
 
-## Status line context after Claude compacts
+## Taskbar view stays put
 
-After `/compact`, or when Claude Code compacts a conversation by itself, the `ctx` on the status line kept showing the size from before the compaction until the next reply. Claude Code goes on reporting the old figure until then. The status line now shows the compacted size that Claude Code records for the conversation, as soon as the compaction is done.
+1.4.8 made the taskbar view hide whenever any window covered the screen, and some windows that do that are invisible (parts of Windows itself, like the Alt+Tab switcher, and overlays). So the blocks could disappear while you switched between ordinary windows.
 
-## Taskbar view and full-screen video
-
-- The taskbar view no longer stays on top of a full-screen video (Steam's player, for one) until you click it. It hides while any window covers the display, whichever window has focus, and it keeps watching for a few seconds after a window comes forward, since apps take a moment to go full screen.
-- It also comes back as soon as the full-screen window is minimized or closed, instead of staying away.
+Now the taskbar view follows the taskbar's own rule: it hides only while the app you are using is full screen on that display (a game, a video, a browser's F11), and comes back the moment you switch away, minimize or leave full screen. Whenever the taskbar can be seen, so can the blocks.
 
 ## Download
 
