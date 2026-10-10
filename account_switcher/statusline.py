@@ -253,7 +253,56 @@ def paint_context(text):
                   {"t": " left", "c": "dim"}])
 
 
-def session_context(path, data, compacted):
+TAIL = 1 << 19  # how far back a transcript is searched for Claude Code's own compaction
+
+
+def claude_compaction(transcript, since):
+    """(tokens left, when) of Claude Code's own latest compaction (/compact or its automatic one)
+    written to the transcript after `since`, or None. Claude Code goes on reporting the size from
+    before it (the messages it kept still carry their old usage) until the next reply, so the size
+    it wrote down for the compacted session stands in. Looked for only when the transcript changed
+    since that figure, in its last half megabyte (the boundary comes before the summary it heads)."""
+    if not transcript or not _number(since):
+        return None
+    try:
+        if os.stat(transcript).st_mtime <= since:
+            return None
+        with open(transcript, "rb") as handle:
+            handle.seek(0, 2)
+            end = handle.tell()
+            handle.seek(max(0, end - TAIL))
+            tail = handle.read()
+    except OSError:
+        return None
+    at = tail.rfind(b'"compact_boundary"')
+    while at != -1:
+        start, stop = tail.rfind(b"\n", 0, at) + 1, tail.find(b"\n", at)
+        try:
+            entry = loads(tail[start:stop if stop != -1 else len(tail)].decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            entry = None
+        if isinstance(entry, dict) and entry.get("subtype") == "compact_boundary":
+            meta, when = entry.get("compactMetadata"), _iso_seconds(entry.get("timestamp"))
+            tokens = meta.get("postTokens") if isinstance(meta, dict) else None
+            if when is None or when <= since:
+                return None
+            return (tokens, when) if _number(tokens) and tokens > 0 else None
+        at = tail.rfind(b'"compact_boundary"', 0, start)
+    return None
+
+
+def _iso_seconds(text):
+    """Seconds since the epoch of a transcript timestamp ("2026-10-10T15:29:03.123Z"), or None."""
+    if not isinstance(text, str):
+        return None
+    from datetime import datetime
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def session_context(path, data, compacted, transcript=None):
     """The ctx text for this run. Claude Code's own figures while it has new ones; its last ones
     while it sends none (a usage limit, a compaction: until the next reply), however long that is;
     and once a Jev compaction shrank the session, that size less what Jev saved, until a reply
@@ -280,6 +329,10 @@ def session_context(path, data, compacted):
     else:
         text, size, since = None, None, None
     used = figures[0] if figures else (saved or {}).get("used")
+    own = claude_compaction(transcript, since)
+    if own and not (compacted and compacted["at"] > own[1]):
+        size = size or (saved or {}).get("size")
+        return context_text(own[0], 100 - own[0] * 100 / size if _number(size) and size > 0 else None)
     if compacted and _number(used) and _number(since) and compacted["at"] > since:
         # Claude Code still reports the size from before the compaction: less what Jev saved
         tokens = max(0, used - compacted["saved"])
@@ -334,7 +387,8 @@ def main(argv):
         if isinstance(data, dict):
             session = "".join(c for c in str(data.get("session_id") or "")[:60] if c.isalnum() or c in "-_")
             ctx_cache = os.path.join(os.path.dirname(cache), f"statusline-ctx-{session}.json") if cache and session else None
-            extra = paint_context(session_context(ctx_cache, data, compacted))
+            transcript = data.get("transcript_path") if isinstance(data.get("transcript_path"), str) else None
+            extra = paint_context(session_context(ctx_cache, data, compacted, transcript))
         if line or extra:
             pieces = [line] if line else []
             if extra:

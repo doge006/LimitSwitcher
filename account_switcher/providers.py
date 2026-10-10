@@ -410,6 +410,9 @@ class Claude:
             fresh["refreshToken"] = token["refresh_token"]
         if token.get("scope"):
             fresh["scopes"] = token["scope"].split()
+        if isinstance(token.get("refresh_token_expires_in"), (int, float)):
+            # As Claude Code keeps it: a login handed to it later must not carry the old expiry.
+            fresh["refreshTokenExpiresAt"] = int((time.time() + token["refresh_token_expires_in"]) * 1000)
         return dict(secret, credentials=dict(secret["credentials"], claudeAiOauth=fresh))
 
     @staticmethod
