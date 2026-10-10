@@ -21,7 +21,7 @@ import winreg
 from . import flyout as fl
 from . import flyout_render as fr
 from . import taskbar_layout
-from .placement import free_gaps, place_blocks
+from .placement import free_gaps, place_blocks, taskbar_buttons
 from .profiler import event
 
 user32, kernel32 = fl.user32, fl.kernel32
@@ -325,7 +325,8 @@ def layout_signature(hwnd, rect, notify):
     return (hwnd, rect, notify, auto_hide(), light_taskbar(), setting("TaskbarAl", 1), setting("TaskbarDa", 1),
             setting("TaskbarSmallIcons", 0), setting("TaskbarSi", 1), combine,
             setting("FavoritesChanges", 0, r"Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband"),  # pins
-            button_windows(combine != 0))
+            button_windows(combine != 0),
+            time.strftime("%x"))  # the clock's date: a wider one (10/10) moves the clock's left edge
 
 
 def read_bar(hwnd, key="main", label="Main display", previous=None):
@@ -363,9 +364,7 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
         spans = _COM.buttons(hwnd)
         event("taskbar: UI Automation walk", time.perf_counter() - started)
         if spans:
-            occupied = [(a, b) for a, b, top, bottom in spans
-                        if b - a < width * .4 and bottom - top >= height * .4 and a < right and b > rect[0]
-                        and top >= rect[1] - 2 and bottom <= rect[3] + 2]
+            occupied = taskbar_buttons(spans, rect)
             measured = bool(occupied)
     except Exception:
         log.warning("taskbar buttons could not be read", exc_info=True)

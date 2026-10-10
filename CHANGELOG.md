@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.7) (2026-10-10)
+
+- Fixed: the taskbar view could sit on top of the clock on Windows 11, mostly when the date is wide (10/10/2026). The blocks now keep clear of the clock and the notification area's icons wherever Windows draws them.
+
 ## [1.4.6](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.6) (2026-10-09)
 
 - Jev compaction loses far fewer details: outputs Jev is unsure about keep their start and end instead of being removed, and the notes left in place of removed outputs name what they held more completely, without repeating names. On 12 benchmark sessions, no output needed later was cut (36 were before) and lost details dropped from 173 to 18; the context still shrinks about 85% (87% before).

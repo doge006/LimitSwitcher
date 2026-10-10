@@ -1,7 +1,8 @@
 import unittest
 from types import SimpleNamespace as R
 
-from account_switcher.placement import free_gaps, panel_contains, place_above, place_blocks, place_menu
+from account_switcher.placement import (free_gaps, panel_contains, place_above, place_blocks, place_menu,
+                                       taskbar_buttons)
 
 MONITOR = R(left=0, top=0, right=1920, bottom=1080)
 
@@ -47,6 +48,16 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(free_gaps(0, 1600, [(600, 1300), (0, 180)], 12), [(192, 588), (1312, 1600)])
         self.assertEqual(free_gaps(0, 1000, [], 12), [(0, 1000)])
         self.assertEqual(free_gaps(0, 1000, [(0, 1000)], 12), [])
+
+    def test_clock_reaching_left_of_the_notification_area_is_kept_clear(self):
+        rect = (0, 1032, 1920, 1080)
+        spans = [(900, 960, 1036, 1076),     # a task button
+                 (1700, 1800, 1034, 1078),   # the clock, starting left of TrayNotifyWnd (1760)
+                 (0, 1920, 1032, 1080),      # the whole bar: not a button
+                 (1200, 1240, 0, 40)]        # another display's element
+        occupied = taskbar_buttons(spans, rect)
+        self.assertEqual(occupied, [(900, 960), (1700, 1800)])
+        self.assertEqual(free_gaps(8, 1760 - 12, occupied, 12), [(8, 888), (972, 1688)])
 
     def test_blocks_go_left_and_right_and_shrink_before_giving_up(self):
         claude, codex = {3: 540, 2: 420, 1: 300}, {2: 420, 1: 300}
