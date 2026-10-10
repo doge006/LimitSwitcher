@@ -57,6 +57,17 @@ def panel_contains(x, y, width, height):
 
 
 # ---------- taskbar view: blocks in the empty stretches of the taskbar ----------
+def taskbar_buttons(spans, rect):
+    """(left, right) of the taskbar's own buttons, from UI Automation's (left, right, top, bottom)
+    spans: the ones on this taskbar, button-sized. The notification area's buttons count too
+    (its clock, icons, the hidden-icons arrow): on Windows 11 the clock can reach left of the
+    TrayNotifyWnd window, and a block placed up to that window's edge then covered the clock."""
+    width, height = rect[2] - rect[0], rect[3] - rect[1]
+    return [(a, b) for a, b, top, bottom in spans
+            if b - a < width * .4 and bottom - top >= height * .4 and a < rect[2] and b > rect[0]
+            and top >= rect[1] - 2 and bottom <= rect[3] + 2]
+
+
 def free_gaps(left, right, occupied, margin):
     """Empty stretches of [left, right) once the taskbar's own buttons (occupied: (left, right)
     spans), each widened by margin, are taken out. Sorted left to right."""
