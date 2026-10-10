@@ -5,6 +5,8 @@ The highlights of each release, newest first. The full notes for each version ar
 ## [1.4.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.7) (2026-10-10)
 
 - Fixed: the taskbar view could sit on top of the clock on Windows 11, mostly when the date is wide (10/10/2026). The blocks now keep clear of the clock and the notification area's icons wherever Windows draws them.
+- Fixed: the taskbar view could stay on top of a full-screen app (a browser's F11, a video's full-screen button) until you clicked into it. It now hides as soon as the app goes full screen.
+- Fixed: the taskbar view sometimes stayed away after a full-screen app closed, until you switched windows.
 
 ## [1.4.6](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.6) (2026-10-09)
 

@@ -34,6 +34,7 @@ WS_EX_NOACTIVATE = 0x08000000
 TIMER_LAYOUT, TIMER_MINUTE, TIMER_COVER = 71, 72, 73
 HSHELL_WINDOWACTIVATED, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNA = 4, 0x8, 0, 8
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
+ABM_NEW, ABM_REMOVE, ABN_STATECHANGE, ABN_POSCHANGED, ABN_FULLSCREENAPP = 0, 1, 0, 1, 2
 PROVIDER_ORDER = ("claude", "codex")
 
 
@@ -480,6 +481,9 @@ class TaskbarView:
         self.hooked = False
         self.covered = {}        # display id -> a full-screen app is in front there: its blocks are down
         self.shell_message = None
+        self.appbar_message = None
+        self.appbar = False      # registered as an app bar: Explorer tells us when a full-screen app opens
+        self.full_screen = False  # Explorer's word (ABN_FULLSCREENAPP): a full-screen app is open somewhere
 
     # ---------- wiring into pystray's hidden window ----------
     def attach(self, icon):
@@ -494,13 +498,37 @@ class TaskbarView:
             handlers[message] = self._chain(previous)
         self.shell_message = user32.RegisterWindowMessageW("SHELLHOOK")
         handlers[self.shell_message] = self.on_shell
+        self.appbar_message = user32.RegisterWindowMessageW("LimitSwitcherAppBar")
+        handlers[self.appbar_message] = self.on_appbar
 
     def _chain(self, previous):
         def handler(wparam, lparam):
             if previous:
                 previous(wparam, lparam)
+            if self.appbar:  # Explorer restarted: it forgot the app bar
+                self.appbar = False
+                self.register_appbar()
             self.later()
         return handler
+
+    def _appbar_data(self):
+        data = APPBARDATA(ctypes.sizeof(APPBARDATA))
+        data.hWnd, data.uCallbackMessage = self.hwnd, self.appbar_message or 0
+        return data
+
+    def register_appbar(self):
+        """An app bar that takes no space (no ABM_SETPOS): only so Explorer sends ABN_FULLSCREENAPP,
+        the one signal for an app going full screen without another window coming forward
+        (a browser's F11, a video's full-screen button, a game switching modes)."""
+        if self.appbar or not self.hwnd or not self.appbar_message:
+            return
+        self.full_screen = False
+        self.appbar = bool(shell32.SHAppBarMessage(ABM_NEW, ctypes.byref(self._appbar_data())))
+
+    def unregister_appbar(self):
+        if self.appbar:
+            shell32.SHAppBarMessage(ABM_REMOVE, ctypes.byref(self._appbar_data()))
+        self.appbar = self.full_screen = False
 
     def post(self):
         """Any thread: sync with the latest state on the tray thread."""
@@ -521,12 +549,14 @@ class TaskbarView:
         self.hwnd = self.icon._hwnd
         user32.RegisterShellHookWindow(self.hwnd)
         user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
+        self.register_appbar()
         self.hooked = True
 
     def unhook(self):
         if not self.hooked:
             return
         user32.DeregisterShellHookWindow(self.hwnd)
+        self.unregister_appbar()
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
         user32.KillTimer(self.hwnd, TIMER_COVER)
@@ -557,18 +587,31 @@ class TaskbarView:
             if not any(self.covered.values()):
                 user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once Explorer has reacted
 
+    def on_appbar(self, wparam, lparam):
+        event(f"taskbar: app bar notice {wparam}")
+        if wparam == ABN_FULLSCREENAPP:
+            self.full_screen = bool(lparam)
+            self.follow_taskbar()
+            user32.SetTimer(self.hwnd, TIMER_COVER, 300, None)  # and again once the app has settled
+        elif wparam in (ABN_STATECHANGE, ABN_POSCHANGED):
+            self.later()
+
     def follow_taskbar(self):
         """Hide a display's blocks when an app is full screen there, and bring them back after.
 
-        Explorer takes the taskbar out of the always-on-top band for most full-screen apps; for
-        the rest (borderless games, video, a browser's F11) the foreground window covering the
-        display counts too. Screenshot tools and overlays are tool windows, so they never make
-        the blocks hide. Instant, with no fade: the taskbar does not fade. Each display on its
-        own: a game on one screen leaves the other screen's blocks up."""
+        Covered: the foreground window covers the whole display (games, video, a browser's F11),
+        or Explorer says a full-screen app is open (ABN_FULLSCREENAPP, which comes even when no
+        other window comes forward) and has taken this display's taskbar out of the always-on-top
+        band. The taskbar's band alone is not enough: Explorer sometimes leaves it out after the
+        app has gone, and the blocks then stayed away until another window came forward.
+        Screenshot tools and overlays are tool windows, so they never make the blocks hide.
+        Instant, with no fade: the taskbar does not fade. Each display on its own: a game on one
+        screen leaves the other screen's blocks up."""
         uncovered = False
         for key, bar in self.bars.items():
+            lowered = not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST
             covered = bool(user32.IsWindow(bar.hwnd)
-                           and (not user32.GetWindowLongW(bar.hwnd, -20) & WS_EX_TOPMOST or full_screen_app(bar.rect)))
+                           and ((self.full_screen and lowered) or full_screen_app(bar.rect)))
             if covered == self.covered.get(key, False):
                 continue
             self.covered[key] = covered
