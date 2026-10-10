@@ -1369,6 +1369,30 @@ class StatusLineMarkerTests(unittest.TestCase):
                 self.assertEqual(statusline.session_context(path, newer, compacted), "ctx 195k/80% left")  # the next reply's own
             self.assertIsNone(statusline.session_context(None, {}, None))
 
+    def test_session_context_follows_claude_codes_own_compaction(self):
+        from account_switcher import statusline
+        with tempfile.TemporaryDirectory() as tmp:
+            path, transcript = str(Path(tmp) / "ctx.json"), Path(tmp) / "t.jsonl"
+            transcript.write_text(json.dumps({"type": "assistant", "uuid": "a1"}) + "\n")
+            os.utime(transcript, (900.0, 900.0))
+            window = {"context_window": {"current_usage": {"input_tokens": 0, "cache_read_input_tokens": 300_000},
+                                         "context_window_size": 1_000_000}}
+            with mock.patch.object(statusline.time, "time", return_value=1000.0):
+                self.assertEqual(statusline.session_context(path, window, None, str(transcript)), "ctx 300k/70% left")
+            with transcript.open("a") as handle:  # /compact at t=2000, then its summary
+                handle.write(json.dumps({"type": "system", "subtype": "compact_boundary", "timestamp": "1970-01-01T00:33:20.000Z",
+                                         "compactMetadata": {"trigger": "manual", "preTokens": 300_000, "postTokens": 40_000}}) + "\n")
+                handle.write(json.dumps({"type": "user", "isCompactSummary": True, "message": {"content": "x" * 5000}}) + "\n")
+            os.utime(transcript, (2001.0, 2001.0))
+            # Claude Code still sends the old figure (kept messages), or none: the compacted size shows
+            self.assertEqual(statusline.session_context(path, window, None, str(transcript)), "ctx 40k/96% left")
+            self.assertEqual(statusline.session_context(path, {}, None, str(transcript)), "ctx 40k/96% left")
+            newer = {"context_window": {"current_usage": {"input_tokens": 2_000, "cache_read_input_tokens": 45_000},
+                                        "context_window_size": 1_000_000}}
+            with mock.patch.object(statusline.time, "time", return_value=3000.0):  # the next reply's own figure
+                self.assertEqual(statusline.session_context(path, newer, None, str(transcript)), "ctx 47k/95% left")
+            self.assertIsNone(statusline.claude_compaction(str(Path(tmp) / "missing"), 1000.0))
+
     def test_hook_does_not_wake_a_session_that_went_on_meanwhile(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "t.jsonl"
