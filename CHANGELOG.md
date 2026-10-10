@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.8](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.8) (2026-10-10)
+
+- Fixed: after `/compact` or one of Claude Code's own compactions, the status line's `ctx` kept the size from before it until the next reply. It now shows the compacted size right away.
+
 ## [1.4.7](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.7) (2026-10-10)
 
 - Fixed: the taskbar view could sit on top of the clock on Windows 11, mostly when the date is wide (10/10/2026). The blocks now keep clear of the clock and the notification area's icons wherever Windows draws them.
