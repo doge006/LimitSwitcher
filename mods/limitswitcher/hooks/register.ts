@@ -92,6 +92,39 @@ async function post($: any, app: App, path: string, body: unknown): Promise<any>
   return reply.ok ? JSON.parse(reply.text) : null
 }
 
+// jev-compact's estimate (mods/jev-compact/src/tokens.ts): 3.2 characters a token
+const CHARS_PER_TOKEN = 3.2
+
+/** The estimated tokens of a conversation's rows, sized as jev-compact sizes them: text, tool inputs
+ * and tool outputs. Images aren't counted: a row Jev rebuilt no longer carries its record, so they
+ * could only make a saving look bigger than it was. */
+export function rowsTokens(rows: readonly any[]): number {
+  let chars = 0
+  for (const row of rows) {
+    chars += String(row?.text ?? '').length
+    for (const use of row?.toolUses ?? []) chars += JSON.stringify(use?.input ?? {}).length
+    for (const result of row?.toolResults ?? []) chars += String(result?.text ?? '').length
+  }
+  return Math.round(chars / CHARS_PER_TOKEN)
+}
+
+/** Runs Jev's compaction and measures what it saved: the conversation's rows before, less the rows
+ * it hands back. Never tokensBefore - tokensAfter: Claude Code puts its own count in tokensAfter
+ * (thinking included, an image as 2,000 tokens) beside Jev's tokensBefore, and the two don't
+ * subtract (a 508k session read "saved ~0k"). Throws as $.session.compact does. */
+async function jevCompact($: any): Promise<{ skip?: string; saved: number }> {
+  let before: number | undefined
+  try {
+    before = rowsTokens(await $.session.messages())
+  } catch {
+    // no rows to read: the compaction still runs, with nothing to say it saved
+  }
+  const result = await $.session.compact({ instructions: MARKER })
+  if (result.skip !== undefined) return { skip: result.skip, saved: 0 }
+  const after = Array.isArray(result.messages) ? rowsTokens(result.messages) : undefined
+  return { saved: before !== undefined && after !== undefined ? Math.max(0, before - after) : 0 }
+}
+
 let asked = false // the toast for the OK Auto resume is waiting for, shown (once per wait)
 
 /** The band (and once, a toast) while Auto resume waits for an OK to continue this large session;
@@ -156,11 +189,7 @@ async function compactFor($: any, statePath: string, session: string, id: string
   let skip: string | undefined
   let saved = 0
   try {
-    const result = await $.session.compact({ instructions: MARKER })
-    skip = result.skip
-    if (skip === undefined && typeof result.tokensBefore === 'number' && typeof result.tokensAfter === 'number') {
-      saved = Math.max(0, Math.round(result.tokensBefore - result.tokensAfter))
-    }
+    ;({ skip, saved } = await jevCompact($))
   } catch (error) {
     // Refused while a turn runs: the limit's turn may still be ending, or the session went on
     if (busy < BUSY_TRIES) {
@@ -236,11 +265,8 @@ async function compactOnResume($: any, e: Resume, { app, session, id }: Agreed):
   for (let busy = 1; ; busy++) {
     try {
       started = true
-      const result = await $.session.compact({ instructions: MARKER })
-      skip = result.skip
+      ;({ skip, saved } = await jevCompact($))
       if (skip === undefined) {
-        const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
-        saved = typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
         outcome = 'done'
         if (saved > 0) {
           toast($, resumeSavedText(saved, e.context_tokens), SAVED_FOR)
@@ -395,11 +421,8 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
     // no usage yet: the toast gives the count alone
   }
   try {
-    const result = await $.session.compact({ instructions: MARKER })
-    skip = result.skip
+    ;({ skip, saved } = await jevCompact($))
     if (skip === undefined) {
-      const before = typeof result.tokensBefore === 'number' ? result.tokensBefore : 0
-      saved = before && typeof result.tokensAfter === 'number' ? Math.max(0, Math.round(before - result.tokensAfter)) : 0
       outcome = 'done'
       text = `Jev compacted: saved ${savedOf(saved, context)}`
     } else {

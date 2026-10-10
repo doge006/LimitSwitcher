@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { askText, coldResume, COMPACTING, resumeSavedText, RESUME_TOAST } from './register.ts'
+import { askText, coldResume, COMPACTING, resumeSavedText, RESUME_TOAST, rowsTokens } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 
@@ -20,6 +20,15 @@ async function bandOf($: any): Promise<string> {
   return texts.find((text) => text.includes('LimitSwitcher')) ?? ''
 }
 const MARKER = 'limitswitcher:jev-compact'
+
+/** A conversation's rows of about `tokens` tokens (3.2 characters each), one tool call among them. */
+function rowsOf(tokens: number) {
+  const chars = Math.round(tokens * 3.2) - 1_000
+  return [
+    { role: 'user' as const, text: 'x'.repeat(500), toolUses: [], toolResults: [{ tool_use_id: 't1', text: 'y'.repeat(chars), isError: false }] },
+    { role: 'assistant' as const, text: 'z'.repeat(500 - '{}'.length), toolUses: [{ tool_use_id: 't1', tool: 'Read', input: {} }] },
+  ]
+}
 
 type World = { env?: Record<string, string | undefined>; posts: { path: string; body: any }[]; compactions: string[]; statuses: (string | undefined)[]; asking: boolean; filled: string[] }
 
@@ -80,8 +89,10 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
     if (options.gate) await options.gate
     const next = outcomes.shift() ?? { saved: 1000 }
     if ('skip' in next) return { skip: next.skip }
-    return { messages: [{ role: 'user' as const, text: 'kept', toolUses: [] }], tokensBefore: 50_000, tokensAfter: 50_000 - next.saved }
+    // tokensAfter as Claude Code fills it in: its own count, on another scale than Jev's tokensBefore
+    return { messages: rowsOf(50_000 - next.saved), tokensBefore: 40_000, tokensAfter: 52_000 }
   })
+  on('session.messages', () => ({ value: rowsOf(50_000) }))
   ;(w as any).clock = clock
   return w
 }
@@ -101,6 +112,12 @@ describe('limitswitcher', () => {
     expect(sent.body.session).toBe('session-1')
     expect(sent.body.rate_limits.five_hour.used_percentage).toBe(100)
     expect(w.compactions).toEqual([])
+  })
+
+  test('sizes rows as jev-compact does: text, tool inputs and outputs, 3.2 characters a token', async () => {
+    expect(rowsTokens(rowsOf(50_000))).toBe(50_000)
+    expect(rowsTokens([{ role: 'user', text: 'a'.repeat(320), toolUses: [{ input: { command: 'b'.repeat(306) } }] }])).toBe(200)
+    expect(rowsTokens([])).toBe(0)
   })
 
   test('runs the compaction the app asks for, with the marker, and reports what it saved', { options: { statePath: STATE } }, async ($, on) => {
