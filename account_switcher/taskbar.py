@@ -21,7 +21,7 @@ import winreg
 from . import flyout as fl
 from . import flyout_render as fr
 from . import taskbar_layout
-from .placement import free_gaps, place_blocks, taskbar_buttons
+from .placement import free_gaps, full_screen_window, place_blocks, taskbar_buttons
 from .profiler import event
 
 user32, kernel32 = fl.user32, fl.kernel32
@@ -269,56 +269,35 @@ def taskbars():
     return found
 
 
-def full_screen_app(bar_rect):
-    """Is an app full screen on the display with this taskbar? The foreground app window covering
-    the whole display (games, video, a browser's F11: Explorer does not always lower the taskbar for
-    these), or Windows reporting a full-screen Direct3D app or presentation mode. Screenshot tools
-    and other overlays are tool windows without a taskbar button, so they don't count."""
+def full_screen_app(bar_hwnd, bar_rect):
+    """Is the app in use full screen on the display with this taskbar (placement.full_screen_window),
+    or is Windows reporting a full-screen Direct3D app or presentation mode?"""
     state = ctypes.c_int()
     if shell32.SHQueryUserNotificationState(ctypes.byref(state)) == 0 and state.value in (3, 4):
         return True  # QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
-    window = user32.GetForegroundWindow()
-    if not window:
+    foreground = user32.GetForegroundWindow()
+    if not foreground:
         return False
-    window = user32.GetAncestor(window, 2) or window  # GA_ROOT
-    name = ctypes.create_unicode_buffer(40)
-    user32.GetClassNameW(window, name, 40)
-    if name.value in SHELL_CLASSES or user32.GetWindowLongW(window, -20) & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE):
-        return False
-    rect = window_rect(window)
-    if not rect:
-        return False
-    screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
-    return covers(rect, screen)
+    foreground_pid, shell_pid = wintypes.DWORD(), wintypes.DWORD()
+    user32.GetWindowThreadProcessId(foreground, ctypes.byref(foreground_pid))
+    user32.GetWindowThreadProcessId(bar_hwnd, ctypes.byref(shell_pid))
+    windows = []
 
-
-def covers(rect, screen):
-    return bool(rect) and (rect[0] <= screen.left and rect[1] <= screen.top and rect[2] >= screen.right
-                           and rect[3] >= screen.bottom)
-
-
-def covered_from_above(bar_hwnd, bar_rect, ours, tool_windows):
-    """Is the taskbar under a window covering its whole display? Walks the windows above it in
-    z-order (those can hide it): visible, not minimized, not cloaked, not ours. The taskbar view's
-    own check that does not depend on which window has focus (a video switching to full screen
-    from its own button, Steam's player). Tool windows count only while Explorer says a full-screen
-    app is open (`tool_windows`): otherwise they are screenshot tools and overlays."""
-    screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
-    window = user32.GetWindow(bar_hwnd, 3)  # GW_HWNDPREV: the next window up
-    for _ in range(300):
-        if not window:
-            return False
-        if window not in ours and user32.IsWindowVisible(window) and not user32.IsIconic(window):
-            ex = user32.GetWindowLongW(window, -20)
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def each(hwnd, _):
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if pid.value == foreground_pid.value and user32.IsWindowVisible(hwnd):
             cloaked = ctypes.c_int(0)
-            if dwmapi and dwmapi.DwmGetWindowAttribute(window, 14, ctypes.byref(cloaked), 4) == 0 and cloaked.value:
-                pass
-            elif ex & 0x20:  # WS_EX_TRANSPARENT: a click-through overlay, never what hides the taskbar
-                pass
-            elif (tool_windows or not ex & (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)) and covers(window_rect(window), screen):
-                return True
-        window = user32.GetWindow(window, 3)
-    return False
+            if dwmapi:
+                dwmapi.DwmGetWindowAttribute(hwnd, 14, ctypes.byref(cloaked), 4)  # DWMWA_CLOAKED
+            windows.append((pid.value, window_rect(hwnd), user32.GetWindowLongW(hwnd, -20) & 0xFFFFFFFF,
+                            bool(cloaked.value), bool(user32.IsIconic(hwnd))))
+        return True
+
+    user32.EnumWindows(each, 0)
+    screen, _, _ = fl.monitor_at((bar_rect[0] + bar_rect[2]) // 2, (bar_rect[1] + bar_rect[3]) // 2)
+    return full_screen_window(windows, foreground_pid.value, {shell_pid.value, kernel32.GetCurrentProcessId()}, screen)
 
 
 def button_windows(with_titles):
@@ -630,20 +609,15 @@ class TaskbarView:
     def follow_taskbar(self):
         """Hide a display's blocks when an app is full screen there, and bring them back after.
 
-        Covered: the foreground window covers the whole display (games, video, a browser's F11),
-        or a window above the taskbar in z-order covers it (whatever has focus: Steam's video
-        player). Explorer's ABN_FULLSCREENAPP, which comes even when no other window comes
-        forward, starts a check. Neither counts once that window is minimized or gone, so the
-        blocks come back as soon as the taskbar can be seen again.
-        Screenshot tools and overlays are tool windows, so they never make the blocks hide.
+        Covered: the app in use has a window covering the whole display (games, video, a
+        browser's F11, Steam's player), as placement.full_screen_window decides, the same rule
+        as Windows' own taskbar: when the taskbar can be seen, so can the blocks. Explorer's
+        ABN_FULLSCREENAPP, which comes even when no other window comes forward, starts a check.
         Instant, with no fade: the taskbar does not fade. Each display on its own: a game on one
         screen leaves the other screen's blocks up."""
         uncovered = False
-        ours = {block.hwnd for block in self.blocks.values() if block.hwnd} | set(fl.Popup._windows)
         for key, bar in self.bars.items():
-            covered = bool(user32.IsWindow(bar.hwnd)
-                           and (full_screen_app(bar.rect)
-                                or covered_from_above(bar.hwnd, bar.rect, ours, self.full_screen)))
+            covered = bool(user32.IsWindow(bar.hwnd) and full_screen_app(bar.hwnd, bar.rect))
             if covered == self.covered.get(key, False):
                 continue
             self.covered[key] = covered
