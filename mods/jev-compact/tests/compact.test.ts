@@ -8,7 +8,7 @@ import { LONG_SESSION_TOKENS } from '../src/budget.ts'
 import { fold, lineKey } from '../src/dedupe.ts'
 import { parseResponse } from '../src/openrouter.ts'
 import { maskSecrets } from '../src/secrets.ts'
-import { goalOf, withoutReminders } from '../src/state.ts'
+import { fitState, goalOf, withoutReminders } from '../src/state.ts'
 import { collectToolCalls, supersededCalls } from '../src/transcript.ts'
 import type { JevAsker, JevQuestions, JevState, Message } from '../src/types.ts'
 import { keyInEnvFile } from '../hooks/register.ts'
@@ -159,6 +159,27 @@ describe('compact', () => {
 })
 
 describe('pieces', () => {
+  test('a session too long for the last stage leaves out its oldest entries instead of failing', async () => {
+    const messages: Message[] = [user('Refactor everything')]
+    for (let i = 0; i < 1500; i++) messages.push(use(`c${i}`, 'Bash', { command: `step ${i}` }), out(`c${i}`, LOG))
+    messages.push(said('Done.'))
+    const calls = collectToolCalls(messages, 8)
+    const fitted = fitState(messages, calls, 'Refactor everything', 20000)
+    expect(fitted.tokens).toBeLessThanOrEqual(20000)
+    expect(fitted.omitted).toBeGreaterThan(0)
+    const conversation = fitted.state.conversation as Record<string, unknown>[]
+    expect(String(conversation[0]!.omitted)).toContain(`${fitted.omitted} earlier entries`)
+    expect(JSON.stringify(conversation.at(-1))).toContain('assistant') // the newest stay
+    expect(JSON.stringify(conversation.at(-2))).toContain('step 1499')
+    const result = await compact(messages, fakeJev(() => 0.1))
+    expect(result.stats.stubbed).toBeGreaterThan(0)
+  })
+
+  test('a state that fits leaves nothing out', () => {
+    const messages = session()
+    expect(fitState(messages, collectToolCalls(messages, 8), 'goal', 20000).omitted).toBe(0)
+  })
+
   test('decide: keep, trim, stub, and a trim that would cut nothing keeps', () => {
     const options = resolveOptions()
     const [call] = collectToolCalls([user('a'), use('x', 'Bash', {}), out('x', LOG), said('b')], 0)

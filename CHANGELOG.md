@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.11](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.11) (2026-10-11)
+
+- Fixed: on very long sessions, Jev compaction failed with "the conversation does not fit the Jev state budget of 20000 tokens", both on its own and with `/jevcompact`. Jev's outline of the session now leaves out the oldest steps when it would be too big; each output Jev scores still comes with its own command and preview.
+
 ## [1.4.10](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.10) (2026-10-11)
 
 - Fixed: since 1.4.9, taking a screenshot could make the taskbar view disappear until you clicked into a window. The blocks now hide only while a full-screen window is drawn over the taskbar, checked against what Windows actually shows there, and come back the moment the taskbar shows again. Screenshot tools never make them hide.
