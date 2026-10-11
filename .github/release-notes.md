@@ -1,14 +1,10 @@
-The app offers it in Settings → **Update to 1.4.9** (or download below).
+The app offers it in Settings → **Update to 1.4.10** (or download below).
 
-## Taskbar view stays put
+## Taskbar view comes back after a screenshot
 
-1.4.8 made the taskbar view hide whenever any window covered the screen, and some windows that do that are invisible (parts of Windows itself, like the Alt+Tab switcher, and overlays). So the blocks could disappear while you switched between ordinary windows.
+Since 1.4.9, taking a screenshot (Win+Shift+S, the Snipping Tool) could make the taskbar view disappear until you clicked into a window. The screenshot tool stays the app in use after the snip, and 1.4.9 still counted its full-screen overlay.
 
-Now the taskbar view follows the taskbar's own rule: it hides only while the app you are using is full screen on that display (a game, a video, a browser's F11), and comes back the moment you switch away, minimize or leave full screen. Whenever the taskbar can be seen, so can the blocks.
-
-## Jev compaction's saved figure
-
-Fixed: `/jevcompact`, the resume toast and the status line's ctx after a Jev compaction said Jev saved ~0k (0%). Claude Code now reports its own size after a compaction, on another scale than Jev's, and the two were subtracted. The saved figure is now measured from the conversation before and after.
+The taskbar view no longer guesses from which app is in use or how big its windows are. It checks what Windows actually draws over the taskbar: the blocks hide only while a full-screen window (a game, a video, a browser's F11) sits on top of it, and come back the moment the taskbar shows again, with no click. Screenshot tools never make them hide.
 
 ## Download
 
