@@ -125,20 +125,49 @@ export function buildState(
   return { goal, conversation }
 }
 
-export type FittedState = { state: JevState; tokens: number; stage: StateStage }
+/** The state with its `drop` oldest conversation entries left out, and a note saying how many. */
+function withoutOldest(state: JevState, drop: number): JevState {
+  const conversation = state.conversation as unknown[]
+  if (drop <= 0) return state
+  return { ...state, conversation: [{ omitted: `${drop} earlier entries not shown` }, ...conversation.slice(drop)] }
+}
 
-/** The first stage whose state fits `maxStateTokens`, credentials masked; throws when none does. */
+export type FittedState = { state: JevState; tokens: number; stage: StateStage; omitted: number }
+
+/**
+ * The first stage whose state fits `maxStateTokens`, credentials masked. When even the last stage
+ * is too big (a very long session: hundreds of calls at one line each), the fewest oldest entries
+ * are left out to fit; each question still carries its own call. Throws only when the goal alone
+ * does not fit.
+ */
 export function fitState(
   messages: readonly Message[],
   calls: readonly ToolCall[],
   goal: string,
   maxStateTokens: number,
 ): FittedState {
+  let last: JevState = { goal, conversation: [] }
   for (let stage = 0; stage < STAGES.length; stage++) {
     const text = maskSecrets(JSON.stringify(buildState(messages, calls, stage as StateStage, goal)))
-    const state = JSON.parse(text) as JevState
+    last = JSON.parse(text) as JevState
     const tokens = estimateTokens(text)
-    if (tokens <= maxStateTokens) return { state, tokens, stage: stage as StateStage }
+    if (tokens <= maxStateTokens) return { state: last, tokens, stage: stage as StateStage, omitted: 0 }
   }
-  throw new Error(`the conversation does not fit the Jev state budget of ${maxStateTokens} tokens`)
+  const stage = (STAGES.length - 1) as StateStage
+  const sized = (drop: number) => {
+    const state = withoutOldest(last, drop)
+    return { state, tokens: estimateTokens(JSON.stringify(state)) }
+  }
+  // Fewest dropped that fits: the newest entries are what the questions are mostly about
+  let low = 1
+  let high = (last.conversation as unknown[]).length
+  if (sized(high).tokens > maxStateTokens) {
+    throw new Error(`the conversation does not fit the Jev state budget of ${maxStateTokens} tokens`)
+  }
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (sized(mid).tokens <= maxStateTokens) high = mid
+    else low = mid + 1
+  }
+  return { ...sized(low), stage, omitted: low }
 }

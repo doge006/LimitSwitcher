@@ -1,10 +1,10 @@
-The app offers it in Settings → **Update to 1.4.10** (or download below).
+The app offers it in Settings → **Update to 1.4.11** (or download below).
 
-## Taskbar view comes back after a screenshot
+## Jev compacts very long sessions
 
-Since 1.4.9, taking a screenshot (Win+Shift+S, the Snipping Tool) could make the taskbar view disappear until you clicked into a window. The screenshot tool stays the app in use after the snip, and 1.4.9 still counted its full-screen overlay.
+On a very long session (hundreds of tool calls), Jev compaction failed with "the conversation does not fit the Jev state budget of 20000 tokens", both on its own when your usage ran low and with `/jevcompact`. Jev reads an outline of the whole conversation, shortened in steps to fit, and on such sessions even the shortest outline was too big.
 
-The taskbar view no longer guesses from which app is in use or how big its windows are. It checks what Windows actually draws over the taskbar: the blocks hide only while a full-screen window (a game, a video, a browser's F11) sits on top of it, and come back the moment the taskbar shows again, with no click. Screenshot tools never make them hide.
+Now, when even the shortest outline is too big, Jev's outline leaves out the oldest steps (it says how many) and keeps the newest. Each output Jev scores still comes with its own command and a preview of its text, so it can judge outputs from early in the session too.
 
 ## Download
 
