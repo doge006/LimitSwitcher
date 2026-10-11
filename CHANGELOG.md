@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.10](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.10) (2026-10-11)
+
+- Fixed: since 1.4.9, taking a screenshot could make the taskbar view disappear until you clicked into a window. The blocks now hide only while a full-screen window is drawn over the taskbar, checked against what Windows actually shows there, and come back the moment the taskbar shows again. Screenshot tools never make them hide.
+
 ## [1.4.9](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.9) (2026-10-10)
 
 - Fixed: since 1.4.8 the taskbar view could disappear when you switched between ordinary windows. It now follows the same rule as the taskbar itself: it hides only while the app you are using is full screen on that display, and whenever the taskbar can be seen, so can the blocks.

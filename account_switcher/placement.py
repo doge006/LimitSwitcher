@@ -68,7 +68,7 @@ def taskbar_buttons(spans, rect):
             and top >= rect[1] - 2 and bottom <= rect[3] + 2]
 
 
-WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW, WS_EX_NOACTIVATE = 0x20, 0x80, 0x08000000
+WS_EX_TRANSPARENT, WS_EX_TOOLWINDOW = 0x20, 0x80
 
 
 def covers(rect, screen):
@@ -80,22 +80,36 @@ def covers(rect, screen):
     return rect[0] <= left and rect[1] <= top and rect[2] >= right and rect[3] >= bottom
 
 
-def full_screen_window(windows, foreground_pid, skip_pids, screen):
-    """Is the app in use full screen on this display? windows: (pid, rect, ex_style, cloaked,
-    minimized) of the visible top-level windows. Only the foreground app's windows count, as with
-    Windows' own taskbar: it stays up over a full-screen app you are not using, so the blocks do
-    too, and a window of any other app (or an overlay) covering the display never hides them.
-    skip_pids: Explorer (desktop, Alt+Tab, Task view: full-screen windows of its own) and this app.
-    Click-through overlays, tool windows (screenshot tools' overlays) and windows that never take
-    focus don't count either."""
-    if not foreground_pid or foreground_pid in skip_pids:
-        return False
-    for pid, rect, ex, cloaked, minimized in windows:
-        if pid != foreground_pid or cloaked or minimized or ex & (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW):
+# Screenshot tools: their overlay covers the whole screen, taskbar included, while you pick an
+# area. Windows under it can't be told apart, so what was decided before stands.
+CAPTURE_TOOLS = {"screenclippinghost.exe", "snippingtool.exe", "screensketch.exe", "sharex.exe", "greenshot.exe",
+                 "lightshot.exe", "snagit32.exe", "snagiteditor.exe", "flameshot.exe", "picpick.exe"}
+
+
+def taskbar_covered(hits, shell_pid, own_pid, screen):
+    """Is a full-screen window drawn over this display's taskbar? The rule is the user's: when the
+    taskbar can be seen, so can the blocks. hits: what Windows has on top at points along the
+    taskbar (WindowFromPoint's top-level window, which skips hidden, click-through and see-through
+    windows), each (pid, exe name, rect, ex_style, cloaked) or None for nothing there.
+
+    Any point showing the taskbar (Explorer), a window that isn't full screen, or nothing at all:
+    the taskbar is in view, False. Every telling point under a full-screen window of another app
+    (a game, a video, a browser's F11): True. Points that can't tell (this app's own windows, a
+    screenshot tool's overlay, tool windows, cloaked or click-through ones): skipped; when none can tell,
+    None, and what was decided before stands."""
+    covered = False
+    for hit in hits:
+        if hit is None:
+            return False
+        pid, exe, rect, ex, cloaked = hit
+        if pid == shell_pid:
+            return False
+        if pid == own_pid or cloaked or ex & (WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW) or (exe or "").lower() in CAPTURE_TOOLS:
             continue
-        if covers(rect, screen):
-            return True
-    return False
+        if not covers(rect, screen):
+            return False
+        covered = True
+    return True if covered else None
 
 
 def free_gaps(left, right, occupied, margin):

@@ -263,17 +263,83 @@ if found:  # a full-screen window (a game, a video) covers the taskbar, and the 
     # Claude is anchored by its left edge, Codex by its right (its width changed with the swap above).
     check(len(back) == len(found) and back[0][0] == found[0][0] and back[-1][2] == found[-1][2],
           "the blocks are back, in place, when it closes")
-    # A screenshot tool's overlay covers the screen too, but is a tool window: the blocks stay.
-    overlay = user32.CreateWindowExW(0x80 | 0x8, "Static", "Overlay", 0x80000000 | 0x10000000, 0, 0,
-                                     screen.width, screen.height, None, None, None, None)  # TOOLWINDOW|TOPMOST
-    user32.keybd_event(0x12, 0, 0, 0)
-    user32.SetForegroundWindow(overlay)
-    user32.keybd_event(0x12, 0, 2, 0)
-    pump(1.5)
-    check(not taskbar.full_screen_app(info.hwnd, info.rect), "a screenshot overlay does not count as a full-screen app")
-    print("blocks during the overlay:", len(blocks()), "of", len(found), "· taskbar on top:",
-          bool(user32.GetWindowLongW(owner, -20) & 0x8), flush=True)
-    user32.DestroyWindow(overlay)
+
+    def in_place():
+        return len(blocks()) == len(found)  # where: Windows 10 gives the test's windows taskbar buttons too
+
+    def wait_for(want, seconds):
+        """Pump messages until the blocks are back in place (want True) or gone (False)."""
+        end = time.time() + seconds
+        while time.time() < end:
+            pump(0.25)
+            if (in_place() if want else not blocks()):
+                return True
+        return False
+
+    def front(hwnd):
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.SetForegroundWindow(hwnd)
+        user32.keybd_event(0x12, 0, 2, 0)
+
+    def tell(name):
+        ImageGrab.grab().crop((0, screen.height - height - 40, screen.width, screen.height)).save(SHOTS / name)
+        print(f"  foreground ours: {user32.GetForegroundWindow() in mine} · taskbar on top:",
+              bool(user32.GetWindowLongW(owner, -20) & 0x8), "· blocks:", len(blocks()), flush=True)
+
+    sig = taskbar.sig
+    sig(user32.SetWindowPos, wintypes.BOOL, wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, wintypes.UINT)
+    sig(user32.SetLayeredWindowAttributes, wintypes.BOOL, wintypes.HWND, wintypes.DWORD, ctypes.c_ubyte, wintypes.DWORD)
+    mine = []
+    # A screenshot overlay (Win+Shift+S): a full-screen window, not a tool window, comes to the
+    # front. When the snip is done its window drops out of sight while its app stays in front
+    # (here: sent behind everything; then made see-through). The taskbar shows again, so the
+    # blocks must too, with no click.
+    for case, done in (("behind", lambda w: user32.SetWindowPos(w, wintypes.HWND(1), 0, 0, 0, 0, 0x13)),  # HWND_BOTTOM
+                       ("see-through", lambda w: user32.SetLayeredWindowAttributes(w, 0, 0, 2))):  # LWA_ALPHA 0
+        overlay = user32.CreateWindowExW(0x80000 | 0x8, "Static", "Snip", 0x80000000 | 0x10000000, 0, 0,
+                                         screen.width, screen.height, None, None, None, None)  # LAYERED|TOPMOST
+        user32.SetLayeredWindowAttributes(overlay, 0, 200, 2)
+        mine.append(overlay)
+        front(overlay)
+        pump(1)
+        print(f"screenshot overlay ({case}) up:", flush=True)
+        tell(f"6-snip-{case}-up.png")
+        done(overlay)
+        back = wait_for(True, 4)
+        print(f"screenshot done ({case}), its app still in front:", flush=True)
+        tell(f"6-snip-{case}-done.png")
+        check(back, f"the blocks come back after a screenshot ({case}) with no click")
+        user32.DestroyWindow(overlay)
+        pump(0.5)
+    # A browser's F11 / a video's full-screen button: the window in front grows to full screen with
+    # nothing else activating, then shrinks back.
+    video = user32.CreateWindowExW(0, "Static", "Video", 0x80000000 | 0x10000000, 100, 100, 800, 500,
+                                   None, None, None, None)
+    mine.append(video)
+    front(video)
+    pump(1)
+    check(in_place(), "the blocks stay up over an ordinary window in front")
+    user32.SetWindowPos(video, None, 0, 0, screen.width, screen.height, 0x14)  # NOZORDER|NOACTIVATE
+    check(wait_for(False, 4), "the blocks go down when the window in front goes full screen (F11)")
+    tell("6-f11.png")
+    user32.SetWindowPos(video, None, 100, 100, 800, 500, 0x14)
+    check(wait_for(True, 4), "the blocks come back when it leaves full screen")
+    user32.DestroyWindow(video)
+    # The real Win+Shift+S, where Windows has it: open the snipping overlay, cancel it.
+    subprocess.run(["explorer.exe", "ms-screenclip:"])
+    pump(3)
+    clip = subprocess.run(["tasklist", "/FI", "IMAGENAME eq ScreenClippingHost.exe"], capture_output=True, text=True).stdout
+    if "ScreenClippingHost" in clip:
+        print("real snipping overlay up:", flush=True)
+        tell("6-real-snip-up.png")
+        user32.keybd_event(0x1B, 0, 0, 0)  # Esc
+        user32.keybd_event(0x1B, 0, 2, 0)
+        back = wait_for(True, 4)
+        tell("6-real-snip-done.png")
+        check(back, "the blocks are up after the real snipping overlay closes")
+    else:
+        print("no snipping overlay on this runner: skipped", flush=True)
 # ---- The full view with the demo accounts: drawn natively, hover, the settings menu ----
 api("/api/show")
 views = []

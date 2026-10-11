@@ -1,7 +1,7 @@
 import unittest
 from types import SimpleNamespace as R
 
-from account_switcher.placement import (free_gaps, full_screen_window, panel_contains, place_above, place_blocks,
+from account_switcher.placement import (free_gaps, panel_contains, place_above, place_blocks, taskbar_covered,
                                        place_menu, taskbar_buttons)
 
 MONITOR = R(left=0, top=0, right=1920, bottom=1080)
@@ -59,22 +59,35 @@ class PlacementTests(unittest.TestCase):
         self.assertEqual(occupied, [(900, 960), (1700, 1800)])
         self.assertEqual(free_gaps(8, 1760 - 12, occupied, 12), [(8, 888), (972, 1688)])
 
-    def test_blocks_hide_only_for_the_app_in_use_going_full_screen(self):
-        screen = (0, 0, 1920, 1080)
-        maximized = (11, (-8, -8, 1928, 1040), 0, False, False)       # stops at the taskbar
-        video = (22, (0, 0, 1920, 1080), 0, False, False)             # Steam's player, full screen
-        shell = (33, (0, 0, 1920, 1080), 0x80, False, False)           # Explorer: desktop, Alt+Tab host
-        overlay = (44, (0, 0, 1920, 1080), 0x80, False, False)          # a screenshot tool's overlay
-        click_through = (22, (0, 0, 1920, 1080), 0x20 | 0x80000, False, False)
-        self.assertTrue(full_screen_window([maximized, video], 22, {33, 99}, screen))
-        self.assertFalse(full_screen_window([maximized, video], 11, {33, 99}, screen))  # using another app: taskbar is up
-        self.assertFalse(full_screen_window([shell, maximized], 33, {33, 99}, screen))  # Explorer has focus
-        self.assertFalse(full_screen_window([overlay], 44, {33, 99}, screen))
-        self.assertFalse(full_screen_window([click_through], 22, {33, 99}, screen))
-        self.assertFalse(full_screen_window([(22, video[1], 0, False, True)], 22, {33}, screen))  # minimized
-        self.assertFalse(full_screen_window([(22, video[1], 0, True, False)], 22, {33}, screen))  # cloaked
-        self.assertFalse(full_screen_window([video], 22, {33}, (1920, 0, 3840, 1080)))  # the other display
-        self.assertFalse(full_screen_window([video], 0, {33}, screen))
+    def test_blocks_hide_only_while_a_full_screen_window_is_drawn_over_the_taskbar(self):
+        screen, shell, own = (0, 0, 1920, 1080), 33, 99
+        full = (0, 0, 1920, 1080)
+        taskbar = (shell, "", (0, 1032, 1920, 1080), 0x8, False)       # Explorer: the taskbar shows
+        game = (22, "game.exe", full, 0, False)                         # a game, Steam's player, F11
+        maximized = (11, "code.exe", (-8, -8, 1928, 1040), 0, False)    # stops at the taskbar
+        widget = (12, "notes.exe", (900, 1000, 1100, 1080), 0x8, False)  # a small window on the taskbar
+        snip = (44, "ScreenClippingHost.exe", full, 0, False)           # Win+Shift+S overlay
+        sharex = (45, "ShareX.exe", full, 0x8, False)
+        tool = (46, "overlay.exe", full, 0x80, False)                    # a tool window overlay
+        ours = (own, "LimitSwitcher.exe", (0, 0, 300, 1080), 0, False)
+        cloaked = (47, "app.exe", full, 0, True)
+        click_through = (48, "fps.exe", full, 0x20 | 0x80000, False)
+        self.assertTrue(taskbar_covered([game] * 9, shell, own, screen))
+        self.assertTrue(taskbar_covered([ours, game, game], shell, own, screen))  # our own block at one point
+        # The taskbar shows anywhere along it: blocks up. This is the screenshot case once the
+        # snip is done, whatever app stays in front (the 1.4.9 bug), and Alt+Tab's host.
+        self.assertFalse(taskbar_covered([taskbar] * 9, shell, own, screen))
+        self.assertFalse(taskbar_covered([game, taskbar, game], shell, own, screen))
+        self.assertFalse(taskbar_covered([widget, taskbar], shell, own, screen))
+        self.assertFalse(taskbar_covered([maximized, widget], shell, own, screen))
+        self.assertFalse(taskbar_covered([game, None], shell, own, screen))
+        self.assertFalse(taskbar_covered([(22, "game.exe", full, 0, False)], shell, own, (1920, 0, 3840, 1080)))
+        # Can't tell (screenshot overlays, tool windows, ours, cloaked, click-through): as it was.
+        for hit in (snip, sharex, tool, ours, cloaked, click_through):
+            self.assertIsNone(taskbar_covered([hit] * 9, shell, own, screen), hit)
+        self.assertIsNone(taskbar_covered([], shell, own, screen))
+        self.assertTrue(taskbar_covered([snip, game], shell, own, screen))
+        self.assertFalse(taskbar_covered([snip, taskbar], shell, own, screen))
 
     def test_blocks_go_left_and_right_and_shrink_before_giving_up(self):
         claude, codex = {3: 540, 2: 420, 1: 300}, {2: 420, 1: 300}
