@@ -491,6 +491,23 @@ class AfkTests(unittest.TestCase):
         self.assertEqual(controller.resume_ok({"session": "s1"}), "Auto resume goes on with this session.")
         self.assertEqual(self.manager.claude_limit("s1", 600_000)["action"], "continue")
 
+    def test_snapshot_never_waits_for_afk_lock_under_the_controller_lock(self):
+        # A limit's answer posts (refresh -> notify) while it holds afk_lock; the tray's snapshot
+        # must not hold the controller lock while it waits for afk_lock, or every request hangs.
+        from account_switcher.web import Controller
+        controller = Controller(gateway=lambda notify: self.gateway)
+        controller.live = True
+        with self.manager.afk_lock:
+            tray = threading.Thread(target=controller.snapshot, daemon=True)
+            tray.start()
+            time.sleep(0.2)  # the snapshot is now waiting for afk_lock
+            posted = threading.Thread(target=controller.notify, args=("accounts", None), daemon=True)
+            posted.start()
+            posted.join(2)
+            self.assertFalse(posted.is_alive(), "notify deadlocked behind the snapshot")
+        tray.join(2)
+        self.assertFalse(tray.is_alive())
+
     def test_continue_every_session_lets_one_already_waiting_go_on(self):
         from account_switcher.web import Controller
         controller = Controller(gateway=lambda notify: self.gateway)

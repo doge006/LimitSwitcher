@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.12](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.12) (2026-10-13)
+
+- Fixed: LimitSwitcher could freeze when a Claude Code session hit its usage limit while the tray was refreshing. `/swapaccount` then moved the window but answered "LimitSwitcher didn't answer; try again in a moment" after 30 seconds, and the status line, `/limits` and reset alerts stopped updating until the app was restarted.
+
 ## [1.4.11](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.11) (2026-10-11)
 
 - Fixed: on very long sessions, Jev compaction failed with "the conversation does not fit the Jev state budget of 20000 tokens", both on its own and with `/jevcompact`. Jev's outline of the session now leaves out the oldest steps when it would be too big; each output Jev scores still comes with its own command and preview.
