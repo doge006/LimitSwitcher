@@ -1,10 +1,10 @@
-The app offers it in Settings → **Update to 1.4.11** (or download below).
+The app offers it in Settings → **Update to 1.4.12** (or download below).
 
-## Jev compacts very long sessions
+## LimitSwitcher no longer freezes when a session hits its limit
 
-On a very long session (hundreds of tool calls), Jev compaction failed with "the conversation does not fit the Jev state budget of 20000 tokens", both on its own when your usage ran low and with `/jevcompact`. Jev reads an outline of the whole conversation, shortened in steps to fit, and on such sessions even the shortest outline was too big.
+When a Claude Code session hit a usage limit while the tray was refreshing, LimitSwitcher could freeze: it stopped answering Claude Code until it was restarted. `/swapaccount` still moved the window, but then waited 30 seconds and said "LimitSwitcher didn't answer; try again in a moment"; the status line, `/limits` and the reset alerts stopped updating too. Two parts of the app were each waiting for the other. That can no longer happen.
 
-Now, when even the shortest outline is too big, Jev's outline leaves out the oldest steps (it says how many) and keeps the newest. Each output Jev scores still comes with its own command and a preview of its text, so it can judge outputs from early in the session too.
+If your LimitSwitcher is frozen now, Settings → Update may not respond: quit it (from Task Manager on Windows or Activity Monitor on macOS if the tray menu doesn't respond), start it again, then update.
 
 ## Download
 
