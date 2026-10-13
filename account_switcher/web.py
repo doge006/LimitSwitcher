@@ -222,6 +222,9 @@ class Controller:
         name_mode = self.names(accounts)
         auto_swap = router.auto_swap
         windows = self.gateway.manager.windows() if self.live else []  # outside the lock, like the accounts
+        # Outside it too: a usage limit's answer holds afk_lock while it posts (refresh -> notify), so
+        # taking afk_lock under this lock deadlocks the app's whole local API (tray, mod, status line).
+        pending = self.gateway.manager.pending_list() if self.live else []
         with self.condition:
             return {
                 "revision": self.revision,
@@ -239,7 +242,7 @@ class Controller:
                 "clock24": self.clock_24(),
                 "resetAlerts": bool(self.gateway.manager.meta.get("resetAlerts", True)) if self.live else self.reset_alerts,
                 "mod": self.mod_state(),
-                "pendingResumes": self.gateway.manager.pending_list() if self.live else [],
+                "pendingResumes": pending,
                 "waitNearReset": bool(self.gateway.manager.meta.get("waitNearReset", True)) if self.live else self.wait_near_reset,
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "afkAll": not (bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large),
