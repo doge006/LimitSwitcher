@@ -552,6 +552,8 @@ class LiveAccounts:
         else:
             with self.lock:
                 window_id = self._new_window(target, "command", cwd=cwd, upstream=upstream)
+                if target is not None:  # until its first reply there, its numbers are the main account's
+                    self.window_stale[window_id] = FIRST_REPORT
                 if session:
                     self.window_sessions[session] = window_id
             answer = {"window": window_id, "baseUrl": self.router_url(window_id)}

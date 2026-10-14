@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.13](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.13) (2026-10-14)
+
+- Fixed: after `/swapaccount` moved a window to another account, that account could show the previous account's usage (5% left instead of 50%) for a long time. The window's reports are now ignored until its first reply on the new account.
+
 ## [1.4.12](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.12) (2026-10-13)
 
 - Fixed: LimitSwitcher could freeze when a Claude Code session hit its usage limit while the tray was refreshing. `/swapaccount` then moved the window but answered "LimitSwitcher didn't answer; try again in a moment" after 30 seconds, and the status line, `/limits` and reset alerts stopped updating until the app was restarted.
