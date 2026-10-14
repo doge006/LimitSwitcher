@@ -1,10 +1,10 @@
-The app offers it in Settings → **Update to 1.4.12** (or download below).
+The app offers it in Settings → **Update to 1.4.13** (or download below).
 
-## LimitSwitcher no longer freezes when a session hits its limit
+## The right usage after `/swapaccount`
 
-When a Claude Code session hit a usage limit while the tray was refreshing, LimitSwitcher could freeze: it stopped answering Claude Code until it was restarted. `/swapaccount` still moved the window, but then waited 30 seconds and said "LimitSwitcher didn't answer; try again in a moment"; the status line, `/limits` and the reset alerts stopped updating too. Two parts of the app were each waiting for the other. That can no longer happen.
+After `/swapaccount` moved a Claude Code window to another account, that account could show the previous account's usage (say 5% left when it had 50%): right for a moment, then wrong, and it stayed wrong for a long time. Until the window's first reply on its new account, Claude Code still reports the old account's numbers, and one of those reports was counted for the new account. Those reports are now ignored until the new account's own numbers come in.
 
-If your LimitSwitcher is frozen now, Settings → Update may not respond: quit it (from Task Manager on Windows or Activity Monitor on macOS if the tray menu doesn't respond), start it again, then update.
+An account already showing the wrong number corrects itself when its limit window resets or the app next reads its usage.
 
 ## Download
 
