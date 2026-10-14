@@ -340,6 +340,7 @@ class WindowTests(unittest.TestCase):
         self.assertEqual(used(c), 41.0)
         # a window switched by /swapaccount before it ever reported: its first report is the old account's
         fresh = m.swap_account(None, "s-new", "b")["window"]
+        m.session_moved_at = 0.0  # no other session busy just now: its first report would count
         report(fresh, 99.0)
         self.assertEqual(used(b), 66.0)
         report(fresh, 70.0)
