@@ -69,7 +69,7 @@ LimitSwitcher is a single Python process. It polls each provider's usage endpoin
 | Windows UI | Win32 layered windows through `ctypes`, drawn with Pillow; taskbar view, tray panel, full view |
 | macOS UI | AppKit through PyObjC: a WebKit menu bar popover, and a Core Graphics full view in its own process |
 | Secrets | Windows DPAPI, the macOS Keychain |
-| Claude Code mod | Two TypeScript plugins (`mods/`): live usage, toasts, Jev compaction |
+| Claude Code mod | Two TypeScript plugins (`mods/`): session activity, toasts, Jev compaction |
 | Packaging | Inno Setup with a small C launcher (Windows); a self-contained, ad-hoc signed `.app` in a DMG (macOS) |
 | CI | GitHub Actions: unit and plugin tests on every push; installer, smoke and performance tests on real Windows 10/11 and macOS runners |
 

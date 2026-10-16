@@ -600,119 +600,109 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(a.status, "")
         self.assertTrue(a.usage)
 
-    def test_status_line_keeps_claude_live_without_the_api(self):
+    def test_status_line_renders_provider_usage_without_trusting_cached_percentages(self):
         m = self.manager()
-        m.sync_live()
         m.refresh(force=True)
         a = self.by_email(m, "a@example.com")
-        m.live_since["claude"] = 0  # settled after the last switch
         calls = len(self.api.calls)
-        reset = time.time() + 3600
-        line = m.statusline({"five_hour": {"used_percentage": 77, "resets_at": reset},
-                             "seven_day": {"used_percentage": 20.4, "resets_at": reset + 86400}})
-        self.assertEqual(len(self.api.calls), calls)  # nothing asked of the API
-        a = self.by_email(m, "a@example.com")
-        five = next(w for w in a.windows() if w["key"] == "five_hour")
-        self.assertEqual((five["used"], five["resetsAt"]), (77.0, reset))
-        self.assertEqual(line, "⇄ LimitSwitcher · a@example.com · 5h 23% left · 1w 79% left")  # 79.6 left: rounded down
+        line = m.statusline({"five_hour": {"used_percentage": 77, "resets_at": time.time() + 3600},
+                             "seven_day": {"used_percentage": 12, "resets_at": time.time() + 86400}})
+        self.assertEqual(len(self.api.calls), calls)  # rendering never calls the provider
+        self.assertEqual(line, "⇄ LimitSwitcher · a@example.com · 5h 60% left · 1w 80% left")
+        self.assertEqual(self.by_email(m, "a@example.com").usage, a.usage)
         meta = m.meta["accounts"][a.id]
-        now = time.time()
-        self.assertGreater(m.due(a.id, meta, True, now) - now, 1700)  # while live, the API only every 30 min
-        m.live_since["claude"] = time.time()  # just switched: the report may still be the old account
-        m.statusline({"five_hour": {"used_percentage": 5, "resets_at": reset}})
-        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 77.0)
+        meta["liveAt"] = time.time()  # metadata left by an older version
+        self.assertLessEqual(m.due(a.id, meta, True, time.time()) - time.time(), 60)
 
-    def test_a_lagging_api_answer_never_undoes_live_numbers(self):
+    def test_provider_refresh_replaces_higher_cached_usage_in_the_same_window(self):
         m = self.manager()
-        m.sync_live()
-        m.refresh(force=True)
-        m.live_since["claude"] = 0
-        m.statusline({"five_hour": {"used_percentage": 77, "resets_at": time.time() + 3600}})
-        self.api.claude_usage["at-a"] = claude_usage(70, 20)  # the usage API, a little behind
-        m.refresh(force=True)
-        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 77.0)
-        self.api.claude_usage["at-a"] = claude_usage(80, 20)  # and once it's ahead, it counts
-        m.refresh(force=True)
-        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 80.0)
-
-    def test_stale_status_line_numbers_never_undo_newer_ones(self):
-        """After a limit, Claude Code keeps sending its last numbers with every reply: they must not
-        overwrite newer ones, and must not keep the API at its slow 'followed live' pace."""
-        m = self.manager()
-        m.sync_live()
         m.refresh(force=True)
         a = self.by_email(m, "a@example.com")
-        m.live_since["claude"] = 0
-        reset = time.time() + 3600
-        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}})
-        m.observe(a.id, [(300, 100.0, reset)])  # newer: the limit was reached
         meta = m.meta["accounts"][a.id]
-        meta["liveAt"] = time.time() - 1000  # the last real change was a while ago
-        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}})  # the stale repeat
-        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 100.0)
-        now = time.time()
-        self.assertLess(m.due(a.id, meta, True, now) - now, 400)  # back to the normal API pace
-        m.statusline({"five_hour": {"used_percentage": 3, "resets_at": reset + 5 * 3600}})  # a new window
-        five = next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 3.0)
-
-    def test_an_idle_sessions_old_numbers_dont_fight_a_busy_one(self):
-        """Two Claude Code sessions: one idle since before a switch (another account's 100%), one
-        working now. Only a session whose numbers just moved (a new reply) counts, so the bar
-        follows the busy session and never jumps to the idle one's numbers and back."""
-        m = self.manager()
-        m.sync_live()
+        meta["usage"][0]["used"] = 97.0  # a cached session report from the older version
+        meta["liveAt"] = time.time()
+        self.api.claude_usage["at-a"] = claude_usage(70, 20)
         m.refresh(force=True)
-        a = self.by_email(m, "a@example.com")
-        m.live_since["claude"] = 0
-        reset = time.time() + 3600
-        old = {"five_hour": {"used_percentage": 100, "resets_at": reset - 1800}}
+        self.assertEqual(self.by_email(m, "a@example.com").usage[0]["used"], 70)
+        self.api.claude_usage["at-a"] = claude_usage(80, 20)
+        m.refresh(force=True)
+        self.assertEqual(self.by_email(m, "a@example.com").usage[0]["used"], 80)
 
-        def used():
-            return next(w for w in self.by_email(m, "a@example.com").windows() if w["key"] == "five_hour")["used"]
-
-        m.statusline({"five_hour": {"used_percentage": 50, "resets_at": reset}}, "busy")
-        m.statusline({"five_hour": {"used_percentage": 52, "resets_at": reset}}, "busy")  # a reply: counts
-        self.assertEqual(used(), 52.0)
+    def test_repeated_cached_reports_never_undo_provider_corrections(self):
+        m = self.manager()
+        self.api.claude_usage["at-a"] = claude_usage(25, 45)
+        m.refresh(force=True)
+        after_start = time.time() + 60
+        for five, week in ((91, 9), (89, 11), (96, 7)):
+            stale = {"five_hour": {"used_percentage": five, "resets_at": time.time() + 600},
+                     "seven_day": {"used_percentage": week, "resets_at": time.time() + 86400}}
+            for session in ("idle", "busy", "resumed", None):
+                with mock.patch("account_switcher.live.time.time", return_value=after_start):
+                    line = m.statusline(stale, session)
+                self.assertIn("5h 75% left · 1w 55% left", line)
+                self.assertEqual([w["used"] for w in self.by_email(m, "a@example.com").usage[:2]], [25, 45])
+        self.api.claude_usage["at-a"] = claude_usage(30, 50)
+        m.refresh(force=True)
         for _ in range(3):
-            m.statusline(old, "idle")                 # an idle session, now and again: ignored
-            self.assertEqual(used(), 52.0)
-        m.statusline({"five_hour": {"used_percentage": 55, "resets_at": reset}}, "busy")
-        self.assertEqual(used(), 55.0)
-        self.assertIn(a.id, m.meta["accounts"])
+            m.statusline(stale, "busy")
+            self.assertEqual([w["used"] for w in self.by_email(m, "a@example.com").usage[:2]], [30, 50])
 
-    def test_the_old_accounts_numbers_never_land_on_the_new_one(self):
-        """After a switch, Claude Code sessions keep the last reply's numbers (the old account's,
-        at its limit) until they get a new one. Those must not show as the new account's usage,
-        also from a session that reports for the first time after the switch."""
+    def test_status_lines_cannot_extend_provider_errors_or_freshness(self):
+        m = self.manager()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        meta = m.meta["accounts"][a.id]
+        meta.update(status="Rate limited by Claude", updatedAt=1000, apiAt=1000, backoffUntil=2000)
+        snapshot = dict(meta)
+        m.statusline({"five_hour": {"used_percentage": 99, "resets_at": time.time() + 3600}}, "s")
+        self.assertEqual(meta, snapshot)
+
+    def test_matching_reset_times_do_not_prove_a_session_reports_this_account(self):
+        m = self.manager()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        reset = a.usage[0]["resetsAt"]
+        after_start = time.time() + 60
+        for used in (91, 92, 93):
+            with mock.patch("account_switcher.live.time.time", return_value=after_start):
+                m.statusline({"five_hour": {"used_percentage": used, "resets_at": reset}}, "busy")
+            self.assertEqual(self.by_email(m, "a@example.com").usage[0]["used"], 40)
+            self.assertEqual(m.claude_limits()["five_hour"]["used_percentage"], 40)
+            self.assertRegex(m.limits_text(), r"5h.*60% left")
+
+    def test_old_session_reports_do_not_change_a_new_accounts_usage(self):
         m = self.manager()
         m.sync_live()
         claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.claude_usage["at-b"] = claude_usage(15, 55)
         m.sync_live()
-        m.swap(self.by_email(m, "a@example.com").id)  # a in use, b just added
         m.refresh(force=True)
         a, b = self.by_email(m, "a@example.com"), self.by_email(m, "b@example.com")
-        m.live_since["claude"] = 0
-        reset = time.time() + 3600
-        old = {"five_hour": {"used_percentage": 100, "resets_at": reset},
-               "seven_day": {"used_percentage": 40, "resets_at": reset + 86400}}
-        m.statusline(old, "s1")
-        before = self.by_email(m, "b@example.com").windows()
-        m.swap(b.id, reason="limit")
-        m.live_since["claude"] = 0  # long settled: the numbers are still the old ones
-        m.session_moved_at = 0.0
-        for session in ("s1", "s2", None):  # the session at the limit, a new one, and an anonymous one
-            m.statusline(old, session)
-            self.assertEqual(self.by_email(m, "b@example.com").windows(), before)
-        fresh = {"five_hour": {"used_percentage": 2, "resets_at": reset + 4 * 3600}}
-        m.statusline(fresh, "s1")  # a real reply on the new account
-        five = next(w for w in self.by_email(m, "b@example.com").windows() if w["key"] == "five_hour")
-        self.assertEqual(five["used"], 2.0)
-        self.assertIn(a.id, m.meta["accounts"])
+        m.swap(a.id)
+        stale = {"five_hour": {"used_percentage": 100, "resets_at": time.time() + 3600}}
+        m.statusline(stale, "s1")
+        m.swap(b.id)
+        for session in ("s1", "s2", None):
+            m.statusline(stale, session)
+            self.assertEqual(self.by_email(m, "b@example.com").usage, b.usage)
+        self.api.claude_usage["at-b"] = claude_usage(20, 60)
+        m.refresh(only=b.id)
+        self.assertEqual([w["used"] for w in self.by_email(m, "b@example.com").usage], [20, 60])
+
+    def test_restart_discards_live_report_scheduling_and_repairs_cached_usage(self):
+        m = self.manager()
+        m.refresh(force=True)
+        a = self.by_email(m, "a@example.com")
+        meta = m.meta["accounts"][a.id]
+        meta["usage"][0]["used"] = 99
+        meta.update(liveAt=time.time(), apiAt=time.time() - 120)
+        m.save()
+        restarted = self.manager()
+        self.assertNotIn("liveAt", restarted.meta["accounts"][a.id])
+        restarted.refresh()
+        self.assertEqual(self.by_email(restarted, "a@example.com").usage[0]["used"], 40)
+        restarted.statusline({"five_hour": {"used_percentage": 99, "resets_at": time.time() + 3600}}, "idle")
+        self.assertEqual(self.by_email(restarted, "a@example.com").usage[0]["used"], 40)
 
     def test_mac_sign_in_opens_in_terminal(self):
         m = self.manager()

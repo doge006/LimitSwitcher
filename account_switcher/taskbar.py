@@ -32,7 +32,8 @@ WM_APP_TASKBAR = 0x8000 + 20
 WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
 WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
-TIMER_LAYOUT, TIMER_MINUTE, TIMER_COVER = 71, 72, 73
+TIMER_LAYOUT, TIMER_MINUTE, TIMER_COVER, TIMER_SETTLED = 71, 72, 73, 74
+LAYOUT_CACHE_SECONDS = 1.0
 HSHELL_WINDOWACTIVATED, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNA = 4, 0x8, 0, 8
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
 ABM_NEW, ABM_REMOVE, ABN_STATECHANGE, ABN_POSCHANGED, ABN_FULLSCREENAPP = 0, 1, 0, 1, 2
@@ -240,6 +241,7 @@ class Bar:
         self.rect, self.scale, self.light, self.measured = rect, scale, light, measured
         self.left, self.right, self.occupied = left, right, occupied
         self.signature = None
+        self.measured_at = time.monotonic()
 
     @property
     def height(self):
@@ -371,7 +373,8 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
     except Exception:
         log.warning("taskbar layout signature", exc_info=True)
         signature = None
-    if previous is not None and signature is not None and previous.signature == signature and previous.key == key:
+    if previous is not None and signature is not None and previous.signature == signature and previous.key == key \
+            and time.monotonic() - previous.measured_at < LAYOUT_CACHE_SECONDS:
         event("taskbar: layout unchanged, not measured")
         return previous
     if previous is not None and previous.signature and signature:
@@ -569,6 +572,9 @@ class TaskbarView:
         self.stale = True
         if self.hwnd:
             user32.SetTimer(self.hwnd, TIMER_LAYOUT, ms, None)
+            # Explorer can still be animating at the first reading. Measure once more
+            # after it settles, even when the list of windows has stayed the same.
+            user32.SetTimer(self.hwnd, TIMER_SETTLED, ms + 1500, None)
 
     def hook(self):
         if self.hooked:
@@ -586,15 +592,18 @@ class TaskbarView:
         self.unregister_appbar()
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
+        user32.KillTimer(self.hwnd, TIMER_SETTLED)
         user32.KillTimer(self.hwnd, TIMER_COVER)
         self.hooked = False
 
     # ---------- events ----------
     def on_timer(self, wparam, lparam):
         event({TIMER_LAYOUT: "taskbar: timer layout", TIMER_MINUTE: "taskbar: timer minute",
-               TIMER_COVER: "taskbar: timer cover"}.get(wparam, f"taskbar: timer {wparam}"))
-        if wparam == TIMER_LAYOUT:
-            user32.KillTimer(self.hwnd, TIMER_LAYOUT)
+               TIMER_COVER: "taskbar: timer cover", TIMER_SETTLED: "taskbar: timer settled"}
+              .get(wparam, f"taskbar: timer {wparam}"))
+        if wparam in (TIMER_LAYOUT, TIMER_SETTLED):
+            user32.KillTimer(self.hwnd, wparam)
+            self.stale = True
             self.sync()
         elif wparam == TIMER_MINUTE:  # reset times move on; the taskbar may have changed too
             self.stale = True
@@ -622,6 +631,8 @@ class TaskbarView:
         """Check now, then a few times a second for a moment: a window going full screen (or
         leaving it) gets there over a few frames, after the event that told us."""
         self.settle_until = time.monotonic() + seconds
+        if any(key not in self.bars for key in getattr(self, "wanted", {})):
+            self.later(100)  # a taskbar hidden during the last layout may be back now
         self.follow_taskbar()
 
     def follow_taskbar(self):
@@ -642,13 +653,15 @@ class TaskbarView:
             covered = bool(user32.IsWindow(bar.hwnd)) and taskbar_covered(bar.hwnd, bar.rect, avoid)
             if covered is None:
                 continue  # nothing along the taskbar can tell: as it was
-            if covered == self.covered.get(key, False):
-                continue
+            changed = covered != self.covered.get(key, False)
             self.covered[key] = covered
-            uncovered |= not covered
+            uncovered |= changed and not covered
             for (display, _), block in self.blocks.items():
                 if display == key and block.hwnd and not block.closing:
-                    user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
+                    # Windows can hide an owned popup independently of our coverage
+                    # state. Reconcile the actual window as well as that cached state.
+                    if changed or bool(user32.IsWindowVisible(block.hwnd)) != (not covered):
+                        user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
         if time.monotonic() < self.settle_until:
             user32.SetTimer(self.hwnd, TIMER_COVER, 250, None)
         elif any(self.covered.values()) or self.full_screen:  # it may leave (or arrive) without activating anything
@@ -692,7 +705,9 @@ class TaskbarView:
                 if entry is None and "main" not in wanted and "main" not in bars:
                     entry = next((t for t in found if t[1] == "main"), None)
                 if entry is not None:
-                    bars[key] = read_bar(*entry, previous=self.bars.get(key))
+                    bar = read_bar(*entry, previous=self.bars.get(key))
+                    if bar is not None:
+                        bars[key] = bar
             self.bars, self.stale = bars, False
             self.covered = {key: value for key, value in self.covered.items() if key in bars}
         self.follow_taskbar()

@@ -714,16 +714,17 @@ class AfkTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
-    def test_status_line_script_reports_live_usage(self):
+    def test_status_line_script_shows_provider_usage(self):
         from account_switcher import statusline
+        self.api.claude_usage["at-a"] = claude_usage(40, 50)
+        self.manager.refresh(force=True)
         controller = Controller(gateway=lambda notify: self.gateway)
         server = make_server(controller)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.manager.live_since["claude"] = 0
         self.manager.meta["modSeenAt"] = time.time()  # the mod is in use: the line shows in Claude Code
         state = Path(self.tmp.name) / "state.json"
         state.write_text(json.dumps({"url": server.hook_url, "token": server.hook_token, "statusline": None}))
-        event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 40, "resets_at": time.time() + 600}}}
+        event = {"session_id": "s", "rate_limits": {"five_hour": {"used_percentage": 84, "resets_at": time.time() + 600}}}
         try:
             out = io.StringIO()
             with mock.patch.object(sys, "stdin", io.TextIOWrapper(io.BytesIO(json.dumps(event).encode()))), \

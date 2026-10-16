@@ -1,10 +1,16 @@
-The app offers it in Settings → **Update to 1.4.13** (or download below).
+The app offers it in Settings → **Update to 1.4.14** (or download below).
 
-## The right usage after `/swapaccount`
+## Reliable Claude usage
 
-After `/swapaccount` moved a Claude Code window to another account, that account could show the previous account's usage (say 5% left when it had 50%): right for a moment, then wrong, and it stayed wrong for a long time. Until the window's first reply on its new account, Claude Code still reports the old account's numbers, and one of those reports was counted for the new account. Those reports are now ignored until the new account's own numbers come in.
+Claude Code can keep reporting usage from a session's last reply, including after an account switch or app restart. Those cached figures could overwrite a fresh provider check, making five-hour and weekly usage correct itself and then become wrong again.
 
-An account already showing the wrong number corrects itself when its limit window resets or the app next reads its usage.
+Account-specific provider checks now determine usage throughout LimitSwitcher and its status line. Normal Claude checks run every minute, including while sessions report, and still respect provider backoff. Status-line rendering, session details, and the mod's other features continue to work.
+
+## Login and taskbar recovery
+
+- Prevent a token-renewal race during account switches that could leave the official client's refresh token outdated.
+- Restore taskbar blocks when Windows hides them independently of the app's cached state.
+- Remeasure taskbar button positions after Explorer settles, and handle temporarily hidden taskbars without interrupting updates.
 
 ## Download
 

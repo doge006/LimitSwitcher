@@ -555,7 +555,7 @@ class Controller:
         self.notify("changed", None)
 
     def note_mod(self):
-        """The mod reported: remember it (it feeds the usage live after every turn)."""
+        """The mod reported session activity: remember it."""
         now = time.time()
         self.mod_seen = now
         if self.mod_installed is None:
@@ -614,7 +614,7 @@ class Controller:
         return self.gateway.manager.claude_limits(window, str(body.get("session") or "")[:100] or None) if self.live else None
 
     def statusline(self, body):
-        """Live Claude usage from Claude Code's status line; returns the line to show there."""
+        """Session details from Claude Code; returns the line using provider usage."""
         if not self.live:
             return None
         session = str(body.get("session") or "")[:100] or None
@@ -630,13 +630,12 @@ class Controller:
             self.session_models[session] = (model, effort)
             if len(self.session_models) > 200:  # sessions come and go
                 self.session_models.pop(next(iter(self.session_models)))
-        if body.get("source") == "mod":  # the mod feeds the usage; the line itself is the status line's
+        if body.get("source") == "mod":  # the mod reports session activity; the script renders the line
             self.note_mod()
             self.gateway.manager.note_mod_session(session)
             return None
-        # Without the mod the usage still comes in (no API calls needed), but nothing of LimitSwitcher
-        # shows in Claude Code (the user's own status line, if any, is unchanged): installing the
-        # mod is the person's choice to see the line.
+        # Installing the mod opts into showing the app's line in Claude Code.
+        # The user's own status line, if any, keeps its output.
         if time.time() - float(self.gateway.manager.meta.get("modSeenAt") or 0) > 14 * 24 * 3600:
             return None
         return line

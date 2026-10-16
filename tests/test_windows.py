@@ -258,13 +258,14 @@ class WindowTests(unittest.TestCase):
         row = self.window(window)
         self.assertEqual((row["title"], row["cwd"], row["model"]), ("Ship the fix", "/work/app", "Opus"))
 
-    def test_a_windows_numbers_count_for_its_own_account(self):
+    def test_a_window_shows_provider_usage_for_its_own_account(self):
         window = self.new_window()
         b = self.window(window)["accountId"]
         line = self.m.statusline({"five_hour": {"used_percentage": 64.0, "resets_at": time.time() + 3600}}, "win-1",
                                  model="Opus", window=window)
         self.assertIn(self.m.meta["accounts"][b]["email"], str(line))
-        self.assertEqual(self.m.meta["accounts"][b]["usage"][0]["used"], 64.0)
+        self.assertEqual(self.m.meta["accounts"][b]["usage"][0]["used"], 20.0)
+        self.assertIn("5h 80% left", str(line))
         self.assertEqual(self.m.window_account(None, "win-1"), b)  # the mod's reports, remembered by session
 
     def test_limits_in_a_window_shows_its_own_account_and_where_each_is(self):
@@ -332,18 +333,22 @@ class WindowTests(unittest.TestCase):
         m.swap_window(window, b)
         report(window, 64.0)
         report(window, 66.0)
-        self.assertEqual(used(b), 66.0)
+        self.assertEqual(used(b), 20.0)
         m.swap_window(window, c)
         report(window, 66.0)  # its status line, before a reply on c: still b's numbers
         self.assertEqual(used(c), 30.0)
-        report(window, 41.0)  # its first reply on c
-        self.assertEqual(used(c), 41.0)
+        report(window, 41.0)  # a changing session report still lacks account provenance
+        self.assertEqual(used(c), 30.0)
         # a window switched by /swapaccount before it ever reported: its first report is the old account's
         fresh = m.swap_account(None, "s-new", "b")["window"]
-        m.session_moved_at = 0.0  # no other session busy just now: its first report would count
         report(fresh, 99.0)
-        self.assertEqual(used(b), 66.0)
+        self.assertEqual(used(b), 20.0)
         report(fresh, 70.0)
+        self.assertEqual(used(b), 20.0)
+        self.api.claude_usage["at-b"] = claude_usage(70, 25)
+        m.refresh(only=b)
+        self.assertEqual(used(b), 70.0)
+        report(fresh, 99.0)
         self.assertEqual(used(b), 70.0)
 
     def test_a_dead_login_isnt_tried_again_on_every_request(self):

@@ -12,8 +12,8 @@ How it works
   account. When the app quits, the chosen account is written into ~/.codex/auth.json.
 - Usage is fetched from each provider's own usage endpoint (read-only; it does not use any
   quota). To stay well clear of the endpoints' rate limits, each account has its own schedule:
-  the account in use every 5 minutes (3 when close to a limit), others every 15 minutes or
-  just after one of their windows resets. Known reset times are applied locally in between,
+  Claude accounts every minute, Codex accounts every 90 seconds (45 near a limit) or
+  at their next scheduled reset. Known reset times are applied locally in between,
   requests are spaced out, and 429s back off exponentially (up to an hour).
 - Subscription renewal / end dates are checked at most once a day per account; a date you
   enter by hand always wins.
@@ -52,8 +52,8 @@ FRESH_ENOUGH = 45           # opening the panel refreshes only data older than t
 STALE_AFTER = 1800          # older numbers are shown with their age
 MAX_PACE = 8
 # Claude: every minute (asked the way Claude Code asks, see providers.CLAUDE_CODE_AGENT); the
-# account in use follows live through Claude Code's status line instead when it's on.
-PROVIDER_INTERVALS = {"claude": (60, 60)}   # (in use, near a limit) when not live
+# account in use is checked at the same pace, even while status lines report.
+PROVIDER_INTERVALS = {"claude": (60, 60)}   # (in use, near a limit)
 # Accounts not in use: Claude every minute too (and just after a window resets); they may be in
 # use on another computer, and nothing else reports that. That computer may check them too: a rate
 # limit slows an account down, at most 3x (IDLE_PACE_CAP).
@@ -63,13 +63,9 @@ WINDOW_GRACE = 90  # a window is never forgotten in its first moments (its proce
 WINDOW_IDLE = 12 * 3600  # a window whose process isn't known, with no request this long, has closed
 WINDOWS_EVERY = 5  # seconds between looks at whether the windows are still open
 LEGACY_EVERY = 60  # seconds between looks for windows from before the router (their own config folders)
-FIRST_REPORT = object()  # a window switched before it reported: its first report after is the old account's
 CLAUDE_PROCESSES = ("claude", "node", "bun")  # what Claude Code runs as (native, npm)
 WINDOWS_FILE = "windows.json"  # in the data folder: each window's account, kept across app restarts
 UI_FRESH_IDLE = 300         # opening the panel or the full view refreshes accounts not in use older than this
-LIVE_FRESH = 900            # status line data this recent counts as live
-LIVE_API_INTERVAL = 1800    # while live, the API only fills in the rest (model limits, credits)
-SWAP_SETTLE = 20            # status line reports right after a switch may still be the old account
 MANUAL_MIN_GAP = 30         # the Refresh button cannot hammer the API
 STARTUP_DELAY = 4           # the first usage check waits for the network and the sign-in files to settle at boot
 SPACING = 1.5               # seconds between consecutive API calls
@@ -145,11 +141,6 @@ def level_color(left):
     return "good" if left > 30 else "warn" if left > 10 else "bad"
 
 
-def report_key(windows):
-    """Usage numbers [(window minutes, used %, reset)] in a form two reports of the same numbers share."""
-    return tuple(sorted((minutes, round(used), round(reset / 60) if reset else None) for minutes, used, reset in windows))
-
-
 class StatusLine(str):
     """The line for Claude Code's status line, as plain text, with its coloured pieces in `parts`:
     [{"t": text, "c": colour name or None}] (dim, label, good, warn, bad)."""
@@ -174,6 +165,7 @@ class LiveAccounts:
         meta = self.vault.load_meta()
         # Every saved setting comes back (panel size, taskbar view and its display, ...), not just these.
         for entry in (meta.get("accounts") or {}).values():  # a hiccup's back-off doesn't outlive the app
+            entry.pop("liveAt", None)  # old session reports must not delay provider checks
             if entry.get("backoffKind") == "transient":
                 entry.update(backoffUntil=0.0, backoffFailures=0, backoffKind=None)
             entry.pop("waitingMark", None)  # the first check after a restart asks again
@@ -183,7 +175,6 @@ class LiveAccounts:
                      "afk": meta.get("afk", False), "selected": meta.get("selected", {})}
         self.active = {}
         self.live_ids = {}       # provider -> account in the official login file
-        self.live_since = {}     # provider -> when the account in the login file last changed
         self.routed = set()      # providers whose requests go through the local router
         self.signed_out = set()  # providers whose login file has no login: the account in use is the last one
         self.token_locks = {}
@@ -191,9 +182,6 @@ class LiveAccounts:
         self.afk_lock = threading.Lock()  # one limit report at a time (several hooks can ask at once)
         self.pending_resumes = {}  # Claude session -> {"tokens", "at", "status": pending|approved|declined}
         self.afk_continues = []  # every session's continues (times): a cap that no session id can dodge
-        self.session_reports = {}  # Claude session -> its last status line numbers
-        self.session_moved_at = 0.0  # when a session's numbers last moved (it got a reply)
-        self.stale_reports = set()  # numbers from before the last Claude login change (see _login_changed)
         self.status_synced = 0.0  # when a status line report last looked at the login files
         self.mod_sessions = {}   # Claude session -> when its limitswitcher mod last reported
         self.compactions = {}    # Claude session -> its Jev compaction before a swap (see claude_limit)
@@ -215,8 +203,6 @@ class LiveAccounts:
         self.window_reports = {}      # window id -> {"model", "session", "at", "cwd", "title"} from its status line
         self.window_pids_found = set()  # windows whose process was looked up from a status line
         self.window_failures = set()  # (window, account) whose login couldn't be used, said once
-        self.window_keys = {}         # window id -> the numbers of its last status line report
-        self.window_stale = {}        # window id -> numbers that are still its previous account's (after a switch)
         self.windows_checked = 0.0
         self.legacy_checked = 0.0
         self.legacy_held = {}         # account id -> the 1.3.x window folder whose Claude Code holds its login
@@ -283,11 +269,9 @@ class LiveAccounts:
                 self.signed_out.discard(name)
                 account_id = self.adopt(name, login)
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
-                if previous != account_id:
-                    self._login_changed(name, previous)
-                    if previous is not None:  # a switch by the app itself sets live_ids directly
-                        logging.getLogger("account_switcher").warning(
-                            "%s's login changed to %s outside LimitSwitcher", name.title(), login.email or "?")
+                if previous is not None and previous != account_id:  # app switches set live_ids directly
+                    logging.getLogger("account_switcher").warning(
+                        "%s's login changed to %s outside LimitSwitcher", name.title(), login.email or "?")
                 # Routed: the router decides; only a different login in the file (the user
                 # signed in to another account) changes the account in use.
                 follow = name not in self.routed or previous != account_id or name not in self.active
@@ -506,7 +490,6 @@ class LiveAccounts:
             if window.get("account") == account_id:
                 return
             window["account"] = account_id
-            self.window_stale[window_id] = self.window_keys.get(window_id, FIRST_REPORT)
             self.window_failures = {f for f in self.window_failures if f[0] != window_id}
             self._save_windows()
         number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
@@ -552,8 +535,6 @@ class LiveAccounts:
         else:
             with self.lock:
                 window_id = self._new_window(target, "command", cwd=cwd, upstream=upstream)
-                if target is not None:  # until its first reply there, its numbers are the main account's
-                    self.window_stale[window_id] = FIRST_REPORT
                 if session:
                     self.window_sessions[session] = window_id
             answer = {"window": window_id, "baseUrl": self.router_url(window_id)}
@@ -658,18 +639,21 @@ class LiveAccounts:
         Code's own (it renews that one). Any other: the saved login, renewed here before it expires
         (or when Anthropic refused it), as no Claude Code holds it."""
         provider = self.providers["claude"]
-        with self.lock:
-            entry = self.meta["accounts"].get(account_id)
-            live = entry is not None and account_id == self.live_ids.get("claude")
-        if entry is None:
-            raise ValueError("Unknown account")
-        holder = provider if live else profiles.provider(self.legacy_held[account_id], self._keychain()) \
-            if account_id in self.legacy_held else None
-        if holder is not None:  # a Claude Code renews this login: its current token, never renewed here
-            login = holder.read_live()
-            if login is not None and login.identity == entry["identity"]:
-                return login.secret["credentials"]["claudeAiOauth"]["accessToken"]
+        # A switch holds this lock too. Determine who owns renewal after waiting for it,
+        # or a request can rotate the login that the switch just handed to Claude Code.
         with self._token_lock(account_id):
+            with self.lock:
+                entry = self.meta["accounts"].get(account_id)
+                live = entry is not None and account_id == self.live_ids.get("claude")
+                legacy = self.legacy_held.get(account_id)
+            if entry is None:
+                raise ValueError("Unknown account")
+            holder = provider if live else profiles.provider(legacy, self._keychain()) if legacy else None
+            if holder is not None:  # Claude Code owns renewal of this login
+                login = holder.read_live()
+                if login is not None and login.identity == entry["identity"]:
+                    return login.secret["credentials"]["claudeAiOauth"]["accessToken"]
+                raise RuntimeError("Claude Code's login is changing; try again in a moment")
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("Saved login missing")
@@ -752,8 +736,6 @@ class LiveAccounts:
         if meta.get("status") or not updated:
             return max(held, last + max(ACTIVE_INTERVAL * pace, 300))   # failing: retry gently, never in a loop
         if is_active:
-            if now - meta.get("liveAt", 0.0) < LIVE_FRESH:  # followed live: the API only fills in the rest
-                return max(held, meta.get("apiAt", updated) + LIVE_API_INTERVAL)
             usage = project(meta.get("usage") or [], now)
             near = any(w["scope"] == "account" and w["used"] >= 90 for w in usage)
             active, urgent = PROVIDER_INTERVALS.get(meta.get("provider"), (ACTIVE_INTERVAL, URGENT_INTERVAL))
@@ -870,7 +852,6 @@ class LiveAccounts:
                 if updated is not None:
                     self.vault.write_secret(account_id, updated)
                     secret = updated
-            windows = self.keep_live(account_id, windows)
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
@@ -1031,9 +1012,7 @@ class LiveAccounts:
                             provider.write_live(before.secret)  # put things back exactly as they were
                         raise RuntimeError("Switch could not be verified; your previous login was restored")
                     self.signatures[name] = provider.signature()
-                    previous = self.live_ids.get(name)
                     self.live_ids[name] = account_id
-                    self._login_changed(name, previous)
             self.active[name] = account_id
             self.signed_out.discard(name)
             if name in self.routed:
@@ -1080,18 +1059,19 @@ class LiveAccounts:
     def credentials(self, account_id):
         """Current tokens for a routed account: the official login file's for the account it
         holds (Codex keeps those fresh), our saved copy (refreshed here) for the others."""
-        with self.lock:
-            entry = self.meta["accounts"].get(account_id)
-            live = account_id == self.live_ids.get(entry["provider"]) if entry else False
-        if entry is None:
-            raise ValueError("Unknown account")
-        provider = self.providers[entry["provider"]]
-        if live:
-            login = provider.read_live()
-            if login is not None and login.identity == entry["identity"]:
-                tokens = login.secret["auth"]["tokens"]
-                return tokens["access_token"], tokens.get("account_id")
         with self._token_lock(account_id):
+            with self.lock:
+                entry = self.meta["accounts"].get(account_id)
+                live = account_id == self.live_ids.get(entry["provider"]) if entry else False
+            if entry is None:
+                raise ValueError("Unknown account")
+            provider = self.providers[entry["provider"]]
+            if live:
+                login = provider.read_live()
+                if login is not None and login.identity == entry["identity"]:
+                    tokens = login.secret["auth"]["tokens"]
+                    return tokens["access_token"], tokens.get("account_id")
+                raise RuntimeError("Codex's login is changing; try again in a moment")
             secret = self.vault.read_secret(account_id)
             if secret is None:
                 raise RuntimeError("Saved login missing")
@@ -1146,7 +1126,6 @@ class LiveAccounts:
                 usage.insert(0, window)
             window["used"] = 100.0
             entry["usage"] = usage
-            entry.pop("liveAt", None)  # and ask the API again at its normal pace
         self.notify("accounts", None)
 
     def usable(self, account_id):
@@ -1166,25 +1145,6 @@ class LiveAccounts:
             return account_id
         self.swap(best.id, reason="auto")
         return best.id
-
-    def keep_live(self, account_id, windows):
-        """The API's windows, except where Claude Code's status line reported more use of the same
-        window since: usage never goes down within a window, and the usage API can lag behind the
-        live numbers, which would otherwise step back for a while."""
-        with self.lock:
-            entry = self.meta["accounts"].get(account_id) or {}
-            if time.time() - entry.get("liveAt", 0) > LIVE_FRESH:
-                return windows
-            ours = {w["key"]: w for w in entry.get("usage") or []}
-        merged = []
-        for window in windows:
-            live = ours.get(window.get("key"))
-            if live and window.get("resetsAt") is not None and live.get("resetsAt") is not None \
-                    and abs(live["resetsAt"] - window["resetsAt"]) < 120 \
-                    and window.get("used", 0) < live.get("used", 0) < 100:
-                window = dict(window, used=live["used"])
-            merged.append(window)
-        return merged
 
     def observe(self, account_id, windows, add=False):
         """Live usage the service reported with a response: [(window minutes, used %, reset)].
@@ -1217,32 +1177,12 @@ class LiveAccounts:
             self.notify("accounts", None)
         return changed
 
-    def _login_changed(self, name, previous):
-        """The account in a client's login file changed (under the lock). Claude Code sessions keep
-        showing the numbers of their last reply until they get a new one, so every report they made
-        so far, and the outgoing account's own numbers, are the old account's: a report still
-        carrying them never counts for the new one (a newly added account showed the old one's
-        0% left until it was used)."""
-        self.live_since[name] = time.time()
-        if name != "claude":
-            return
-        stale = set(self.session_reports.values())
-        outgoing = self.meta["accounts"].get(previous) if previous else None
-        if outgoing:
-            minutes = {"five_hour": 300, "weekly": 10080}
-            stale.add(report_key((minutes[w["key"]], w.get("used", 0.0), w.get("resetsAt"))
-                                 for w in outgoing.get("usage") or [] if w.get("key") in minutes))
-        self.stale_reports = stale
-
     def statusline(self, limits, session=None, model=None, effort=None, window=None, cwd=None, transcript=None, parent=None):
-        """Live usage from a Claude Code status line (rate_limits), for the account signed in to
-        Claude Code. Returns the compact status line text.
+        """Update session details and render account usage from provider checks.
 
-        Every open Claude Code session reports the numbers from its own last reply, also long
-        after it (an idle session may still hold another account's numbers). So a session's report
-        counts only once its numbers moved since its previous one, i.e. it just got a reply. A
-        session's first report counts only while no other session is busy. Otherwise an old
-        session and a fresh one take turns and the bar jumps between their numbers."""
+        The caller's cached rate_limits are deliberately ignored: they identify
+        neither the account nor when its last response was received.
+        """
         name = "claude"
         now = time.time()
         if now - self.status_synced >= STATUS_SYNC:
@@ -1256,53 +1196,14 @@ class LiveAccounts:
                                            "title": profiles.session_title(transcript) if transcript else None}
             self.window_seen[window] = now
             self.window_process(window, parent)
-        windows = []
-        for key, minutes in (("five_hour", 300), ("seven_day", 10080)):
-            limit = limits.get(key) if isinstance(limits, dict) else None
-            if isinstance(limit, dict) and isinstance(limit.get("used_percentage"), (int, float)):
-                reset = limit.get("resets_at")
-                windows.append((minutes, float(limit["used_percentage"]), float(reset) if isinstance(reset, (int, float)) else None))
-        switched = False  # a window just moved to another account: its numbers are still the old account's
-        if window in self.claude_windows and windows:
-            key = report_key(windows)
-            with self.lock:
-                before = self.window_stale.get(window, key)
-                if before is FIRST_REPORT:
-                    self.window_stale[window] = key
-                if before is FIRST_REPORT or before == key:
-                    switched = window in self.window_stale
-                else:
-                    self.window_stale.pop(window, None)  # a reply on the new account
-                self.window_keys[window] = key
         if own is not None:
             account_id = own
         entry = self.meta["accounts"].get(account_id) if account_id else None
         if entry is None:
             return None
-        settled = own is not None or now - self.live_since.get(name, 0.0) >= SWAP_SETTLE
-        if isinstance(limits, dict) and settled:
-            # Claude Code repeats its last numbers with every reply, also after a limit when it gets
-            # no new ones. Only a report that changes something counts as live; otherwise the API
-            # goes back to its normal pace and catches what the status line misses.
-            key = report_key(windows)
-            fresh = (own is not None or key not in self.stale_reports) and not switched  # the previous account's numbers (see _login_changed)
-            if session is not None:
-                with self.lock:
-                    previous = self.session_reports.get(session)
-                    self.session_reports[session] = key
-                    if len(self.session_reports) > 200:  # sessions come and go
-                        self.session_reports.pop(next(iter(self.session_reports)))
-                    if previous is None:  # a session's first report: fine unless another one is busy now
-                        fresh = fresh and now - self.session_moved_at >= LIVE_FRESH
-                    else:
-                        fresh = fresh and previous != key
-                    if fresh and previous is not None:
-                        self.session_moved_at = now
-            if windows and fresh and self.observe(account_id, windows, add=True):
-                with self.lock:
-                    entry["liveAt"] = now
-                    if entry.get("status", "").startswith("Rate limited"):
-                        entry["status"] = ""  # live numbers: the API's rate limit no longer matters
+        # rate_limits describes a session's last reply, without the account that
+        # produced it. It can remain cached across switches and app restarts.
+        # Account percentages come only from authenticated provider checks.
         compacting = bool(session) and self.compacting(session)
         # While Jev compacts the icon turns yellow and "Jev Compacting…" follows the app's name.
         groups = [[("⇄", "warn" if compacting else "good"), (" ", None), ("LimitSwitcher", "dim")]]
