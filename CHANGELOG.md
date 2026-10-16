@@ -2,6 +2,12 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.14](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.14) (2026-10-15)
+
+- Fixed: Claude usage could correct itself and then drift back to another account's cached five-hour and weekly figures. Account-specific provider checks now determine usage throughout the app, including the status line, with normal checks every minute and provider backoff respected.
+- Fixed: a request waiting during an account switch could renew the login just handed to the official client, leaving that client's refresh token outdated. Token ownership is now checked under the same lock as switching.
+- Fixed: taskbar usage blocks could remain hidden until another window change. The app now restores their actual visibility, remeasures after Explorer's layout settles, and handles temporarily hidden taskbars.
+
 ## [1.4.13](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.13) (2026-10-14)
 
 - Fixed: after `/swapaccount` moved a window to another account, that account could show the previous account's usage (5% left instead of 50%) for a long time. The window's reports are now ignored until its first reply on the new account.
