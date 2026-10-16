@@ -78,7 +78,7 @@ While it runs, every line it adds to `~/.codex/config.toml` is tagged `# account
 
 ## Staying clear of rate limits
 
-- Claude: every account is checked every minute, and the account in use only every 30 minutes while Claude Code's status line already reports it live. Requests identify as Claude Code, because Claude's usage endpoint throttles other clients hard.
+- Claude: every account is checked every minute, including the account in use while status lines report. Account-specific provider responses determine the percentages: a session's cached last-reply usage can belong to another account after a switch. Requests identify as Claude Code, because Claude's usage endpoint throttles other clients hard.
 - Codex: the account in use every 90 seconds (45 near a limit), others every 5 minutes or just after a reset.
 - Passed reset times are applied locally without a request.
 - Requests are spaced out.
@@ -89,9 +89,9 @@ While it runs, every line it adds to `~/.codex/config.toml` is tagged `# account
 
 LimitSwitcher shows itself in Claude Code's status line (the line under the prompt) once the [Claude Code Status mod](claude-code-mod.md) is installed (Settings → **Claude Code Status mod**).
 
-- **Why it's there:** Claude Code hands the status line the live 5-hour and weekly usage of the account in use. That's how LimitSwitcher follows Claude usage live, after every reply, without asking Claude's usage API.
+- **Why it's there:** it shows the account's 5-hour and weekly usage from authenticated provider checks. Claude Code also supplies cached usage from the session's last reply; LimitSwitcher ignores those percentages because they can belong to an account used before a switch or restart.
 - **With the mod installed, without a status line of your own:** it shows `⇄ LimitSwitcher`, the account in use, the session's model and effort (`Opus 5.5 (high)`), what's left of its limits, and the session's context (`ctx 183k/82% left`: tokens in use and what's left of Claude Code's context window; the numbers go green, yellow and red as it fills). While Jev compacts the icon is yellow and says so; for 45 seconds after, the line says what it saved (`Jev saved ~120k`), and ctx shows the size less what Jev saved until the next reply. With your own status line, the context is already in the input Claude Code gives it.
-- **With your own status line:** LimitSwitcher runs yours for you, so the usage still comes in, and yours stays exactly as it was. With the mod installed, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
+- **With your own status line:** LimitSwitcher runs yours for you and supplies its latest account-specific usage, keeping your command's output unchanged. With the mod installed, a dim `⇄ LimitSwitcher` follows it, so you can see the app is on.
 - **Without the mod, and without one of your own:** Claude Code's status line is left alone, and the account in use is checked through the usage API instead (every minute).
 - **Every session stays current:** Claude Code only knows the usage from a session's own last reply, so an idle session would keep old numbers. LimitSwitcher has Claude Code refresh the status line every 5 seconds (unless you set your own `refreshInterval`; a run is a small process start of about 15 ms, well under 1% of a core per open session), so a compaction shows up within a few seconds. It gives your own status line command its freshest numbers for the account.
 - **On quit** your original status line setting is put back.

@@ -1,9 +1,10 @@
 """Claude Code status line (installed by LimitSwitcher while it runs).
 
 Claude Code runs the status line command after each reply and passes it the session's data,
-including the live 5-hour and weekly usage of the signed-in account (rate_limits). That is how
-the app follows Claude usage live: no tokens, no API calls. This script
-  1. hands rate_limits to the running app (loopback, a fraction of a second at most), then
+including cached usage from its last reply (rate_limits). Those figures can belong to
+an account used before a switch; the app renders usage from account-specific provider checks.
+This script
+  1. reports session details to the running app (loopback, a fraction of a second at most), then
   2. prints the status line: the user's own status line command if they had one (same input,
      except rate_limits holds the app's freshest numbers; its output unchanged), else the app's
      compact line (account and what's left).
