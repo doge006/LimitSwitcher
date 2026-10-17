@@ -10,6 +10,7 @@ import time
 from http.server import BaseHTTPRequestHandler
 
 from .demo import DemoGateway
+from .core import next_account
 from .local_http import LocalServer
 
 ASSETS = Path(__file__).with_name("static")
@@ -218,7 +219,12 @@ class Controller:
         # own lock and posts log lines (which need this lock) while holding it.
         router = self.gateway.router
         active = dict(router.active)
-        accounts = [account_view(a, active.get(a.provider) == a.id) for a in router.accounts]
+        routed_accounts = list(router.accounts)
+        accounts = [account_view(a, active.get(a.provider) == a.id) for a in routed_accounts]
+        next_use = {}
+        for provider in ("claude", "codex"):
+            candidate = next_account(routed_accounts, provider, active.get(provider))
+            next_use[provider] = candidate.id if candidate else None
         name_mode = self.names(accounts)
         auto_swap = router.auto_swap
         windows = self.gateway.manager.windows() if self.live else []  # outside the lock, like the accounts
@@ -230,6 +236,7 @@ class Controller:
                 "revision": self.revision,
                 "mode": "live" if self.live else "demo",
                 "accounts": accounts,
+                "nextUse": next_use,
                 "autoSwap": auto_swap, "afk": self.afk_enabled(),
                 "compact": bool(self.gateway.manager.meta.get("compactPanel")) if self.live else self.compact,
                 "taskbar": bool(self.gateway.manager.meta.get("taskbarView", True)) if self.live else self.taskbar,

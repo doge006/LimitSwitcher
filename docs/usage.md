@@ -104,5 +104,5 @@ In the full view, the gear opens Settings:
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
 - **Launch with Windows / macOS:** start in the tray when you sign in.
-- **Taskbar view** (Windows): the accounts in use, right on the taskbar, on the display you choose.
+- **Taskbar view** (Windows): choose each display's left and right blocks from dropdowns. Each block can show a provider's **in use** account, its **next use** account, a fixed saved account, or **Off**. Next use previews the next eligible Auto swap account using the same selection rules as switching; it updates as usage changes and hides the block when no replacement is available. The block is marked **Next use** so it can be distinguished from the current account.
 - **Check for updates / Update to …**

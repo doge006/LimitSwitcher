@@ -1013,7 +1013,7 @@ def _block_level(theme, left):
     return theme["good"] if left > 30 else theme["warn"] if left > 10 else theme["bad"]
 
 
-def block_row(L, account, fx, height, theme, x=0.0, columns=3):
+def block_row(L, account, fx, height, theme, x=0.0, columns=3, next_use=False):
     """One account's content (icon, name, provider line, a column per limit) from x.
     Returns its width, padding included."""
     provider = account["provider"]
@@ -1024,6 +1024,8 @@ def block_row(L, account, fx, height, theme, x=0.0, columns=3):
     # Kept short for the taskbar: the plan and how old the numbers are (the provider is the icon;
     # everything else is one click away in the panel).
     title = account.get("plan") or ""
+    if next_use:
+        title = "Next use" + (" · " + title if title else "")
     problem = note if account.get("status") else None  # sign in again, retrying: instead of the plan
     sub, sub_color = (problem, theme["warn"]) if problem else (title, theme["accent"][provider])
     age = None if problem else age_text(account)
@@ -1085,13 +1087,16 @@ def slot_account(state, slot):
     """The account a slot shows now, or None."""
     if isinstance(slot, str) and slot.startswith("acct:"):
         return next((a for a in state["accounts"] if a["id"] == slot[5:]), None)
+    if isinstance(slot, str) and slot.startswith("next:"):
+        account_id = (state.get("nextUse") or {}).get(slot[5:])
+        return next((a for a in state["accounts"] if a["id"] == account_id), None)
     return next((a for a in state["accounts"] if a["provider"] == slot and a["active"]), None)
 
 
 def block_accounts(state, slot, fx):
     """The accounts a block draws: the one in use, plus one sliding out mid-swap (one account's
     block: just that account)."""
-    if isinstance(slot, str) and slot.startswith("acct:"):
+    if isinstance(slot, str) and slot.startswith(("acct:", "next:")):
         account = slot_account(state, slot)
         return [account] if account else []
     return [a for a in state["accounts"] if a["provider"] == slot
@@ -1101,7 +1106,8 @@ def block_accounts(state, slot, fx):
 def block_width(state, slot, height=44, light=False, columns=3):
     """Resting width of a slot's block, or 0 when it has no account to show."""
     account = slot_account(state, slot)
-    return block_row(Layout(), account, {}, height, THEMES[light], columns=columns) if account else 0
+    return block_row(Layout(), account, {}, height, THEMES[light], columns=columns,
+                     next_use=isinstance(slot, str) and slot.startswith("next:")) if account else 0
 
 
 def build_block(state, provider, fx=None, hover=None, height=44, light=False, width=None, columns=3):
@@ -1115,14 +1121,15 @@ def build_block(state, provider, fx=None, hover=None, height=44, light=False, wi
     width = width or block_width(state, provider, height, light, columns) or 120
     hov = fx.get(("hover", "open"), 1.0 if hover == "open" else 0.0)
     L.rect(0, 0, width, height, 6, mix(theme["plate"], theme["plate_hover"], hov))
-    pinned = isinstance(provider, str) and provider.startswith("acct:")  # one account: no swap slide
+    pinned = isinstance(provider, str) and provider.startswith(("acct:", "next:"))  # one account: no swap slide
     for account in block_accounts(state, provider, fx):
         t = 1.0 if pinned else fx.get(("active", account["id"]), 1.0 if account["active"] else 0.0)
         alpha = max(0.0, 2 * t - 1)
         if alpha <= 0.01:
             continue
         marks = (len(L.shapes), len(L.texts), len(L.images), len(L.hits))
-        block_row(L, account, fx, height, theme, columns=columns)
+        block_row(L, account, fx, height, theme, columns=columns,
+                  next_use=isinstance(provider, str) and provider.startswith("next:"))
         if not account["eligible"]:
             dim_row(L, marks[:3])
         if t < 0.999:

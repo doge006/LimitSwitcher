@@ -40,7 +40,7 @@ import time
 import uuid
 
 from . import processes, profiles
-from .core import Account, Router
+from .core import Account, Router, MIN_ROOM, next_account, pick_account
 from .providers import PROVIDERS, ProviderError, _jwt_payload
 from .vault import Vault, atomic_write, data_dir
 
@@ -87,7 +87,6 @@ JEV_SHOWN = 45           # seconds the status line says a compaction saved somet
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOVED_RECENTLY = 120     # seconds: a limit reported this soon after an automatic switch was the old account's
 MOD_SESSION_FRESH = 120  # a session's limitswitcher mod reported this recently: it is there to compact
-MIN_ROOM = 5            # percent: an account with less left than this is only moved to when none has more
 AFK_RESUMED = "The usage limit has reset. Continue exactly where you left off."
 
 
@@ -1335,24 +1334,13 @@ class LiveAccounts:
         """The account to move to: of those with real room, the one whose weekly (longest) window
         resets first, so its quota is used before it is lost; the one with the most headroom when
         none has real room (or among accounts whose usage is unknown, which come last)."""
-        if not candidates:
-            return None
-        roomy = [a for a in candidates if a.headroom >= MIN_ROOM]
-        if not roomy:
-            return max(candidates, key=lambda a: a.headroom)
-
-        def weekly_reset(account):
-            resets = [w["resetsAt"] for w in account.account_windows() if w["key"] != "five_hour" and w.get("resetsAt")]
-            return min(resets) if resets else float("inf")
-        return min(roomy, key=lambda a: (weekly_reset(a) // 3600, -a.headroom))  # within the same hour: the most room
+        return pick_account(candidates, MIN_ROOM)
 
     def _best_other(self, name, current, allow_unknown=False):
         """The other account to move to (see _pick). allow_unknown also accepts accounts whose
         usage has not been read yet (after the known ones): a client just hit a limit, and
         trying one is better than stopping."""
-        candidates = [a for a in self.accounts() if a.provider == name and a.id != current
-                      and a.eligible and not a.status and (a.headroom > 0 or (allow_unknown and a.headroom < 0))]
-        return self._pick(candidates)
+        return next_account(self.accounts(), name, current, allow_unknown)
 
     def resets_soon(self, account):
         """True when Claude's only used-up limit is the 5-hour one and it resets within

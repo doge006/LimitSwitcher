@@ -15,7 +15,7 @@ log = logging.getLogger("account_switcher.fullview")
 ICON = Path(__file__).with_name("static") / "assets" / "switcher.png"
 CURSORS = {"arrow": "", "hand": "hand2", "text": "xterm"}
 KEYS = {"Escape": "escape", "Return": "enter", "KP_Enter": "enter", "BackSpace": "backspace", "Delete": "delete",
-        "Left": "left", "Right": "right", "Home": "home", "End": "end"}
+        "Left": "left", "Right": "right", "Home": "home", "End": "end", "Up": "up", "Down": "down", "Tab": "tab"}
 
 
 class TkFullView:

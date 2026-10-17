@@ -143,6 +143,11 @@ class UI:
         self.jev_confirm = False   # Settings: "Remove" on the saved OpenRouter key was clicked once; the next click confirms
         self.revealed = set()      # accounts whose email is shown in name mode
         self.menu = None           # "settings" | "add"
+        self.slot_menu = None      # (display id, slot index) while its dropdown is open
+        self.slot_options = ()
+        self.slot_focus = 0
+        self.slot_scroll = 0
+        self.slot_visible = 1
         self.editor = None         # the renewal date editor's state
         self.signing_in = ()
         self.anchors = {}
@@ -194,6 +199,12 @@ class FullView:
     def set_state(self, state):
         self.state = state
         ui = self.ui
+        if ui.slot_menu:
+            from . import taskbar_layout
+            display, _ = ui.slot_menu
+            if not state.get("taskbar") or display not in {d["id"] for d in state.get("taskbarDisplays") or []} \
+                    or tuple(taskbar_layout.options(state)) != ui.slot_options:
+                ui.slot_menu = None
         ui.signing_in = tuple(state.get("signingIn") or ())
         if ui.pending and any(a["id"] == ui.pending and a["active"] and not a.get("signed_out") for a in state["accounts"]):
             ui.pending = None  # the switch landed
@@ -280,6 +291,13 @@ class FullView:
     def wheel(self, pixels, glide=True):
         """Scroll by `pixels` logical px (positive: down the page). A mouse wheel's notch glides
         there; a trackpad's deltas are already smooth, so they move the page at once (glide=False)."""
+        if self.ui.slot_menu:
+            ui = self.ui
+            step = 1 if pixels > 0 else -1 if pixels < 0 else 0
+            ui.slot_scroll = max(0, min(ui.slot_scroll + step, len(ui.slot_options) - ui.slot_visible))
+            ui.slot_focus = max(ui.slot_scroll, min(ui.slot_focus, ui.slot_scroll + ui.slot_visible - 1))
+            self.host.invalidate()
+            return
         target = max(0.0, min(self.scroll_to + pixels, self.max_scroll()))
         if target == self.scroll_to and (glide or SCROLL not in self.motion.runs):
             return
@@ -603,6 +621,14 @@ class FullView:
         elif ui.menu == "add" and "add" in ui.anchors:
             ax, aw = ui.anchors["add"]
             moving |= faded("add", lambda dy: vr.add_menu(image, s, ui, left + ax + aw - 260, top + 17 + 32 + 6 + dy))
+        if ui.slot_menu and ui.menu == "settings":
+            display, index = ui.slot_menu
+            action = f"slot:{display}:{index}"
+            anchor = next((box for _, hits in self.overlay_hits for box, what, _ in hits if what == action), None)
+            if anchor:
+                self.overlay_hits.append(vr.slot_dropdown(image, s, self.state, ui, anchor, self.width, self.height))
+            else:
+                ui.slot_menu = None
         if ui.editor:
             anchor = next((h for h in self.page_hits if h[1] == "renew:" + ui.editor["id"]), None)
             if anchor is None:
@@ -654,6 +680,8 @@ class FullView:
     def mouse_move(self, x, y):
         self.pointer = (x, y)
         action, cursor, where = self.hit_at(x, y)
+        if self.ui.slot_menu and (action or "").startswith("slot-pick:"):
+            self.ui.slot_focus = int(action.partition(":")[2])
         card = None if where == "overlay" else self.card_at(x, y)
         self.hover_to(action, card)
         self.host.set_cursor(cursor)
@@ -684,6 +712,10 @@ class FullView:
         action, _, where = self.hit_at(x, y)
         pressed, self.pressed = self.pressed, None
         ui = self.ui
+        if ui.slot_menu and not (action or "").startswith(("slot:", "slot-pick:")):
+            ui.slot_menu = None
+            self.host.invalidate()
+            return  # dismiss the dropdown without activating a setting underneath it
         if action is None or action != pressed:
             if where != "overlay":  # a click on nothing closes menus and finishes editing
                 changed = bool(ui.menu or ui.editor or ui.confirm or ui.jev_confirm)
@@ -706,6 +738,8 @@ class FullView:
         if ui.editing and not action.startswith("name:" + ui.editing[0]):
             self.commit_name()
         kind, _, arg = action.partition(":")
+        if kind not in ("slot", "slot-pick"):
+            ui.slot_menu = None
         if kind == "settings":
             ui.menu = None if ui.menu == "settings" else "settings"
             ui.editor = None
@@ -752,14 +786,28 @@ class FullView:
             self.act("installUpdate" if arg == "install" else "checkUpdate")
         elif kind == "display":
             self.act("taskbar", {"display": arg})
-        elif kind == "slot":  # Settings: a display's taskbar slot, cycled to its next choice
+        elif kind == "slot":  # open the display slot's dropdown without changing its value
             from . import taskbar_layout
             display, _, index = arg.rpartition(":")
             if index in ("0", "1") and display:
                 layout = taskbar_layout.layout(state)
                 current = (layout.get(display) or [None, None])[int(index)]
+                chosen = (display, int(index))
+                if ui.slot_menu == chosen:
+                    ui.slot_menu = None
+                else:
+                    ui.slot_menu = chosen
+                    ui.slot_options = tuple(taskbar_layout.options(state))
+                    ui.slot_focus = ui.slot_options.index(current) if current in ui.slot_options else 0
+                    ui.slot_scroll = max(0, ui.slot_focus - 3)
+        elif kind == "slot-pick" and ui.slot_menu and arg.isdigit():
+            from . import taskbar_layout
+            choice = int(arg)
+            if 0 <= choice < len(ui.slot_options):
+                display, index = ui.slot_menu
                 self.act("taskbar", {"layout": taskbar_layout.with_slot(
-                    layout, display, int(index), taskbar_layout.next_slot(state, current))})
+                    taskbar_layout.layout(state), display, index, ui.slot_options[choice])})
+                ui.slot_menu = None
         elif kind == "swap":
             if ui.pending or state.get("busy"):
                 return
@@ -867,6 +915,20 @@ class FullView:
     def key(self, name, ctrl=False):
         """Named keys: escape, enter, backspace, delete, left, right, home, end, a (with ctrl), v (with ctrl)."""
         ui = self.ui
+        if ui.slot_menu:
+            if name in ("escape", "tab"):
+                ui.slot_menu = None
+            elif name in ("up", "down", "home", "end"):
+                last = len(ui.slot_options) - 1
+                ui.slot_focus = {"up": max(0, ui.slot_focus - 1), "down": min(last, ui.slot_focus + 1),
+                                 "home": 0, "end": last}[name]
+                ui.slot_scroll = max(0, min(ui.slot_scroll, ui.slot_focus))
+                if ui.slot_focus >= ui.slot_scroll + ui.slot_visible:
+                    ui.slot_scroll = ui.slot_focus - ui.slot_visible + 1
+            elif name == "enter":
+                self.activate(f"slot-pick:{ui.slot_focus}")
+            self.host.invalidate()
+            return
         if ui.editing:
             aid, text, caret, everything = ui.editing
             if name == "escape":

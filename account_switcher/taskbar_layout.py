@@ -1,6 +1,7 @@
 """What the taskbar view shows on which display (Windows): per display, two slots, left and right.
 
-A slot is "claude" or "codex" (that provider's account in use), "acct:<id>" (one account,
+A slot is "claude" or "codex" (that provider's account in use), "next:<provider>" (its next
+eligible Auto swap account), "acct:<id>" (one account,
 whatever is in use) or None (nothing). A display with no slot set shows nothing. Without a saved
 layout it is what the app always showed: Claude's and Codex's accounts in use, on the chosen
 display ("taskbarDisplay", the main one by default). Pure functions: the settings, the tray and
@@ -11,7 +12,7 @@ MAX_DISPLAYS = 8
 
 
 def valid_slot(slot):
-    return slot is None or slot in PROVIDERS or (isinstance(slot, str) and slot.startswith("acct:")
+    return slot is None or slot in PROVIDERS or slot in ("next:claude", "next:codex") or (isinstance(slot, str) and slot.startswith("acct:")
                                                  and 5 < len(slot) <= 64)
 
 
@@ -37,13 +38,9 @@ def layout(state):
 
 
 def options(state):
-    """Every choice for a slot, in the order a click cycles through them."""
-    return list(PROVIDERS) + ["acct:" + a["id"] for a in state.get("accounts") or []] + [None]
-
-
-def next_slot(state, slot):
-    choices = options(state)
-    return choices[(choices.index(slot) + 1) % len(choices)] if slot in choices else choices[0]
+    """Dropdown choices: dynamic accounts, fixed accounts, then Off."""
+    return [slot for provider in PROVIDERS for slot in (provider, "next:" + provider)] \
+        + ["acct:" + a["id"] for a in state.get("accounts") or []] + [None]
 
 
 def label(state, slot):
@@ -52,6 +49,8 @@ def label(state, slot):
         return "Off"
     if slot in PROVIDERS:
         return slot.title() + " in use"
+    if slot in ("next:claude", "next:codex"):
+        return slot[5:].title() + " next use"
     account = next((a for a in state.get("accounts") or [] if "acct:" + a["id"] == slot), None)
     return (account.get("name") or account.get("email") or slot.title()) if account else "Removed account"
 

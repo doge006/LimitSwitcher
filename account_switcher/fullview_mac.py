@@ -21,7 +21,7 @@ vr.set_measure(cg.text_w)  # the layout measures text as Core Text draws it
 
 log = logging.getLogger("account_switcher.fullview")
 KEYS = {53: "escape", 36: "enter", 76: "enter", 51: "backspace", 117: "delete", 123: "left", 124: "right",
-        115: "home", 119: "end"}
+        115: "home", 119: "end", 126: "up", 125: "down", 48: "tab"}
 
 
 class FullViewCanvas(NSView):
