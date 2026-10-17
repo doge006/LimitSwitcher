@@ -1,7 +1,6 @@
 // Rebuilds the transcript from the decisions. Nothing is summarised and nothing is removed whole:
-// an output is kept, trimmed to its head and tail, or replaced by a one-line note, and the long
-// inputs of file-writing tools and scripts are shortened (what they did is on disk). Every changed spot
-// says so, so the model re-runs a tool instead of guessing what was there.
+// outputs may be shortened, with explicit omission notes. Inputs remain verbatim: current disk
+// contents cannot recover historical scripts or edits. No archive retrieval is enabled.
 
 import { factIndex, factsIn, indexBudget } from './facts.ts'
 import { imageTokensOf } from './images.ts'
@@ -9,16 +8,9 @@ import type { Decision, Message, ToolCall, ToolResult, ToolUse } from './types.t
 
 export const NOTE_TAG = '[LimitSwitcher'
 
-/** Tools whose long string inputs are file contents already on disk. */
-export const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit'])
-/**
- * Tools whose long inputs are scripts: an old one's effect is on disk (or in its output, which is
- * judged on its own). Measured on a real session: 20% of the transcript was such script inputs.
- */
-export const SCRIPT_TOOLS = new Set(['Bash', 'PowerShell'])
-
-function inputNote(tool: string): string {
-  return WRITE_TOOLS.has(tool) ? 'the file on disk has them' : 'what the script did is on disk'
+/** Only emitted note lines, not source code that happens to mention the product's marker. */
+export function hasCompactionNote(text: string): boolean {
+  return /(?:^|\n)\[LimitSwitcher(?::| (?:removed |duplicate of tool_use_id=|repeat: ))/.test(text)
 }
 
 /** " It held: a, b, c." for a note, or "" when there is nothing worth naming. */
@@ -26,8 +18,9 @@ function held(names: readonly string[]): string {
   return names.length ? ` It held: ${names.join(', ')}.` : ''
 }
 
-export function stubText(call: ToolCall, superseded: boolean, index: readonly string[] = []): string {
-  const why = superseded ? 'file read again later' : 'judged not needed'
+export function stubText(call: ToolCall, superseded: boolean, index: readonly string[] = [], source?: string): string {
+  if (superseded && source) return `${NOTE_TAG} duplicate of tool_use_id=${JSON.stringify(source)}; identical input and output. Read that retained result for details.]`
+  const why = 'judged not needed'
   const what = call.imageTokens > 0
     ? `${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
     : `${call.tool} output (${call.resultChars} chars)`
@@ -40,23 +33,6 @@ export function trimText(text: string, head: number, tail: number, known: Readon
   const middle = text.slice(head, text.length - tail)
   const omitted = middle.length
   return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, indexBudget(middle.length), visible))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
-}
-
-/** A file-writing tool's input with each string longer than `max` cut to its head and tail. */
-export function shortenInput(input: Record<string, unknown>, max: number, tool = 'Write'): Record<string, unknown> | null {
-  let changed = false
-  const out: Record<string, unknown> = {}
-  for (const [key, value] of Object.entries(input)) {
-    if (typeof value === 'string' && value.length > max) {
-      const head = Math.ceil(max * 0.6)
-      const tail = max - head
-      out[key] = `${value.slice(0, head)}\n${NOTE_TAG} removed ${value.length - max} chars of this input before an account swap; ${inputNote(tool)}.]\n${value.slice(-tail)}`
-      changed = true
-    } else {
-      out[key] = value
-    }
-  }
-  return changed ? out : null
 }
 
 type Edit = { result?: string; input?: Record<string, unknown> }
@@ -84,7 +60,7 @@ export function editsFor(
     if (!call || decision.action === 'pinned') continue
     const edit: Edit = {}
     if (decision.action === 'stub' || decision.action === 'superseded') {
-      edit.result = stubText(call, decision.action === 'superseded', index(call.resultText))
+      edit.result = stubText(call, decision.action === 'superseded', decision.source ? [] : index(call.resultText), decision.source)
     } else if (decision.action === 'trim') {
       const text = trimText(call.resultText, options.trimHeadChars, options.trimTailChars, known, named)
       if (text !== call.resultText) {
@@ -93,10 +69,9 @@ export function editsFor(
       }
       if (text !== call.resultText) edit.result = text
     }
-    if (WRITE_TOOLS.has(call.tool) || SCRIPT_TOOLS.has(call.tool)) {
-      const input = shortenInput(call.input, options.maxWriteInputChars, call.tool)
-      if (input) edit.input = input
-    }
+    // Inputs may be the only copy of historical values or scripts. A current file is not
+    // proof of recoverability, so preserve every input until verified archival retrieval exists.
+    if (edit.result !== undefined && edit.result.length >= call.resultChars) delete edit.result
     if (edit.result !== undefined || edit.input !== undefined) edits.set(call.tool_use_id, edit)
   }
   return edits

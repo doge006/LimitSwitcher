@@ -4,21 +4,20 @@
 // The flow (state fitting, batching) follows cc-mod-jev (MIT, Jay W); the decisions differ: see
 // DecisionAction in types.ts and THIRD-PARTY-NOTICES.txt.
 
-import { applyEdits, editsFor, NOTE_TAG } from './apply.ts'
+import { applyEdits, editsFor, hasCompactionNote, NOTE_TAG } from './apply.ts'
 import { factsIn } from './facts.ts'
-import { LONG_SESSION_TOKENS, LONG_TARGET, tighten } from './budget.ts'
-import { dedupe } from './dedupe.ts'
-import { cheapToRedo } from './kinds.ts'
+import { targetRatio } from './budget.ts'
+import { repeatText } from './dedupe.ts'
 import { noulOf, questionFor, questionName } from './questions.ts'
 import { fitState, goalOf } from './state.ts'
 import { estimateTokens, transcriptChars } from './tokens.ts'
-import { collectToolCalls, pairChars, supersededCalls } from './transcript.ts'
+import { collectToolCalls, pairChars, duplicateSources } from './transcript.ts'
 import type { CompactOptions, CompactResult, CompactStats, Decision, JevAnswer, JevAsker, JevQuestions, Message, ToolCall } from './types.ts'
 
 export const DEFAULT_OPTIONS: CompactOptions = {
   keepThreshold: 0.55,
   stubThreshold: 0.22,
-  cheapKeepThreshold: 0.64,
+  cheapKeepThreshold: 0.55,
   cheapStubThreshold: 0.22,
   preserveRecentMessages: 8,
   minPairChars: 400,
@@ -80,16 +79,30 @@ export function batchCalls(calls: readonly ToolCall[], stateTokens: number, maxR
   return batches
 }
 
+/** At most three requests in flight; failures prevent queued work from starting. */
+export async function mapBatches<T, R>(items: readonly T[], run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  let failed = false
+  const worker = async () => {
+    while (!failed && next < items.length) {
+      const index = next++
+      try { results[index] = await run(items[index]!) }
+      catch (error) { failed = true; throw error }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(3, items.length) }, worker))
+  return results
+}
+
 /**
- * The action for one asked call from Jev's probability. Outputs cheap to get again (file reads and
- * searches) need a higher one to stay whole. A trim that would cut nothing keeps the output whole, and
- * so does one of an image.
+ * The action from Jev's relevance score. Rerun cost does not establish recoverability.
+ * A trim that would cut nothing keeps the output whole, and so does one of an image.
  */
 export function decide(call: ToolCall, need: number, options: CompactOptions): Decision {
   const base = { id: call.id, tool: call.tool, need, chars: pairChars(call) }
-  const cheap = cheapToRedo(call) // a file read or search: one tool call gets it back
-  if (need >= (cheap ? options.cheapKeepThreshold : options.keepThreshold)) return { ...base, action: 'keep' }
-  if (need >= (cheap ? options.cheapStubThreshold : options.stubThreshold)) {
+  if (need >= options.keepThreshold) return { ...base, action: 'keep' }
+  if (need >= options.stubThreshold) {
     // An image can't be cut to a head and tail: kept whole while Jev is unsure
     const fits = call.imageTokens > 0 || call.resultChars <= options.trimHeadChars + options.trimTailChars
     return { ...base, action: fits ? 'keep' : 'trim' }
@@ -103,7 +116,7 @@ function newStats(messages: readonly Message[], calls: readonly ToolCall[]): Com
   return {
     messagesBefore: messages.length, messagesAfter: messages.length, charsBefore: chars, charsAfter: chars,
     tokensBefore: tokens, tokensAfter: tokens, calls: calls.length, pinned: 0, small: 0, superseded: 0,
-    asked: 0, kept: 0, trimmed: 0, stubbed: 0, folded: 0, budgetSteps: 0, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
+    asked: 0, kept: 0, trimmed: 0, stubbed: 0, folded: 0, budgetSteps: 0, structural: 0, targetRatio: 0, targetMet: true, stateTokens: 0, stateStage: 0, requests: 0, jevInputTokens: 0, jevCostUsd: 0,
   }
 }
 
@@ -115,20 +128,43 @@ function newStats(messages: readonly Message[], calls: readonly ToolCall[]): Com
  */
 export async function compact(messages: readonly Message[], asker: JevAsker, partial: Partial<CompactOptions> = {}): Promise<CompactResult> {
   const options = resolveOptions(partial)
-  const calls = collectToolCalls(messages, options.preserveRecentMessages)
+  let calls = collectToolCalls(messages, options.preserveRecentMessages)
   const stats = newStats(messages, calls)
-  const superseded = supersededCalls(calls)
+  // Compression that carries its own exact reconstruction requires no relevance judgment.
+  if (options.dedupe) {
+    const edits = new Map<string, { result: string }>()
+    for (const call of calls) {
+      if (call.pinned || call.isError || call.imageTokens) continue
+      const result = repeatText(call.resultText)
+      if (result !== call.resultText) edits.set(call.tool_use_id, { result })
+    }
+    const rebuilt = applyEdits(messages, edits)
+    stats.structural = rebuilt.filter((m, i) => m !== messages[i]).length
+    messages = rebuilt
+    calls = collectToolCalls(messages, options.preserveRecentMessages)
+  }
+  const sources = duplicateSources(calls)
+  const canonical = new Set(sources.values())
+  // Existing references survive repeated compaction; their original IDs never depend on t1/t2 labels.
+  for (const call of calls) {
+    for (const match of call.resultText.matchAll(/duplicate of tool_use_id=("(?:[^"\\]|\\.)*")/g)) {
+      canonical.add(JSON.parse(match[1]!))
+    }
+  }
   const decisions: Decision[] = []
   const candidates: ToolCall[] = []
   for (const call of calls) {
     const chars = pairChars(call)
-    if (call.pinned || call.isError) {
+    if (call.pinned || call.isError || hasCompactionNote(call.resultText)) {
       stats.pinned += 1
       decisions.push({ id: call.id, tool: call.tool, action: 'pinned', chars })
-    } else if (superseded.has(call.id)) {
+    } else if (canonical.has(call.tool_use_id)) {
+      stats.kept += 1
+      decisions.push({ id: call.id, tool: call.tool, action: 'keep', chars })
+    } else if (sources.has(call.id)) {
       stats.superseded += 1
-      decisions.push({ id: call.id, tool: call.tool, action: 'superseded', chars })
-    } else if (call.resultChars < options.minPairChars) { // nothing to gain on the output (a Write's long input is still shortened)
+      decisions.push({ id: call.id, tool: call.tool, action: 'superseded', chars, source: sources.get(call.id) })
+    } else if (call.resultChars < options.minPairChars) { // nothing to gain on the output
       stats.small += 1
       decisions.push({ id: call.id, tool: call.tool, action: 'small', chars })
     } else {
@@ -142,11 +178,16 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
     stats.stateTokens = fitted.tokens
     stats.stateStage = fitted.stage
     const batches = batchCalls(candidates, fitted.tokens, options.maxRequestTokens)
-    const responses = await Promise.all(batches.map((batch) => {
+    const responses = await mapBatches(batches, async (batch) => {
       const questions: JevQuestions = {}
       for (const call of batch) Object.assign(questions, questionFor(call))
-      return asker.ask(fitted.state, questions)
-    }))
+      const response = await asker.ask(fitted.state, questions)
+      if (!response.answers || Array.isArray(response.answers) || Object.keys(response.answers).some((name) => !Object.hasOwn(questions, name))) {
+        throw new Error('Jev returned unexpected answers')
+      }
+      for (const name of Object.keys(questions)) noulOf(response.answers, name)
+      return response
+    })
     const answers: Record<string, JevAnswer> = {}
     for (const response of responses) {
       Object.assign(answers, response.answers)
@@ -163,41 +204,35 @@ export async function compact(messages: readonly Message[], asker: JevAsker, par
     }
   }
   decisions.sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)))
-  // Budget mode: asked for, or by itself on a long session (the option at -1, the default)
-  const target = options.targetRatio < 0 ? (stats.tokensBefore > LONG_SESSION_TOKENS ? LONG_TARGET : 0) : options.targetRatio
-  if (target > 0 && target < 1) {
-    // Budget mode (long sessions): step the least needed, oldest first, down until the target fits
-    const estimate = transcriptChars(applyEdits(messages, editsFor(calls, decisions, options)))
-    stats.budgetSteps = tighten(calls, decisions, { ...options, targetRatio: target }, stats.charsBefore, estimate)
-    stats.kept = decisions.filter((d) => d.action === 'keep').length
-    stats.trimmed = decisions.filter((d) => d.action === 'trim').length
-    stats.stubbed = decisions.filter((d) => d.action === 'stub').length
-  }
-
-  const build = (visible?: ReadonlySet<string>) => {
-    const edits = editsFor(calls, decisions, options, visible)
-    let folded = 0
-    if (options.dedupe) {
-      // Lines a newer output shows again fold out of the older one: nothing is lost (see dedupe.ts)
-      const results = new Map(calls.map((call) => [call.tool_use_id, edits.get(call.tool_use_id)?.result ?? call.resultText] as const))
-      for (const id of dedupe(calls, decisions, results)) {
-        const call = calls.find((c) => c.id === id)!
-        edits.set(call.tool_use_id, { ...edits.get(call.tool_use_id), result: results.get(call.tool_use_id)! })
-        folded += 1
-      }
-    }
-    return { edits, folded }
-  }
+  // A soft target is reported after actual serialization, never enforced by deleting evidence.
+  const build = (visible?: ReadonlySet<string>) => editsFor(calls, decisions, options, visible)
   // Twice: the notes name only what the conversation no longer shows anywhere after the compaction
-  const first = applyEdits(messages, build().edits)
+  const first = applyEdits(messages, build())
+  // A rejected expanding note leaves its original facts visible. Freeze that retention decision
+  // before the second pass, otherwise those facts suppress their own index and then disappear.
+  const firstResults = new Map(first.flatMap((m) => m.toolResults ?? []).map((r) => [r.tool_use_id, r.text]))
+  for (const decision of decisions) {
+    const call = calls.find((c) => c.id === decision.id)!
+    if (['stub', 'trim', 'superseded'].includes(decision.action) && firstResults.get(call.tool_use_id) === call.resultText) decision.action = 'keep'
+  }
   const shown = factsIn(first.map((m) => [m.text, ...m.toolUses.map((u) => JSON.stringify(u.input)),
     ...(m.toolResults ?? []).map((r) => r.text.split('\n').filter((line) => !line.includes(NOTE_TAG)).join('\n'))].join('\n')).join('\n'))
-  const { edits, folded } = build(shown)
-  stats.folded = folded
-  const output = applyEdits(messages, edits)
+  const output = applyEdits(messages, build(shown))
+  // Count realized edits, including candidates rejected by the net-savings guard.
+  const outputs = new Map(output.flatMap((m) => m.toolResults ?? []).map((r) => [r.tool_use_id, r.text]))
+  for (const decision of decisions) {
+    const call = calls.find((c) => c.id === decision.id)!
+    if (['stub', 'trim', 'superseded'].includes(decision.action) && outputs.get(call.tool_use_id) === call.resultText) decision.action = 'keep'
+  }
+  stats.kept = decisions.filter((d) => d.action === 'keep').length
+  stats.trimmed = decisions.filter((d) => d.action === 'trim').length
+  stats.stubbed = decisions.filter((d) => d.action === 'stub').length
+  stats.superseded = decisions.filter((d) => d.action === 'superseded').length
   stats.messagesAfter = output.length
   stats.charsAfter = transcriptChars(output)
   stats.tokensAfter = Math.ceil(stats.charsAfter / 3.2)
+  stats.targetRatio = targetRatio(options.targetRatio, stats.tokensBefore)
+  stats.targetMet = stats.targetRatio <= 0 || stats.charsAfter <= stats.charsBefore * stats.targetRatio
   return { messages: output, decisions, stats }
 }
 
@@ -211,6 +246,6 @@ export function reductionRatio(result: CompactResult): number {
 export function summarize(result: CompactResult): string {
   const s = result.stats
   return `${Math.round(reductionRatio(result) * 100)}% smaller (~${Math.round(s.tokensBefore / 1000)}k to ~${Math.round(s.tokensAfter / 1000)}k tokens); ` +
-    `${s.asked} asked: ${s.kept} kept, ${s.trimmed} trimmed, ${s.stubbed} stubbed; ${s.folded} folded, ${s.superseded} superseded, ${s.pinned} pinned, ${s.small} small; ` +
-    `${s.budgetSteps ? `budget mode: ${s.budgetSteps} step(s); ` : ''}${s.requests} Jev request(s), $${s.jevCostUsd.toFixed(5)}`
+    `${s.asked} asked; ${s.kept} kept, ${s.trimmed} trimmed, ${s.stubbed} stubbed; ${s.superseded} exact duplicates, ${s.pinned} pinned, ${s.small} small; ` +
+    `${s.structural} repeat-compressed; ${s.targetMet ? '' : 'soft size target unmet; '}${s.requests} Jev request(s), $${s.jevCostUsd.toFixed(5)}`
 }
