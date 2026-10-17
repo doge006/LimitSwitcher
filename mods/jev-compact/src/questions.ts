@@ -31,7 +31,7 @@ export function questionFor(call: ToolCall): JevQuestions {
         'is still working on, or holds facts it will need again.',
       criteria: {
         true: 'It will be needed again: later steps depend on what it says.',
-        false: 'It is done with: acted on already, superseded by a later call, unrelated to the goal, or cheap to get again by re-running the tool.',
+        false: 'It is done with: acted on already or unrelated to the goal. A cheap rerun alone does not make evidence irrelevant; historical versions and transient observations may be impossible to reproduce.',
       },
     },
   }
@@ -40,7 +40,7 @@ export function questionFor(call: ToolCall): JevQuestions {
 /** The probability in one answer; throws when it is missing or malformed. */
 export function noulOf(answers: Record<string, JevAnswer>, name: string): number {
   const answer = answers[name]
-  if (!answer || typeof answer.noul !== 'number' || !Number.isFinite(answer.noul)) {
+  if (!answer || answer.type !== 'noul' || typeof answer.noul !== 'number' || !Number.isFinite(answer.noul) || answer.noul < 0 || answer.noul > 1) {
     throw new Error(`Jev answer missing or malformed for ${name}`)
   }
   return answer.noul

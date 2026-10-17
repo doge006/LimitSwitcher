@@ -74,7 +74,7 @@ export type JevAsker = {
  * What happens to one call:
  * - `pinned`: first message, newest messages, in flight, or an error: never touched, never asked about
  * - `small`: too small to be worth a question: kept
- * - `superseded`: a later Read of the same whole file holds the same, newer content: output stubbed, no question
+ * - `superseded`: a later call with identical input/output is retained: output becomes a source reference
  * - `keep`: Jev says the output is still needed: kept whole
  * - `trim`: Jev is unsure: the output keeps its head and tail
  * - `stub`: Jev says it is no longer needed: the output becomes a one-line note
@@ -92,6 +92,8 @@ export type Decision = {
   need?: number
   /** Characters the pair carries (input plus result). */
   chars: number
+  /** Original tool-use ID of a byte-identical retained output. */
+  source?: string
 }
 
 export type CompactOptions = {
@@ -101,7 +103,7 @@ export type CompactOptions = {
   keepThreshold: number
   /** Below: stubbed. Between the two: trimmed to head and tail. */
   stubThreshold: number
-  /** The same two for outputs cheap to get again (file reads and searches: see kinds.ts). */
+  /** @deprecated Accepted for old benchmark configurations; relevance thresholds now apply to all tools. */
   cheapKeepThreshold: number
   cheapStubThreshold: number
   preserveRecentMessages: number
@@ -109,13 +111,13 @@ export type CompactOptions = {
   minPairChars: number
   trimHeadChars: number
   trimTailChars: number
-  /** A file-writing tool's or script's string inputs longer than this are shortened (what they did is on disk). */
+  /** @deprecated Accepted for old benchmark configurations; all inputs are preserved. */
   maxWriteInputChars: number
   maxStateTokens: number
   maxRequestTokens: number
-  /** Fold the lines an older output shares with a newer one (see dedupe.ts). */
+  /** Compress consecutive identical lines with exact repetition counts (dedupe.ts). */
   dedupe: boolean
-  /** Budget mode (budget.ts): above 0, step outputs down until the conversation is this share of its size; -1 (the default) only on long sessions; 0 never. */
+  /** Soft size target only; -1 applies 0.35 on long sessions, 0 disables the target. Never overrides retention. */
   targetRatio: number
 }
 
@@ -134,10 +136,14 @@ export type CompactStats = {
   kept: number
   trimmed: number
   stubbed: number
-  /** Outputs whose lines shown again in a newer output were folded into a note. */
+  /** @deprecated Retained for benchmark compatibility; global line folding is disabled (always 0). */
   folded: number
-  /** Steps budget mode took (an output kept whole trimmed, or a trimmed one turned into a note). */
+  /** @deprecated Retained for benchmark compatibility; forced budget downgrades are disabled (always 0). */
   budgetSteps: number
+  /** Soft target only: retention takes priority over this requested remaining share. */
+  targetRatio: number
+  targetMet: boolean
+  structural: number
   stateTokens: number
   stateStage: number
   requests: number

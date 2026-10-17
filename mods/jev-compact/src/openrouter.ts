@@ -17,6 +17,22 @@ export type Transport = (
 
 export type ClientConfig = { apiKey: string; model?: string; baseUrl?: string }
 
+/** Deadline covers all batches. Late network replies cannot commit edits or launch more requests. */
+export function withDeadline<T>(run: (active: () => boolean) => Promise<T>, schedule: (expire: () => void) => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let active = true
+    schedule(() => {
+      if (!active) return
+      active = false
+      reject(new Error('Jev compaction deadline exceeded'))
+    })
+    Promise.resolve().then(() => run(() => active)).then(
+      (value) => { if (active) { active = false; resolve(value) } },
+      (error) => { if (active) { active = false; reject(error) } },
+    )
+  })
+}
+
 /** Validates a response body; throws on anything but an `answers` object. Never echoes the request (it holds the key). */
 export function parseResponse(status: number, ok: boolean, text: string): JevResponse {
   if (!ok) throw new Error(`Jev request failed (${status}): ${text.slice(0, 200)}`)
@@ -27,7 +43,7 @@ export function parseResponse(status: number, ok: boolean, text: string): JevRes
     throw new Error('Jev returned malformed JSON')
   }
   if (parsed === null || typeof parsed !== 'object' || !('answers' in parsed) ||
-      parsed.answers === null || typeof parsed.answers !== 'object') {
+      parsed.answers === null || typeof parsed.answers !== 'object' || Array.isArray(parsed.answers)) {
     throw new Error('Jev response is missing answers')
   }
   return parsed as JevResponse

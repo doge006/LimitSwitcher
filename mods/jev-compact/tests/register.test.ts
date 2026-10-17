@@ -9,13 +9,13 @@ const use = (id: string, tool: string, input: Record<string, unknown>): SessionM
 const out = (id: string, text: string): SessionMessage =>
   ({ role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: id, text, isError: false }], handle: `res-${id}` })
 
-const LOG = 'step ok\n'.repeat(800)
+const LOG = Array.from({ length: 800 }, (_, i) => `step ${i} ok`).join('\n')
 
 function transcript(): SessionMessage[] {
   return [
     user('Fix the build', 'h0'),
     use('b1', 'Bash', { command: 'npm run build' }), out('b1', LOG),
-    use('b2', 'Bash', { command: 'npm run build' }), out('b2', LOG),
+    use('b2', 'Bash', { command: 'npm run test' }), out('b2', LOG + '\nsecond run'),
     user('more', 'h5'), user('more', 'h6'), user('more', 'h7'), user('more', 'h8'),
     user('more', 'h9'), user('more', 'h10'), user('more', 'h11'), user('more', 'h12'),
   ]
@@ -48,6 +48,30 @@ function world(on: On, options: { env?: Record<string, string>; settingsKey?: st
 }
 
 describe('jev-compact', () => {
+  test('the plugin clock bounds the whole job and discards a late HTTP response', async ($, on) => {
+    const clock = mock.clock(on)
+    mock.env(on, { OPENROUTER_API_KEY: 'synthetic-key' })
+    on('ui.log', () => ({ value: undefined }))
+    let seen!: () => void
+    const requested = new Promise<void>(resolve => { seen = resolve })
+    let finish!: () => void
+    on('http.fetch', async () => {
+      seen()
+      await new Promise<void>(resolve => { finish = resolve })
+      return { value: { status: 200, ok: true, headers: {}, text: '{"answers":{}}' } }
+    })
+    const messages = transcript()
+    const before = JSON.stringify(messages)
+    const running = $.session.compact({ trigger: 'plugin', instructions: MARKER, messages })
+    await requested
+    await clock.advance(55_000)
+    const result = await running
+    expect(result.skip).toContain('Jev failed: Jev compaction deadline exceeded')
+    expect(result.messages).toBeUndefined()
+    finish()
+    await clock.settle()
+    expect(JSON.stringify(messages)).toBe(before)
+  })
   test("LimitSwitcher's request is pruned by Jev, never summarised by Claude", async ($, on) => {
     const w = world(on, { env: { OPENROUTER_API_KEY: 'sk-or-env' } })
     const result = await $.session.compact({ trigger: 'plugin', instructions: MARKER, messages: transcript() })

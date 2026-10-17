@@ -1,7 +1,7 @@
 import type { EngineInterface, Register, SessionMessage } from 'claude-code'
 
 import { compact, reductionRatio, summarize } from '../src/compact.ts'
-import { askerOver, type Transport } from '../src/openrouter.ts'
+import { askerOver, withDeadline, type Transport } from '../src/openrouter.ts'
 
 // Shrinks the tool outputs a session no longer needs, scored by Jev, when LimitSwitcher asks for
 // it right before it swaps the session to another account: the new account has none of the
@@ -50,9 +50,11 @@ export function keyInEnvFile(text: string): string | undefined {
   return undefined
 }
 
-function transportOf($: EngineInterface): Transport {
+function transportOf($: EngineInterface, active: () => boolean): Transport {
   return async (url, init) => {
+    if (!active()) throw new Error('Jev compaction deadline exceeded')
     const response = await $.http.fetch(url, init)
+    if (!active()) throw new Error('Jev compaction deadline exceeded')
     return { status: response.status, ok: response.ok, text: response.text }
   }
 }
@@ -71,7 +73,12 @@ export const register: Register = (on, options) => {
       reason = 'no OpenRouter key (OPENROUTER_API_KEY)'
     } else {
       try {
-        const result = await compact(e.messages, askerOver(transportOf($), { apiKey: key }))
+        // Three attempts plus the orchestration's two 30-second delays fit its 240-second wait.
+        // The engine may finish an in-flight HTTP request; its late result is discarded.
+        const result = await withDeadline(
+          (active) => compact(e.messages, askerOver(transportOf($, active), { apiKey: key })),
+          (expire) => { $.clock.after(55_000, expire) },
+        )
         const ratio = reductionRatio(result)
         const summary = summarize(result)
         if (ratio >= MIN_REDUCTION) {

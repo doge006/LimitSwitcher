@@ -1,4 +1,5 @@
 import { imageCharsOf, imageTokensOf } from './images.ts'
+import { hasCompactionNote } from './apply.ts'
 import type { Message, ToolCall, ToolResult } from './types.ts'
 
 /**
@@ -52,21 +53,22 @@ function wholeRead(call: ToolCall): string | null {
   return Object.keys(call.input).every((key) => WHOLE_READ_KEYS.has(key)) ? path : null
 }
 
-/**
- * The calls whose output a later call makes redundant without asking anyone: a Read of a file
- * that is read whole again later (the later read has the newer content, and it stays). Only
- * whole reads count on both sides, so a part of a file is never taken as standing for all of it.
- */
+/** Exact duplicate calls mapped to the later canonical tool-use ID. No path-only or line matching. */
+export function duplicateSources(calls: readonly ToolCall[]): Map<string, string> {
+  const latest = new Map<string, ToolCall>()
+  const sources = new Map<string, string>()
+  for (const call of [...calls].reverse()) {
+    if (call.isError || call.resultIndex === null || call.imageTokens > 0 || hasCompactionNote(call.resultText)) continue
+    // Exact inputs and bytes only: a changed revision or a different command is separate evidence.
+    const key = JSON.stringify([call.tool, call.input, call.resultText])
+    const newer = latest.get(key)
+    if (newer && !call.pinned) sources.set(call.id, newer.tool_use_id)
+    else if (!newer) latest.set(key, call)
+  }
+  return sources
+}
+
 export function supersededCalls(calls: readonly ToolCall[]): Set<string> {
-  const lastRead = new Map<string, number>()
-  calls.forEach((call, index) => {
-    const path = wholeRead(call)
-    if (path !== null) lastRead.set(path, index)
-  })
-  const superseded = new Set<string>()
-  calls.forEach((call, index) => {
-    const path = wholeRead(call)
-    if (path !== null && (lastRead.get(path) ?? index) > index) superseded.add(call.id)
-  })
-  return superseded
+  const reads = calls.filter((call) => wholeRead(call) !== null)
+  return new Set(duplicateSources(reads).keys())
 }

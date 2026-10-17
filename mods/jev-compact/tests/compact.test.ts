@@ -1,17 +1,20 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { NOTE_TAG, shortenInput, trimText } from '../src/apply.ts'
-import { batchCalls, compact, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
+import { NOTE_TAG, trimText } from '../src/apply.ts'
+import { batchCalls, compact as compactActual, decide, reductionRatio, resolveOptions } from '../src/compact.ts'
 import { imageTokensOf } from '../src/images.ts'
 import { cheapToRedo } from '../src/kinds.ts'
 import { LONG_SESSION_TOKENS } from '../src/budget.ts'
-import { fold, lineKey } from '../src/dedupe.ts'
+import { repeatText, expandRepeats } from '../src/dedupe.ts'
 import { parseResponse } from '../src/openrouter.ts'
 import { maskSecrets } from '../src/secrets.ts'
 import { fitState, goalOf, withoutReminders } from '../src/state.ts'
 import { collectToolCalls, supersededCalls } from '../src/transcript.ts'
 import type { JevAsker, JevQuestions, JevState, Message } from '../src/types.ts'
 import { keyInEnvFile } from '../hooks/register.ts'
+
+// Scorer-focused tests disable the separate lossless repeat compressor.
+const compact: typeof compactActual = (messages, asker, options) => compactActual(messages, asker, { dedupe: false, ...options })
 
 const user = (text: string, handle?: string): Message => ({ role: 'user', text, toolUses: [], ...(handle ? { handle } : {}) })
 const said = (text: string): Message => ({ role: 'assistant', text, toolUses: [] })
@@ -72,7 +75,7 @@ describe('compact', () => {
     })
     expect(byLabel(result.messages, 'b1').text).toContain(`${NOTE_TAG} removed Bash output`)
     expect(byLabel(result.messages, 't1').text).toBe(FAIL)                 // an error: pinned
-    expect(byLabel(result.messages, 'r1').text).toContain('read again later')  // superseded by r2
+    expect(byLabel(result.messages, 'r1').text).toContain('duplicate of tool_use_id="r2"')  // superseded by r2
     expect(byLabel(result.messages, 'r2').text).toBe(FILE)                 // the latest read stays
     expect(byLabel(result.messages, 't2').text).toBe('PASS\n'.repeat(200)) // newest: pinned
     // untouched messages are the same objects, handles and all
@@ -92,7 +95,7 @@ describe('compact', () => {
     const calls = collectToolCalls(session(), 7)
     const label = (id: string) => calls.find((c) => c.tool_use_id === id)!.id
     expect(names).toContain(`need_${label('b1')}`)
-    expect(names).toContain(`need_${label('r2')}`)
+    expect(names).not.toContain(`need_${label('r2')}`)
     expect(names).not.toContain(`need_${label('t1')}`)
     expect(names).not.toContain(`need_${label('r1')}`)
     expect(names).not.toContain(`need_${label('e1')}`)
@@ -107,23 +110,21 @@ describe('compact', () => {
     expect(text.length).toBeLessThan(LOG.length)
   })
 
-  test("a Write's long content is shortened (the file is on disk), its call stays", async () => {
+  test("a Write's historical input stays even when the current file could differ", async () => {
     const result = await compact(session(), fakeJev(() => 0.9), { preserveRecentMessages: 7 })
     const write = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 'w1')!
     expect(write.input.file_path).toBe('/p/b.ts')
-    expect(String(write.input.content).length).toBeLessThan(800)
-    expect(String(write.input.content)).toContain('the file on disk has them')
+    expect(write.input.content).toBe('x'.repeat(5000))
   })
 
-  test("an old long script's input is shortened; a recent one stays whole", async () => {
+  test("old and recent script inputs stay whole", async () => {
     const script = 'python3 - <<EOF\n' + 'edit()\n'.repeat(1000) + 'EOF'
     const long = session()
     long[3] = use('b1', 'Bash', { command: script, description: 'apply the edits' })
     long[17] = use('t2', 'Bash', { command: script })
     const result = await compact(long, fakeJev(() => 0.9), { preserveRecentMessages: 7 })
     const old = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 'b1')!
-    expect(String(old.input.command).length).toBeLessThan(2200)
-    expect(String(old.input.command)).toContain('what the script did is on disk')
+    expect(old.input.command).toBe(script)
     expect(old.input.description).toBe('apply the edits')
     const recent = result.messages.flatMap((m) => m.toolUses).find((u) => u.tool_use_id === 't2')!
     expect(recent.input.command).toBe(script)
@@ -207,13 +208,11 @@ describe('pieces', () => {
     expect(batchCalls(calls, 1000, 28000)).toHaveLength(1)
   })
 
-  test('trimText and shortenInput', () => {
+  test('trimText', () => {
     expect(trimText('abc', 10, 10)).toBe('abc')
     const cut = trimText('a'.repeat(50) + 'b'.repeat(50), 10, 5)
     expect(cut.startsWith('a'.repeat(10))).toBe(true)
     expect(cut.endsWith('b'.repeat(5))).toBe(true)
-    expect(shortenInput({ a: 'short' }, 200)).toBeNull()
-    expect(String(shortenInput({ a: 'q'.repeat(1000) }, 200)!.a).length).toBeLessThan(400)
   })
 
   test('goal and reminders', () => {
@@ -287,11 +286,11 @@ describe('cheap to get again', () => {
     expect(cheapToRedo(call('WebFetch', { url: 'https://x' }))).toBe(false)
   })
 
-  test('a file view Jev is unsure about is trimmed; a test run with the same score stays whole; a low score is stubbed either way', () => {
+  test('rerun cost does not alter relevance thresholds', () => {
     const options = resolveOptions()
     const read = collectToolCalls([user('a'), use('r', 'Bash', { command: 'cat big.py' }), out('r', LOG), said('b')], 0)[0]!
     const run = collectToolCalls([user('a'), use('t', 'Bash', { command: 'npm test' }), out('t', LOG), said('b')], 0)[0]!
-    expect(decide(read, 0.55, options).action).toBe('trim')
+    expect(decide(read, 0.55, options).action).toBe('keep')
     expect(decide(run, 0.55, options).action).toBe('keep')
     expect(decide(read, 0.4, options).action).toBe('trim')
     expect(decide(read, 0.2, options).action).toBe('stub')
@@ -309,7 +308,7 @@ describe('notes name what they removed', () => {
     expect(note).toContain('It held:')
     expect(note).toContain('resolve_account')
     expect(note).toContain('limit_retries=17')
-    expect(note).toContain('Re-run it for details')
+    expect(note).toContain('Omitted details are unavailable from this note')
     expect(note).not.toContain('npm run build') // still shown in the call itself: not named again
     const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
     expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
@@ -317,61 +316,27 @@ describe('notes name what they removed', () => {
   })
 })
 
-describe('dedupe', () => {
-  const code = Array.from({ length: 60 }, (_, i) => `    const value_${i} = compute_${i}(input)`).join('\n')
-  test('lines a newer output shows again fold out of the older one; the newer stays whole', async () => {
-    const view = (from: number, to: number) => code.split('\n').slice(from, to).map((l, i) => `${from + i + 1}\t${l}`).join('\n')
-    const ms = [
-      user('fix it', 'h0'),
-      use('v1', 'Bash', { command: 'sed -n 1,60p a.py' }), out('v1', view(0, 60)),
-      use('v2', 'Read', { file_path: '/a.py', offset: 10, limit: 40 }), out('v2', view(10, 50)),
-      said('ok'), user('go'), said('a'), user('b'), said('c'), user('d'), said('e'), user('f'), said('g'),
-    ]
-    const result = await compact(ms, fakeJev(() => 0.9), { preserveRecentMessages: 8 })
-    const older = byLabel(result.messages, 'v1').text
-    expect(older).toContain('40 lines shown again in a later output')
-    expect(older).toContain('const value_0 = compute_0')   // only shown here: kept
-    expect(older).not.toContain('const value_20 = compute_20') // shown again in v2: folded
-    expect(byLabel(result.messages, 'v2').text).toBe(view(10, 50))
-    expect(result.stats.folded).toBe(1)
+describe('lossless repeats and soft budget', () => {
+  test('repeat compression preserves indentation, blank lines, counts and final newline', () => {
+    for (const text of ['    value = 2.5 ms\n'.repeat(80), 'line\r\n'.repeat(80), 'a\n\n'.repeat(80)]) {
+      expect(expandRepeats(repeatText(text))).toBe(text)
+      expect(repeatText(repeatText(text))).toBe(repeatText(text))
+    }
   })
-
-  test('short repeats and outputs that are too small to matter never fold', () => {
-    expect(fold('}\n}\n}\nreturn x', new Set(['}', 'return x']))).toBeNull()
-    expect(fold('a_long_line_that_repeats = 1', new Set(['a_long_line_that_repeats = 1']))).toBeNull() // saves < 300 chars
-    expect(lineKey('  12→const x = 1')).toBe('const x = 1')
-    expect(lineKey('src/a.py:12:def go():')).toBe('def go():')
-    expect(lineKey('12:\tfoo')).toBe('foo')
+  test('a hard-to-recover output scored needed survives an unmet target', async () => {
+    const text = Array.from({length: 250}, (_, i) => `observation ${i}: ${i / 10} ms`).join('\n')
+    const ms = [user('Keep the measured values'), use('v', 'Observe', {}), out('v', text)]
+    const r = await compact(ms, fakeJev(() => 0.99), { preserveRecentMessages: 0, targetRatio: 0.1 })
+    expect(byLabel(r.messages, 'v').text).toBe(text)
+    expect(r.stats.budgetSteps).toBe(0)
+    expect(r.stats.targetMet).toBe(false)
   })
-})
-
-describe('budget mode', () => {
-  const long = (n: number) => {
-    const ms: Message[] = [user('build it', 'h0')]
-    for (let i = 0; i < n; i++) ms.push(use(`c${i}`, 'Bash', { command: `npm run step${i}` }), out(`c${i}`, `step ${i} ok\n`.repeat(400)))
-    for (let i = 0; i < 8; i++) ms.push(i % 2 ? said(`a${i}`) : user(`u${i}`))
-    return ms
-  }
-  test('steps the least needed, oldest first, until the target fits; the newest keep longest', async () => {
-    const plain = await compact(long(6), fakeJev(() => 0.9), { targetRatio: 0 })
-    expect(plain.stats.budgetSteps).toBe(0)
-    const tight = await compact(long(6), fakeJev(() => 0.9), { targetRatio: 0.6 })
-    expect(tight.stats.budgetSteps).toBeGreaterThan(0)
-    expect(tight.stats.charsAfter).toBeLessThan(plain.stats.charsAfter)
-    expect(byLabel(tight.messages, 'c0').text.length).toBeLessThanOrEqual(byLabel(tight.messages, 'c5').text.length)
-    expect(byLabel(tight.messages, 'c5').text).toBe('step 5 ok\n'.repeat(400)) // the newest, all else equal, stays whole
-  })
-
-  test('only long sessions get it by themselves', async () => {
-    const short = await compact(long(6), fakeJev(() => 0.9))
-    expect(short.stats.budgetSteps).toBe(0)
-    const under = await compact(long(210), fakeJev(() => 0.9)) // ~305k tokens
-    expect(under.stats.tokensBefore).toBeLessThan(LONG_SESSION_TOKENS)
-    expect(under.stats.tokensBefore).toBeGreaterThan(280_000)
-    expect(under.stats.budgetSteps).toBe(0)
-    const over = await compact(long(250), fakeJev(() => 0.9)) // ~363k tokens
-    expect(over.stats.tokensBefore).toBeGreaterThan(LONG_SESSION_TOKENS)
-    expect(over.stats.budgetSteps).toBeGreaterThan(0)
+  test('long-session targets are reported without overriding retention', async () => {
+    const text = 'measured value 7.5 ms\n'.repeat(Math.ceil(LONG_SESSION_TOKENS * 3.2 / 20))
+    const r = await compact([user('Keep it'), use('v', 'Observe', {}), out('v', text)], fakeJev(() => 0.99), {preserveRecentMessages: 0})
+    expect(r.stats.targetRatio).toBe(0.35)
+    expect(r.stats.targetMet).toBe(false)
+    expect(byLabel(r.messages, 'v').text).toBe(text)
   })
 })
 
@@ -404,7 +369,7 @@ describe('images', () => {
     const old = byLabel(result.messages, 's1')
     expect(old.result).toBeUndefined() // the image goes with the record
     expect(old.text).toContain('an image, ~1534 tokens')
-    expect(old.text).toContain('Re-run it')
+    expect(old.text).toContain('Consult retained original evidence if available')
     expect(byLabel(result.messages, 's2').result).toEqual(shot(1600, 900)) // still needed: whole
     expect(result.stats.stubbed).toBe(1)
     expect(result.stats.tokensBefore - result.stats.tokensAfter).toBeGreaterThan(1400)
