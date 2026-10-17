@@ -15,6 +15,20 @@ const opts = { preserveRecentMessages: 0, targetRatio: 0.1 }
 const view = (value: string) => Array.from({ length: 180 }, (_, i) => i === 90 ? `timeout = ${value} ms; applies only to uploads` : `item_${i} = observed_${i}`).join('\n')
 
 describe('continuation evidence', () => {
+  test('pruned script and remote results acknowledge missing details without encouraging reconstruction by rerun', async () => {
+    for (const tool of ['Bash', 'WebFetch']) for (const probability of [.01, .4]) {
+      const original = [user('Continue'), ...pair('observation', view('2.5'), {}, tool)]
+      const r = await compact(original, asker(probability), opts)
+      expect(r.decisions[0]!.action).toBe(probability === .01 ? 'stub' : 'trim')
+      const note = result(r.messages, 'observation')
+      expect(note).toContain('Omitted details are unavailable from this note')
+      expect(note).toContain('Consult retained original evidence if available')
+      expect(note).toContain('do not repeat state-changing actions to reconstruct it')
+      expect(note).not.toContain('Re-run')
+      expect(note).not.toContain('disk')
+      expect(note).not.toContain('archive')
+    }
+  })
   test('large repeated and blank runs round-trip without argument spreading limits', () => {
     for (const text of ['x\n'.repeat(150_000), '\n'.repeat(150_000)]) {
       expect(expandRepeats(repeatText(text))).toBe(text)

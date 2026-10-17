@@ -308,7 +308,7 @@ describe('notes name what they removed', () => {
     expect(note).toContain('It held:')
     expect(note).toContain('resolve_account')
     expect(note).toContain('limit_retries=17')
-    expect(note).toContain('Re-run it for details')
+    expect(note).toContain('Omitted details are unavailable from this note')
     expect(note).not.toContain('npm run build') // still shown in the call itself: not named again
     const middle = 'x'.repeat(1000) + '\nclass SessionLedger:\n' + 'y'.repeat(1000)
     expect(trimText(middle, 900, 400)).toContain('It held: SessionLedger')
@@ -369,7 +369,7 @@ describe('images', () => {
     const old = byLabel(result.messages, 's1')
     expect(old.result).toBeUndefined() // the image goes with the record
     expect(old.text).toContain('an image, ~1534 tokens')
-    expect(old.text).toContain('Re-run it')
+    expect(old.text).toContain('Consult retained original evidence if available')
     expect(byLabel(result.messages, 's2').result).toEqual(shot(1600, 900)) // still needed: whole
     expect(result.stats.stubbed).toBe(1)
     expect(result.stats.tokensBefore - result.stats.tokensAfter).toBeGreaterThan(1400)

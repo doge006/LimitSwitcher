@@ -7,6 +7,7 @@ import { imageTokensOf } from './images.ts'
 import type { Decision, Message, ToolCall, ToolResult, ToolUse } from './types.ts'
 
 export const NOTE_TAG = '[LimitSwitcher'
+const OMISSION_GUIDANCE = 'Omitted details are unavailable from this note. Consult retained original evidence if available; do not repeat state-changing actions to reconstruct it.'
 
 /** Only emitted note lines, not source code that happens to mention the product's marker. */
 export function hasCompactionNote(text: string): boolean {
@@ -24,7 +25,7 @@ export function stubText(call: ToolCall, superseded: boolean, index: readonly st
   const what = call.imageTokens > 0
     ? `${call.tool} output (${call.resultText.length ? `${call.resultText.length} chars and ` : ''}an image, ~${call.imageTokens} tokens)`
     : `${call.tool} output (${call.resultChars} chars)`
-  return `${NOTE_TAG} removed ${what}, ${why}.${held(index)} Re-run it for details.]`
+  return `${NOTE_TAG} removed ${what}, ${why}.${held(index)} ${OMISSION_GUIDANCE}]`
 }
 
 /** The middle of `text` replaced by a note (naming what it held), or `text` when there is nothing to cut. */
@@ -32,7 +33,7 @@ export function trimText(text: string, head: number, tail: number, known: Readon
   if (text.length <= head + tail) return text
   const middle = text.slice(head, text.length - tail)
   const omitted = middle.length
-  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, indexBudget(middle.length), visible))} Re-run the tool before relying on them.]\n\n${tail > 0 ? text.slice(-tail) : ''}`
+  return `${text.slice(0, head)}\n\n${NOTE_TAG} removed ${omitted} chars from the middle of this output before an account swap.${held(factIndex(middle, known, indexBudget(middle.length), visible))} ${OMISSION_GUIDANCE}]\n\n${tail > 0 ? text.slice(-tail) : ''}`
 }
 
 type Edit = { result?: string; input?: Record<string, unknown> }
