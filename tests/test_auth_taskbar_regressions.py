@@ -118,7 +118,7 @@ class TokenOwnershipTests(unittest.TestCase):
 class TaskbarRecoveryTests(unittest.TestCase):
     def view(self):
         tray = NS(state={"taskbar": True, "accounts": []}, quitting=False,
-                  controller=NS(taskbar_displays=[{"id": "main", "label": "Main display"}]))
+                  controller=NS(taskbar_displays=[{"id": "main", "label": "Main display"}], notify=Mock()))
         view = tb.TaskbarView(tray)
         view.hooked, view.hwnd = True, 55
         return view
@@ -183,7 +183,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view.blocks[("main", 0)] = NS(hwnd=456, closing=False, x=100, size=(200, 44))
         with patch.object(tb.user32, "IsWindow", return_value=True), \
                 patch.object(tb, "taskbar_covered", return_value=False), \
-                patch.object(tb.user32, "IsWindowVisible", return_value=False), \
+                patch.object(tb.user32, "IsWindowVisible", side_effect=lambda hwnd: hwnd == 123), \
                 patch.object(tb.user32, "ShowWindow") as show, \
                 patch.object(tb.user32, "KillTimer"):
             view.follow_taskbar()
@@ -203,6 +203,18 @@ class TaskbarRecoveryTests(unittest.TestCase):
         show.assert_called_once_with(456, tb.SW_HIDE)
         timer.assert_called_once_with(55, tb.TIMER_COVER, 1000, None)
 
+    def test_hidden_owner_keeps_secondary_block_hidden_until_layout_refresh(self):
+        view = self.view()
+        view.bars = {"right": NS(hwnd=222, rect=(1920, 1000, 3840, 1048))}
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, x=2000, size=(200, 44))
+        with patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb.user32, "IsWindowVisible", side_effect=lambda hwnd: hwnd == 456), \
+                patch.object(tb, "taskbar_covered") as coverage, \
+                patch.object(tb.user32, "ShowWindow") as show, patch.object(tb.user32, "SetTimer"):
+            view.follow_taskbar()
+        show.assert_called_once_with(456, tb.SW_HIDE)
+        coverage.assert_not_called()
+
     def test_activation_retries_previously_hidden_taskbar(self):
         view = self.view()
         view.wanted = {"main": ["claude", "codex"]}
@@ -211,6 +223,140 @@ class TaskbarRecoveryTests(unittest.TestCase):
             view.settle()
         timer.assert_any_call(55, tb.TIMER_LAYOUT, 100, None)
         view.follow_taskbar.assert_called_once()
+
+    def test_secondary_taskbar_stays_on_its_display_while_hidden(self):
+        def windows(callback, _):
+            callback(222, 0)
+
+        def name(hwnd, buffer, count):
+            buffer.value = "Shell_SecondaryTrayWnd"
+            return len(buffer.value)
+
+        with patch.object(tb.user32, "FindWindowW", return_value=111), \
+                patch.object(tb.user32, "EnumWindows", side_effect=windows), \
+                patch.object(tb.user32, "GetClassNameW", side_effect=name), \
+                patch.object(tb.user32, "IsWindowVisible", return_value=False), \
+                patch.object(tb, "window_rect", side_effect=lambda h: (0, 1000, 1920, 1048) if h == 111 else (1920, 1000, 3840, 1048)):
+            self.assertEqual(tb.taskbars(), [(111, "main", "Main display"), (222, "right", "Right display")])
+
+    def test_hidden_secondary_taskbar_does_not_move_its_block_to_main(self):
+        view = self.view()
+        view.tray.state["taskbarLayout"] = {"right": ["claude", None]}
+        block = Mock()
+        view.blocks[("right", 0)] = block
+        with patch.object(tb, "taskbars", return_value=[(111, "main", "Main display"), (222, "right", "Right display")]), \
+                patch.object(tb, "read_bar", return_value=None) as read, \
+                patch.object(tb.user32, "KillTimer"):
+            view._sync()
+        read.assert_called_once_with(222, "right", "Right display", previous=None)
+        self.assertEqual(view.bars, {})
+        block.close.assert_called_once()
+
+    def test_secondary_taskbar_show_event_restores_its_layout_without_activation(self):
+        view = self.view()
+        view.tray.state["taskbarLayout"] = {"right": ["claude", None]}
+        bar = tb.Bar(222, "right", "Right display", (1920, 1000, 3840, 1048), 1, 1928, 3700, [], False, True)
+        def name(hwnd, buffer, count):
+            buffer.value = "Shell_SecondaryTrayWnd"
+            return len(buffer.value)
+        with patch.object(tb, "taskbars", return_value=[(111, "main", "Main display"), (222, "right", "Right display")]), \
+                patch.object(tb, "read_bar", side_effect=[None, bar]), \
+                patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb.user32, "IsWindowVisible", return_value=True), \
+                patch.object(tb, "taskbar_covered", return_value=False), \
+                patch.object(tb.user32, "GetClassNameW", side_effect=name), \
+                patch.object(tb.user32, "KillTimer"), patch.object(tb.user32, "SetTimer") as timer:
+            view._sync()
+            self.assertNotIn("right", view.bars)
+            view.on_window_event(99, tb.EVENT_OBJECT_SHOW, 222, 0, 0, 0, 0)
+            timer.assert_any_call(55, tb.TIMER_LAYOUT, 100, None)
+            view.on_timer(tb.TIMER_LAYOUT, 0)
+        self.assertIs(view.bars["right"], bar)
+
+    def test_taskbar_events_queue_layout_without_measuring_in_callback(self):
+        view = self.view()
+        view.later = Mock()
+        def name(hwnd, buffer, count):
+            buffer.value = "Shell_SecondaryTrayWnd"
+            return len(buffer.value)
+        with patch.object(tb.user32, "GetClassNameW", side_effect=name), \
+                patch.object(tb, "read_bar") as read:
+            for event in tb.WINDOW_EVENTS:
+                view.on_window_event(99, event, 222, 0, 0, 0, 0)
+        self.assertEqual(view.later.call_args_list, [unittest.mock.call(100)] * len(tb.WINDOW_EVENTS))
+        read.assert_not_called()
+
+    def test_taskbar_client_reorder_refreshes_layout(self):
+        view = self.view()
+        view.later = Mock()
+        def name(hwnd, buffer, count):
+            buffer.value = "Shell_SecondaryTrayWnd"
+            return len(buffer.value)
+        with patch.object(tb.user32, "GetClassNameW", side_effect=name):
+            view.on_window_event(99, tb.EVENT_OBJECT_REORDER, 222, -4, 0, 0, 0)
+        view.later.assert_called_once_with(100)
+
+    def test_unexpected_secondary_block_hide_queues_recovery_without_activation(self):
+        view = self.view()
+        view.covered = {"main": False, "right": False}
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False)
+        with patch.object(tb.user32, "SetTimer") as timer, \
+                patch.object(tb.user32, "GetClassNameW") as name, \
+                patch.object(tb.time, "monotonic", return_value=100):
+            view.on_window_event(99, tb.EVENT_OBJECT_HIDE, 456, 0, 0, 0, 0)
+        timer.assert_called_once_with(55, tb.TIMER_COVER, 100, None)
+        name.assert_not_called()
+        self.assertEqual(view.settle_until, 103)
+
+    def test_covered_closing_or_animating_blocks_do_not_restart_layout(self):
+        view = self.view()
+        view.covered = {"right": True}
+        block = NS(hwnd=456, closing=False)
+        view.blocks[("right", 0)] = block
+        with patch.object(tb.user32, "SetTimer") as timer, patch.object(tb.user32, "GetClassNameW") as name:
+            view.on_window_event(99, tb.EVENT_OBJECT_HIDE, 456, 0, 0, 0, 0)
+            view.covered["right"] = False
+            block.closing = True
+            view.on_window_event(99, tb.EVENT_OBJECT_HIDE, 456, 0, 0, 0, 0)
+            block.closing = False
+            for event in (tb.EVENT_OBJECT_SHOW, tb.EVENT_OBJECT_LOCATIONCHANGE, tb.EVENT_OBJECT_REORDER):
+                view.on_window_event(99, event, 456, 0, 0, 0, 0)
+        timer.assert_not_called()
+        name.assert_not_called()
+
+    def test_unrelated_child_and_late_events_are_ignored(self):
+        view = self.view()
+        view.later = Mock()
+        with patch.object(tb.user32, "GetClassNameW", return_value=0) as name:
+            view.on_window_event(99, tb.EVENT_OBJECT_SHOW, 789, 0, 0, 0, 0)
+            name.assert_called_once()
+            name.reset_mock()
+            view.on_window_event(99, tb.EVENT_OBJECT_SHOW, 789, -4, 0, 0, 0)
+            view.on_window_event(99, tb.EVENT_OBJECT_SHOW, 789, 0, 1, 0, 0)
+            view.hooked = False
+            view.on_window_event(99, tb.EVENT_OBJECT_SHOW, 789, 0, 0, 0, 0)
+            name.assert_not_called()
+        view.later.assert_not_called()
+
+    def test_hook_keeps_callback_alive_and_releases_it_on_disable(self):
+        view = self.view()
+        view.hooked = False
+        view.icon = NS(_hwnd=55)
+        with patch.object(tb.user32, "RegisterShellHookWindow"), \
+                patch.object(tb.user32, "DeregisterShellHookWindow"), \
+                patch.object(tb.user32, "SetTimer"), patch.object(tb.user32, "KillTimer"), \
+                patch.object(view, "register_appbar"), patch.object(view, "unregister_appbar"), \
+                patch.object(tb.user32, "SetWinEventHook", return_value=999) as register, \
+                patch.object(tb.user32, "UnhookWinEvent") as unregister:
+            view.hook()
+            self.assertIs(register.call_args.args[3], view.window_callback)
+            self.assertEqual(view.window_hook, 999)
+            view.hook()
+            register.assert_called_once()
+            view.unhook()
+            unregister.assert_called_once_with(999)
+            self.assertIsNone(view.window_callback)
+            self.assertIsNone(view.window_hook)
 
 
 if __name__ == "__main__":
