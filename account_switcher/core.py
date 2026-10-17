@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 import time
 
+MIN_ROOM = 5  # use an account with less room only when no candidate has more
 
 @dataclass
 class Account:
@@ -62,6 +63,29 @@ class Account:
         rows += [{"key": f"model-{i}", "label": label, "used": used, "resetsAt": reset, "scope": "model"}
                  for i, (label, used, reset) in enumerate(self.model_windows)]
         return rows
+
+
+def pick_account(candidates, min_room=MIN_ROOM):
+    """Prefer quota that resets soon; within the same hour, prefer more room."""
+    if not candidates:
+        return None
+    roomy = [a for a in candidates if a.headroom >= min_room]
+    if not roomy:
+        return max(candidates, key=lambda a: a.headroom)
+
+    def weekly_reset(account):
+        resets = [w["resetsAt"] for w in account.account_windows()
+                  if w["key"] != "five_hour" and w.get("resetsAt")]
+        return min(resets) if resets else float("inf")
+
+    return min(roomy, key=lambda a: (weekly_reset(a) // 3600, -a.headroom))
+
+
+def next_account(accounts, provider, current, allow_unknown=False):
+    """Preview the same eligible replacement used by automatic switching."""
+    return pick_account([a for a in accounts if a.provider == provider and a.id != current
+                         and a.eligible and not a.status
+                         and (a.headroom > 0 or (allow_unknown and a.headroom < 0))])
 
 
 class Router:

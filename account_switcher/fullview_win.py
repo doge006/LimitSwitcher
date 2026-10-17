@@ -32,7 +32,7 @@ WM_APP_STATE, WM_APP_SHOW, WM_APP_RENDER = 0x8000 + 31, 0x8000 + 32, 0x8000 + 33
 HTCLIENT, TME_LEAVE, SW_SHOW, SW_RESTORE = 1, 2, 5, 9
 CURSORS = {"arrow": 32512, "hand": 32649, "text": 32513}
 KEYS = {0x1B: "escape", 0x0D: "enter", 0x08: "backspace", 0x2E: "delete", 0x25: "left", 0x27: "right",
-        0x24: "home", 0x23: "end", 0x41: "a", 0x56: "v"}
+        0x24: "home", 0x23: "end", 0x26: "up", 0x28: "down", 0x09: "tab", 0x41: "a", 0x56: "v"}
 TIMERS = {"minute": 11, "toast": 12, "pending": 13, "anim": 14}
 
 

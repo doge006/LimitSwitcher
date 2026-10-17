@@ -1164,7 +1164,7 @@ PER_WINDOW = ("perWindow", "Separate accounts per window",
 ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"
-SETTINGS_W = 400  # wide, so the descriptions take one or two lines and the menu stays short
+SETTINGS_W = 440  # room for readable slot labels and their dropdown chevrons
 MOD_TEXT_W = 250  # beside the button
 MOD_TEXT = {"active": ("Active · feeding usage live", GOOD), "update": ("Update to add Jev compaction", WARN), "installed": ("Installed · run /reload-plugins in an open session", WARN),
             "installing": ("Installing…", WARN), "missing": ("Not installed", MUTED), "unknown": ("Not installed", MUTED)}
@@ -1231,7 +1231,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
                      "Start in the tray at sign-in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
-        rows.append(("taskbar", "Taskbar view", "The accounts in use, on the taskbar"))
+        rows.append(("taskbar", "Taskbar view", "Show in-use, next-use, or fixed accounts"))
     displays = state.get("taskbarDisplays") or []
     chooser = taskbar and state.get("taskbar") and bool(displays)
     live_mod = state.get("mode") == "live"
@@ -1240,7 +1240,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     key_h = KEY_ROW_H if state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
     jev_h = ROW_PAD + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
     h = 16 + sum(ROW_PAD + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
-        + (SLOT_ROW_H * len(displays) + 6 if chooser else 0) + 8 + (mod_row(state)[2] + jev_h if live_mod else 0)
+        + (SLOT_ROW_H * len(displays) + 24 if chooser else 0) + 8 + (mod_row(state)[2] + jev_h if live_mod else 0)
     c = panel(image, scale, x, y, w, h)
     hits = []
 
@@ -1269,10 +1269,13 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
             c.line(x + 14, ry + 2, w - 28, LINE)
             ry += 13
         ry += toggle_row(key, title, lines, ry)
-    if chooser:  # per display, what its taskbar shows: two slots (left, right); a click cycles each
+    if chooser:  # per display, what its taskbar shows: left and right dropdowns
         from . import taskbar_layout
         layout = taskbar_layout.layout(state)
         bw = (w - 66 - 106 - 14 - 6) / 2
+        for index, label in enumerate(("Left", "Right")):
+            c.text(x + 66 + 106 + index * (bw + 6) + 8, ry + 10, label, 11, MUTED, anchor="lm")
+        ry += 18
         for d in displays:
             name = "On " + d["label"][0].lower() + d["label"][1:]
             c.text(x + 66, ry + 18, fit(name, 12, False, 100), 12, MUTED, anchor="lm")
@@ -1280,14 +1283,15 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
             for index in (0, 1):
                 bx, by = x + 66 + 106 + index * (bw + 6), ry + 5
                 action = f"slot:{d['id']}:{index}"
-                hot = ui.hover == action
+                hot = ui.hover == action or ui.slot_menu == (d["id"], index)
                 on = slots[index] is not None
                 base = SURFACE_2 if not hot else blend((255, 255, 255), SURFACE_2, .06)
                 c.rect(bx, by, bw, 26, 7, base + (255,))
                 c.outline(bx, by, bw, 26, 7, (GOOD + (150,)) if on else LINE_STRONG)
-                label = fit(taskbar_layout.label(state, slots[index]), 12, on, bw - 14)
-                c.text(bx + bw / 2, by + 13, label, 12, (TEXT if on else MUTED) if not hot else TEXT, on,
-                       anchor="mm", bg=base)
+                label = fit(taskbar_layout.label(state, slots[index]), 12, False, bw - 32)
+                c.text(bx + 9, by + 13, label, 12, TEXT if on or hot else MUTED,
+                       anchor="lm", bg=base)
+                c.glyph("caret", bx + bw - 12, by + 13, 12, MUTED)
                 hits.append(((bx, by, bw, 26), action, "hand"))
             ry += SLOT_ROW_H
     if live_mod:  # the optional Claude Code mod: live usage from Claude Code, shown in a spot of its own
@@ -1320,6 +1324,53 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         ry += toggle_row(JEV_ROW[0], JEV_ROW[1], jev_lines, ry + 4) + 4
         if key_h:
             jev_key_field(c, ui, state, x + 66, ry - 2, w - 66 - 14, hits)
+    return (x, y, w, h), hits
+
+
+def slot_dropdown(image, scale, state, ui, anchor, window_w, window_h):
+    """A bounded, scrollable dropdown over Settings, sharing its surface and type."""
+    from . import taskbar_layout
+    bx, by, bw, bh = anchor
+    row_h = 32
+    visible = min(len(ui.slot_options), 10, max(1, int((window_h - 28) // row_h)))
+    ui.slot_visible = visible
+    ui.slot_scroll = max(0, min(ui.slot_scroll, len(ui.slot_options) - visible))
+    if not ui.slot_scroll <= ui.slot_focus < ui.slot_scroll + visible:
+        ui.slot_scroll = max(0, ui.slot_focus - visible + 1)
+    w = min(280, window_w - 16)
+    h = 12 + visible * row_h
+    x = max(8, min(bx + bw - w, window_w - w - 8))
+    y = by + bh + 5 if by + bh + 5 + h <= window_h - 8 else by - h - 5
+    y = max(8, min(y, window_h - h - 8))
+    c = panel(image, scale, x, y, w, h)
+    hits = []
+    display, index = ui.slot_menu
+    selected = (taskbar_layout.layout(state).get(display) or [None, None])[index]
+    for row, choice in enumerate(range(ui.slot_scroll, ui.slot_scroll + visible)):
+        slot = ui.slot_options[choice]
+        ry = y + 6 + row * row_h
+        action = f"slot-pick:{choice}"
+        hot = choice == ui.slot_focus
+        if hot:
+            c.rect(x + 5, ry, w - 10, row_h, 6, FOCUS + (26,))
+        color = TEXT if slot is not None else MUTED
+        account = fr.slot_account(state, slot)
+        provider = account["provider"] if account else slot[5:] if slot in ("next:claude", "next:codex") else slot
+        has_icon = provider in ("claude", "codex")
+        if has_icon:
+            c.image_at(x + 12, ry + 8, provider, 16)
+        tx = x + (36 if has_icon else 12)
+        label = fit(taskbar_layout.label(state, slot), 13, False, w - (70 if has_icon else 46))
+        c.text(tx, ry + row_h / 2, label, 13, color, anchor="lm")
+        if slot == selected:
+            c.glyph("check", x + w - 18, ry + row_h / 2, 14, GOOD)
+        hits.append(((x + 5, ry, w - 10, row_h), action, "hand"))
+    if visible < len(ui.slot_options):
+        track_h = h - 18
+        thumb_h = max(12, track_h * visible / len(ui.slot_options))
+        thumb_y = y + 9 + (track_h - thumb_h) * ui.slot_scroll / (len(ui.slot_options) - visible)
+        c.rect(x + w - 5, y + 9, 2, track_h, 1, LINE_STRONG)
+        c.rect(x + w - 5, thumb_y, 2, thumb_h, 1, MUTED + (150,))
     return (x, y, w, h), hits
 
 
