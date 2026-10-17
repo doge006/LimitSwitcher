@@ -34,6 +34,10 @@ WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0
 WS_EX_NOACTIVATE = 0x08000000
 TIMER_LAYOUT, TIMER_MINUTE, TIMER_COVER, TIMER_SETTLED = 71, 72, 73, 74
 LAYOUT_CACHE_SECONDS = 1.0
+EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, EVENT_OBJECT_REORDER, EVENT_OBJECT_LOCATIONCHANGE = 0x8002, 0x8003, 0x8004, 0x800B
+WINDOW_EVENTS = {EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, EVENT_OBJECT_REORDER, EVENT_OBJECT_LOCATIONCHANGE}
+WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
+                                wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
 HSHELL_WINDOWACTIVATED, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNA = 4, 0x8, 0, 8
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
 ABM_NEW, ABM_REMOVE, ABN_STATECHANGE, ABN_POSCHANGED, ABN_FULLSCREENAPP = 0, 1, 0, 1, 2
@@ -55,6 +59,9 @@ sig(user32.GetWindowLongW, wintypes.LONG, wintypes.HWND, ctypes.c_int)
 sig(user32.RegisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
+sig(user32.SetWinEventHook, wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.HMODULE,
+    WINEVENTPROC, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD)
+sig(user32.UnhookWinEvent, wintypes.BOOL, wintypes.HANDLE)
 shell32 = ctypes.WinDLL("shell32")
 sig(shell32.SHAppBarMessage, ctypes.c_size_t, wintypes.DWORD, ctypes.POINTER(APPBARDATA))
 sig(user32.WindowFromPoint, wintypes.HWND, wintypes.POINT)
@@ -262,7 +269,9 @@ def taskbars():
         name = ctypes.create_unicode_buffer(40)
         user32.GetClassNameW(hwnd, name, 40)
         rect = window_rect(hwnd)
-        if name.value == "Shell_SecondaryTrayWnd" and rect and user32.IsWindowVisible(hwnd):
+        # Explorer can hide a secondary taskbar temporarily. It is still that display's
+        # taskbar, rather than a disconnected display whose blocks should move to the main one.
+        if name.value == "Shell_SecondaryTrayWnd" and rect:
             others.append((rect, hwnd))
         return True
 
@@ -508,6 +517,8 @@ class TaskbarView:
         self.stale = True        # re-read the taskbars' layout on the next sync
         self.hwnd = None
         self.hooked = False
+        self.window_hook = None
+        self.window_callback = None  # keep the native callback alive until UnhookWinEvent
         self.covered = {}        # display id -> a full-screen app is in front there: its blocks are down
         self.shell_message = None
         self.appbar_message = None
@@ -584,11 +595,19 @@ class TaskbarView:
         user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self.register_appbar()
         self.hooked = True
+        self.window_callback = WINEVENTPROC(self.on_window_event)
+        # Out-of-context events arrive on this message-loop thread. Include our own process:
+        # an owned block can be hidden independently of Explorer's taskbar or our coverage state.
+        self.window_hook = user32.SetWinEventHook(EVENT_OBJECT_SHOW, EVENT_OBJECT_LOCATIONCHANGE,
+                                                 None, self.window_callback, 0, 0, 0)
 
     def unhook(self):
         if not self.hooked:
             return
         user32.DeregisterShellHookWindow(self.hwnd)
+        if self.window_hook:
+            user32.UnhookWinEvent(self.window_hook)
+        self.window_hook = self.window_callback = None
         self.unregister_appbar()
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
@@ -597,6 +616,27 @@ class TaskbarView:
         self.hooked = False
 
     # ---------- events ----------
+    def on_window_event(self, hook, event_id, hwnd, object_id, child_id, thread, timestamp):
+        """Queue recovery for the actual taskbar that changed, including secondary taskbars.
+        Never measure Explorer or change window visibility inside a reentrant native callback."""
+        if not self.hooked or not self.hwnd or not hwnd or child_id != 0 or event_id not in WINDOW_EVENTS:
+            return
+        if object_id != 0 and not (event_id == EVENT_OBJECT_REORDER and object_id == -4):  # OBJID_CLIENT
+            return
+        try:
+            for (display, _), block in self.blocks.items():
+                if block.hwnd == hwnd:
+                    if event_id == EVENT_OBJECT_HIDE and not block.closing and not self.covered.get(display):
+                        self.settle_until = max(self.settle_until, time.monotonic() + 3)
+                        user32.SetTimer(self.hwnd, TIMER_COVER, 100, None)
+                    return  # our redraws and animations must not trigger layout measurements
+            name = ctypes.create_unicode_buffer(40)
+            user32.GetClassNameW(hwnd, name, len(name))
+            if name.value in {"Shell_TrayWnd", "Shell_SecondaryTrayWnd"}:
+                self.later(100)
+        except Exception:
+            log.exception("taskbar window event failed")
+
     def on_timer(self, wparam, lparam):
         event({TIMER_LAYOUT: "taskbar: timer layout", TIMER_MINUTE: "taskbar: timer minute",
                TIMER_COVER: "taskbar: timer cover", TIMER_SETTLED: "taskbar: timer settled"}
@@ -650,7 +690,11 @@ class TaskbarView:
         for key, bar in self.bars.items():
             avoid = [(block.x, block.x + block.size[0]) for (display, _), block in self.blocks.items()
                      if display == key and block.hwnd and not block.closing and getattr(block, "size", None)]
-            covered = bool(user32.IsWindow(bar.hwnd)) and taskbar_covered(bar.hwnd, bar.rect, avoid)
+            # An owned popup must stay down while Explorer's own taskbar is hidden or
+            # replaced, including the interval before its queued layout refresh runs.
+            covered = not user32.IsWindow(bar.hwnd) or not user32.IsWindowVisible(bar.hwnd)
+            if not covered:
+                covered = taskbar_covered(bar.hwnd, bar.rect, avoid)
             if covered is None:
                 continue  # nothing along the taskbar can tell: as it was
             changed = covered != self.covered.get(key, False)
