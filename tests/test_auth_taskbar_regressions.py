@@ -116,6 +116,12 @@ class TokenOwnershipTests(unittest.TestCase):
 
 @unittest.skipUnless(sys.platform == "win32", "Windows taskbar integration")
 class TaskbarRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Synthetic HWNDs in these tests must never change real desktop windows.
+        styles = patch.object(tb.user32, "GetWindowLongW", return_value=tb.WS_EX_TOPMOST)
+        styles.start()
+        self.addCleanup(styles.stop)
+
     def view(self):
         tray = NS(state={"taskbar": True, "accounts": []}, quitting=False,
                   controller=NS(taskbar_displays=[{"id": "main", "label": "Main display"}], notify=Mock()))
@@ -202,6 +208,21 @@ class TaskbarRecoveryTests(unittest.TestCase):
             view.follow_taskbar()
         show.assert_called_once_with(456, tb.SW_HIDE)
         timer.assert_called_once_with(55, tb.TIMER_COVER, 1000, None)
+
+    def test_uncovered_blocks_keep_recovery_timer_without_layout_polling(self):
+        view = self.view()
+        view.bars = {"right": NS(hwnd=222, rect=(1920, 1000, 3840, 1048))}
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, x=2000, size=(200, 44))
+        with patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb.user32, "IsWindowVisible", return_value=True), \
+                patch.object(tb, "taskbar_covered", return_value=False), \
+                patch.object(tb.user32, "SetTimer") as timer, \
+                patch.object(tb.user32, "SetWindowPos") as position, \
+                patch.object(tb, "read_bar") as measure:
+            view.on_timer(tb.TIMER_COVER, 0)
+        timer.assert_called_once_with(55, tb.TIMER_COVER, 1000, None)
+        position.assert_not_called()  # a healthy block must not rise over another overlay
+        measure.assert_not_called()
 
     def test_hidden_owner_keeps_secondary_block_hidden_until_layout_refresh(self):
         view = self.view()
@@ -357,6 +378,93 @@ class TaskbarRecoveryTests(unittest.TestCase):
             unregister.assert_called_once_with(999)
             self.assertIsNone(view.window_callback)
             self.assertIsNone(view.window_hook)
+
+
+@unittest.skipUnless(sys.platform == "win32", "Native Windows owned-window recovery")
+class NativeTaskbarRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        # Off-screen, account-free native windows exercise the actual visibility and
+        # z-order APIs without touching Explorer, the running app, or the foreground.
+        self.windows = []
+        self.addCleanup(self.destroy_windows)
+        owner = self.window(None)
+        block = self.window(owner)
+        self.owner, self.block = owner, block
+        self.view = tb.TaskbarView(NS())
+        self.view.bars = {"right": NS(hwnd=owner, rect=(-30000, -30000, -29800, -29960))}
+        self.view.blocks = {("right", 0): NS(hwnd=block, closing=False, x=-30000, size=(200, 40))}
+        self.view.covered = {"right": False}
+        for name in ("SetTimer", "KillTimer"):
+            timer = patch.object(tb.user32, name)
+            timer.start()
+            self.addCleanup(timer.stop)
+
+    def window(self, owner, topmost=True):
+        hwnd = tb.user32.CreateWindowExW((tb.WS_EX_TOPMOST if topmost else 0) | tb.WS_EX_NOACTIVATE,
+                                        "STATIC", "Synthetic taskbar regression", tb.fl.WS_POPUP,
+                                        -30000, -30000, 200, 40, owner, None, None, None)
+        self.assertTrue(hwnd)
+        self.windows.append(hwnd)
+        tb.user32.ShowWindow(hwnd, tb.SW_SHOWNA)
+        return hwnd
+
+    def destroy_windows(self):
+        for hwnd in reversed(self.windows):
+            tb.user32.DestroyWindow(hwnd)
+
+    def demote(self):
+        self.assertTrue(tb.user32.SetWindowPos(self.block, -2, 0, 0, 0, 0,
+                        tb.SWP_NOSIZE | tb.SWP_NOMOVE | tb.SWP_NOACTIVATE | tb.SWP_NOOWNERZORDER))
+        self.assertFalse(tb.user32.GetWindowLongW(self.block, tb.GWL_EXSTYLE) & tb.WS_EX_TOPMOST)
+        self.assertTrue(tb.user32.IsWindowVisible(self.block))
+
+    def is_above(self, first, second):
+        hwnd = tb.user32.GetWindow(first, 2)  # GW_HWNDNEXT: below this window in z-order
+        while hwnd:
+            if hwnd == second:
+                return True
+            hwnd = tb.user32.GetWindow(hwnd, 2)
+        return False
+
+    def test_visible_demoted_block_recovers_on_timer_without_activation(self):
+        self.demote()
+        cover = self.window(None, topmost=False)
+        self.assertTrue(tb.user32.SetWindowPos(cover, 0, 0, 0, 0, 0,
+                        tb.SWP_NOSIZE | tb.SWP_NOMOVE | tb.SWP_NOACTIVATE))
+        self.assertTrue(self.is_above(cover, self.block))
+        foreground = tb.fl.user32.GetForegroundWindow()
+        rect = tb.window_rect(self.block)
+        with patch.object(tb, "taskbar_covered", return_value=False):
+            self.view.on_timer(tb.TIMER_COVER, 0)  # no shell, hide, or activation event
+        self.assertTrue(tb.user32.GetWindowLongW(self.block, tb.GWL_EXSTYLE) & tb.WS_EX_TOPMOST)
+        self.assertTrue(tb.user32.IsWindowVisible(self.block))
+        self.assertTrue(self.is_above(self.block, cover))
+        self.assertEqual(tb.window_rect(self.block), rect)
+        self.assertEqual(tb.fl.user32.GetForegroundWindow(), foreground)
+
+    def test_hidden_block_recovers_on_timer_without_native_event(self):
+        tb.user32.ShowWindow(self.block, tb.SW_HIDE)
+        self.assertFalse(tb.user32.IsWindowVisible(self.block))
+        with patch.object(tb, "taskbar_covered", return_value=False):
+            self.view.on_timer(tb.TIMER_COVER, 0)
+        self.assertTrue(tb.user32.IsWindowVisible(self.block))
+
+    def test_fullscreen_does_not_promote_demoted_block(self):
+        self.demote()
+        self.view.covered["right"] = True
+        with patch.object(tb, "taskbar_covered", return_value=True):
+            self.view.on_timer(tb.TIMER_COVER, 0)
+        self.assertFalse(tb.user32.IsWindowVisible(self.block))
+        self.assertFalse(tb.user32.GetWindowLongW(self.block, tb.GWL_EXSTYLE) & tb.WS_EX_TOPMOST)
+
+    def test_healthy_block_stays_below_existing_topmost_overlay(self):
+        overlay = self.window(None)
+        self.assertTrue(tb.user32.SetWindowPos(overlay, tb.HWND_TOPMOST, 0, 0, 0, 0,
+                        tb.SWP_NOSIZE | tb.SWP_NOMOVE | tb.SWP_NOACTIVATE))
+        self.assertTrue(self.is_above(overlay, self.block))
+        with patch.object(tb, "taskbar_covered", return_value=False):
+            self.view.on_timer(tb.TIMER_COVER, 0)
+        self.assertTrue(self.is_above(overlay, self.block))
 
 
 if __name__ == "__main__":

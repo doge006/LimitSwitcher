@@ -5,11 +5,12 @@ panel's row laid out sideways: icon, name, and a column per limit with "% left" 
 "resets in". The blocks are layered, click-through-free popups that never take focus; a
 click opens the panel above the block, a right-click opens the menu.
 
-Nothing polls. The layout is worked out again only when the taskbar can have changed
+The layout is worked out again only when the taskbar can have changed
 (a window opened or closed, display or theme settings changed, Explorer restarted) and once
 a minute with the reset times. The blocks are owned by the taskbar, so Windows keeps them
 just above it, and they hide while an app is full screen on that display (see follow_taskbar);
-screenshot tools and other overlays never make them hide and come back.
+screenshot tools and other overlays never make them hide and come back. A lightweight
+one-second visibility check repairs hidden or demoted blocks without remeasuring the layout.
 """
 import ctypes
 from ctypes import wintypes
@@ -39,6 +40,8 @@ WINDOW_EVENTS = {EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE, EVENT_OBJECT_REORDER, EVE
 WINEVENTPROC = ctypes.WINFUNCTYPE(None, wintypes.HANDLE, wintypes.DWORD, wintypes.HWND,
                                 wintypes.LONG, wintypes.LONG, wintypes.DWORD, wintypes.DWORD)
 HSHELL_WINDOWACTIVATED, WS_EX_TOPMOST, SW_HIDE, SW_SHOWNA = 4, 0x8, 0, 8
+HWND_TOPMOST, GWL_EXSTYLE = -1, -20
+SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE, SWP_NOOWNERZORDER = 0x1, 0x2, 0x10, 0x200
 HSHELL_WINDOWCREATED, HSHELL_WINDOWDESTROYED = 1, 2
 ABM_NEW, ABM_REMOVE, ABN_STATECHANGE, ABN_POSCHANGED, ABN_FULLSCREENAPP = 0, 1, 0, 1, 2
 PROVIDER_ORDER = ("claude", "codex")
@@ -56,6 +59,8 @@ sig(user32.GetWindowRect, wintypes.BOOL, wintypes.HWND, ctypes.POINTER(wintypes.
 sig(user32.IsWindowVisible, wintypes.BOOL, wintypes.HWND)
 sig(user32.IsWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.GetWindowLongW, wintypes.LONG, wintypes.HWND, ctypes.c_int)
+sig(user32.SetWindowPos, wintypes.BOOL, wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+    ctypes.c_int, ctypes.c_int, wintypes.UINT)
 sig(user32.RegisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.DeregisterShellHookWindow, wintypes.BOOL, wintypes.HWND)
 sig(user32.RegisterWindowMessageW, wintypes.UINT, wintypes.LPCWSTR)
@@ -484,8 +489,8 @@ class TaskbarBlock(fl.Popup):
 
     @property
     def owner(self):
-        # Owned by the taskbar: Windows keeps it just above the taskbar in one step whenever the
-        # taskbar comes forward (clicks, focus changes), so it never drops behind and back.
+        # Follow the taskbar when Explorer brings it forward. follow_taskbar also repairs
+        # visibility and topmost state when Windows changes either independently.
         return self.bar.hwnd if self.bar else None
 
     def wndproc(self, hwnd, msg, wparam, lparam):
@@ -683,8 +688,8 @@ class TaskbarView:
         what Windows has on top of the taskbar (taskbar_covered), not which app is in use or how
         big its windows are: a game, a video, a browser's F11 cover it; a screenshot tool, an
         invisible overlay or a window left behind the taskbar don't. Explorer's ABN_FULLSCREENAPP
-        and window activation start a few quick checks; while covered, one a second, so the
-        blocks come back with no click. Instant, with no fade: the taskbar does not fade. Each
+        and window activation start a few quick checks; otherwise, one a second also repairs
+        hidden or demoted blocks when Windows sends no useful event. Instant, with no fade. Each
         display on its own: a game on one screen leaves the other screen's blocks up."""
         uncovered = False
         for key, bar in self.bars.items():
@@ -706,9 +711,15 @@ class TaskbarView:
                     # state. Reconcile the actual window as well as that cached state.
                     if changed or bool(user32.IsWindowVisible(block.hwnd)) != (not covered):
                         user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
+                    # WS_VISIBLE can remain set while ordinary windows cover a demoted
+                    # block. Restore its original band without moving it or taking focus.
+                    # Leave healthy topmost windows alone so overlays stay above them.
+                    if not covered and not (user32.GetWindowLongW(block.hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST):
+                        user32.SetWindowPos(block.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                                            SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
         if time.monotonic() < self.settle_until:
             user32.SetTimer(self.hwnd, TIMER_COVER, 250, None)
-        elif any(self.covered.values()) or self.full_screen:  # it may leave (or arrive) without activating anything
+        elif self.bars or self.full_screen:  # native visibility/order changes can arrive without an event
             user32.SetTimer(self.hwnd, TIMER_COVER, 1000, None)
         elif self.hwnd:
             user32.KillTimer(self.hwnd, TIMER_COVER)
