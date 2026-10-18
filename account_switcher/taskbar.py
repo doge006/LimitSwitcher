@@ -7,8 +7,8 @@ click opens the panel above the block, a right-click opens the menu.
 
 The layout is worked out again only when the taskbar can have changed
 (a window opened or closed, display or theme settings changed, Explorer restarted) and once
-a minute with the reset times. The blocks are owned by the taskbar, so Windows keeps them
-just above it, and they hide while an app is full screen on that display (see follow_taskbar);
+a minute with the reset times. The blocks belong to our tray window, keeping Explorer's
+input queue separate. They hide while an app is full screen on that display (see follow_taskbar);
 screenshot tools and other overlays never make them hide and come back. A lightweight
 one-second visibility check repairs hidden or demoted blocks without remeasuring the layout.
 """
@@ -22,6 +22,7 @@ import winreg
 from . import flyout as fl
 from . import flyout_render as fr
 from . import taskbar_layout
+from .taskbar_measurements import TaskbarMeasurements
 from .placement import free_gaps, place_blocks, taskbar_buttons
 from .placement import taskbar_covered as placement_taskbar_covered
 from .profiler import event
@@ -30,6 +31,7 @@ user32, kernel32 = fl.user32, fl.kernel32
 log = logging.getLogger("account_switcher.taskbar")
 
 WM_APP_TASKBAR = 0x8000 + 20
+WM_APP_TASKBAR_MEASURED = 0x8000 + 21
 WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
 WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
@@ -94,6 +96,18 @@ def window_rect(hwnd):
     return None
 
 
+def block_needs_raise(hwnd, taskbar_hwnd):
+    """Repair a demotion or Explorer covering the block; preserve other overlays' order."""
+    if not user32.GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST:
+        return True
+    rect = window_rect(hwnd)
+    if rect is None:
+        return False
+    point = wintypes.POINT((rect[0] + rect[2]) // 2, (rect[1] + rect[3]) // 2)
+    hit = user32.WindowFromPoint(point)
+    return bool(hit and hit != hwnd and user32.GetAncestor(hit, 2) == taskbar_hwnd)
+
+
 def setting(name, default, key=r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"):
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key) as handle:
@@ -138,10 +152,7 @@ class _COM:
         if cls.automation:
             return cls.automation
         cls.ole32 = ctypes.OleDLL("ole32")
-        try:
-            cls.ole32.CoInitializeEx(None, 2)  # apartment-threaded, the tray thread's
-        except OSError:
-            pass  # already initialised differently: still usable
+        cls.ole32.CoInitializeEx(None, 0)  # MTA, on the measurement worker that owns no windows
         clsid, iid = fl.GUID(), fl.GUID()
         cls.ole32.CLSIDFromString(cls.CLSID, ctypes.byref(clsid))
         cls.ole32.CLSIDFromString(cls.IID, ctypes.byref(iid))
@@ -372,7 +383,7 @@ def layout_signature(hwnd, rect, notify):
             time.strftime("%x"))  # the clock's date: a wider one (10/10) moves the clock's left edge
 
 
-def read_bar(hwnd, key="main", label="Main display", previous=None):
+def read_bar(hwnd, key="main", label="Main display", previous=None, measurements=None):
     """Where a taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide).
     `previous`: the last reading, reused as it is when nothing it depends on has changed."""
     rect = window_rect(hwnd)
@@ -405,8 +416,9 @@ def read_bar(hwnd, key="main", label="Main display", previous=None):
     occupied, measured = None, False
     try:
         started = time.perf_counter()
-        spans = _COM.buttons(hwnd)
-        event("taskbar: UI Automation walk", time.perf_counter() - started)
+        spans = measurements.buttons(hwnd, signature) if measurements is not None else _COM.buttons(hwnd)
+        event("taskbar: measurement lookup" if measurements is not None else "taskbar: UI Automation walk",
+              time.perf_counter() - started)
         if spans:
             occupied = taskbar_buttons(spans, rect)
             measured = bool(occupied)
@@ -489,14 +501,14 @@ class TaskbarBlock(fl.Popup):
 
     @property
     def owner(self):
-        # Follow the taskbar when Explorer brings it forward. follow_taskbar also repairs
-        # visibility and topmost state when Windows changes either independently.
-        return self.bar.hwnd if self.bar else None
+        # Cross-process ownership implicitly joins input queues. Keep our windows on
+        # our own queue so a slow measurement cannot make Explorer wait for our UI.
+        return self.view.hwnd
 
     def wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_MOUSEACTIVATE:
             return MA_NOACTIVATE
-        if msg == WM_DESTROY and self.hwnd == hwnd:  # its taskbar went away (Explorer restarted)
+        if msg == WM_DESTROY and self.hwnd == hwnd:
             fl.Popup._windows.pop(hwnd, None)
             self.hwnd, self.anim, self.fx_anims, self.closing = None, None, {}, False
             self.view.later()
@@ -519,6 +531,8 @@ class TaskbarView:
         self.tray = tray
         self.blocks = {}         # (display id, slot index) -> TaskbarBlock
         self.bars = {}           # display id -> Bar (the taskbar the display's slots go on)
+        self.waiting = {}        # display id -> hidden taskbar HWND, including first launch during a game
+        self.measurements = TaskbarMeasurements(_COM.buttons, self.measurement_ready)
         self.stale = True        # re-read the taskbars' layout on the next sync
         self.hwnd = None
         self.hooked = False
@@ -537,6 +551,7 @@ class TaskbarView:
         self.icon = icon
         handlers = icon._message_handlers
         handlers[WM_APP_TASKBAR] = lambda w, l: event("taskbar: app state changed") or self.sync()
+        handlers[WM_APP_TASKBAR_MEASURED] = self.on_measurement
         handlers[WM_TIMER] = self.on_timer
         handlers[WM_SETTINGCHANGE] = lambda w, l: event("taskbar: setting changed") or self.later()
         for message in (WM_DISPLAYCHANGE, fl_taskbar_created()):
@@ -582,6 +597,20 @@ class TaskbarView:
         if hwnd:
             user32.PostMessageW(hwnd, WM_APP_TASKBAR, 0, 0)
 
+    def measurement_ready(self, hwnd):
+        """Worker thread: deliver only a handle; all window work stays on the tray thread."""
+        if self.hooked and self.hwnd:
+            user32.PostMessageW(self.hwnd, WM_APP_TASKBAR_MEASURED, hwnd, 0)
+
+    def on_measurement(self, hwnd, unused):
+        if not self.hooked or not self.enabled():
+            return
+        for bar in self.bars.values():
+            if bar.hwnd == hwnd:
+                bar.measured_at = 0  # bypass the short layout cache to consume the fresh rectangles
+        self.stale = True
+        self.sync()
+
     def later(self, ms=400):
         """Re-read the taskbar a moment from now (after its own buttons have finished moving)."""
         event("taskbar: later()")
@@ -613,6 +642,7 @@ class TaskbarView:
         if self.window_hook:
             user32.UnhookWinEvent(self.window_hook)
         self.window_hook = self.window_callback = None
+        self.measurements.retain(())
         self.unregister_appbar()
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
@@ -713,13 +743,18 @@ class TaskbarView:
                         user32.ShowWindow(block.hwnd, SW_HIDE if covered else SW_SHOWNA)
                     # WS_VISIBLE can remain set while ordinary windows cover a demoted
                     # block. Restore its original band without moving it or taking focus.
-                    # Leave healthy topmost windows alone so overlays stay above them.
-                    if not covered and not (user32.GetWindowLongW(block.hwnd, GWL_EXSTYLE) & WS_EX_TOPMOST):
+                    # Raise above Explorer if it moved over us, while leaving other
+                    # topmost overlays in their existing order.
+                    if not covered and block_needs_raise(block.hwnd, bar.hwnd):
                         user32.SetWindowPos(block.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                                             SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+        for key, hwnd in list(self.waiting.items()):
+            if not user32.IsWindow(hwnd) or user32.IsWindowVisible(hwnd):
+                del self.waiting[key]
+                self.later(100)  # the hidden taskbar returned, even without a shell/activation event
         if time.monotonic() < self.settle_until:
             user32.SetTimer(self.hwnd, TIMER_COVER, 250, None)
-        elif self.bars or self.full_screen:  # native visibility/order changes can arrive without an event
+        elif self.bars or self.waiting or self.full_screen:
             user32.SetTimer(self.hwnd, TIMER_COVER, 1000, None)
         elif self.hwnd:
             user32.KillTimer(self.hwnd, TIMER_COVER)
@@ -752,7 +787,7 @@ class TaskbarView:
             if displays != getattr(self.tray.controller, "taskbar_displays", None):
                 self.tray.controller.taskbar_displays = displays  # the settings list them
                 self.tray.controller.notify("changed", None)
-            bars = {}
+            bars, waiting = {}, {}
             for key in wanted:
                 # A display that isn't connected now: its slots go to the main one, unless the
                 # main one has its own; never some other display by accident.
@@ -760,10 +795,18 @@ class TaskbarView:
                 if entry is None and "main" not in wanted and "main" not in bars:
                     entry = next((t for t in found if t[1] == "main"), None)
                 if entry is not None:
-                    bar = read_bar(*entry, previous=self.bars.get(key))
+                    previous = self.bars.get(key)
+                    if not user32.IsWindowVisible(entry[0]):
+                        waiting[key] = entry[0]
+                        # A fullscreen transition is temporary. Keep the last geometry
+                        # so its coverage transition can bring existing blocks back.
+                        bar = previous if previous is not None and previous.hwnd == entry[0] else None
+                    else:
+                        bar = read_bar(*entry, previous=previous, measurements=self.measurements)
                     if bar is not None:
                         bars[key] = bar
-            self.bars, self.stale = bars, False
+            self.bars, self.waiting, self.stale = bars, waiting, False
+            self.measurements.retain(entry[0] for entry in found)
             self.covered = {key: value for key, value in self.covered.items() if key in bars}
         self.follow_taskbar()
         shown = set()
@@ -788,7 +831,7 @@ class TaskbarView:
                 if block is None:
                     block = self.blocks[(key, index)] = TaskbarBlock(self, slots[index])
                 if block.hwnd and block.bar is not None and block.bar.hwnd != bar.hwnd:
-                    block._destroy()  # moving to another display's taskbar: a new window owned by it
+                    block._destroy()  # moving to another display's taskbar: rebuild at the new geometry
                 block.place(bar, spot)
                 shown.add((key, index))
                 if block.hwnd and not block.closing:

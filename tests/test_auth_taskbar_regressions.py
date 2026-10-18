@@ -129,22 +129,64 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view.hooked, view.hwnd = True, 55
         return view
 
-    def test_hidden_taskbar_closes_blocks_and_can_return(self):
+    def test_first_launch_hidden_taskbar_is_retried_without_activation(self):
         view = self.view()
         block = Mock()
         view.blocks[("main", 0)] = block
         bar = tb.Bar(123, "main", "Main display", (0, 1000, 1920, 1048), 1, 8, 1700, [], False, True)
+        visible = {"value": False}
         with patch.object(tb, "taskbars", return_value=[(123, "main", "Main display")]), \
-                patch.object(tb, "read_bar", side_effect=[None, bar]), \
+                patch.object(tb, "read_bar", return_value=bar) as read, \
                 patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb.user32, "IsWindowVisible", side_effect=lambda h: visible["value"]), \
                 patch.object(tb, "taskbar_covered", return_value=False), \
-                patch.object(tb.user32, "KillTimer"):
+                patch.object(tb.user32, "SetTimer") as timer, patch.object(tb.user32, "KillTimer"):
             view._sync()
             self.assertEqual(view.bars, {})
+            self.assertEqual(view.waiting, {"main": 123})
+            read.assert_not_called()
+            timer.assert_any_call(55, tb.TIMER_COVER, 1000, None)
             block.close.assert_called_once()
-            view.stale = True
-            view._sync()
+            visible["value"] = True
+            view.on_timer(tb.TIMER_COVER, 0)
+            timer.assert_any_call(55, tb.TIMER_LAYOUT, 100, None)
+            view.on_timer(tb.TIMER_LAYOUT, 0)
             self.assertIs(view.bars["main"], bar)
+            self.assertEqual(view.waiting, {})
+            read.assert_called_once_with(123, "main", "Main display", previous=None, measurements=view.measurements)
+
+    def test_fullscreen_refresh_retains_secondary_bar_until_it_returns(self):
+        view = self.view()
+        view.tray.state["taskbarLayout"] = {"right": ["claude", None]}
+        bar = tb.Bar(222, "right", "Right display", (1920, 1000, 3840, 1048), 1, 1928, 3700, [], False, True)
+        view.bars["right"] = bar
+        block = Mock(hwnd=456, closing=False, x=2000, size=(100, 44), bar=bar, slot="claude")
+        view.blocks[("right", 0)] = block
+        visible = {"value": False}
+        with patch.object(tb, "taskbars", return_value=[(222, "right", "Right display")]), \
+                patch.object(tb.user32, "IsWindowVisible", side_effect=lambda h: visible["value"]), \
+                patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb, "read_bar", return_value=bar) as read, \
+                patch.object(tb, "taskbar_covered", return_value=False), \
+                patch.object(tb.fr, "slot_account", return_value={"windows": [1]}), \
+                patch.object(tb.fr, "block_width", return_value=100), \
+                patch.object(tb, "place_blocks", return_value={0: (2000, 100, 1)}), \
+                patch.object(tb.user32, "ShowWindow") as show, \
+                patch.object(tb.user32, "SetTimer"), patch.object(tb.user32, "KillTimer"):
+            view._sync()  # layout refresh while Explorer hides the bar for the game
+            self.assertIs(view.bars["right"], bar)
+            self.assertEqual(view.waiting, {"right": 222})
+            self.assertTrue(view.covered["right"])
+            read.assert_not_called()
+            block.close.assert_not_called()
+            show.assert_called_once_with(456, tb.SW_HIDE)
+            visible["value"] = True
+            view.on_timer(tb.TIMER_COVER, 0)  # game left fullscreen; no activation/shell event
+            self.assertFalse(view.covered["right"])
+            self.assertEqual(view.waiting, {})
+            show.assert_any_call(456, tb.SW_SHOWNA)
+            read.assert_called_once_with(222, "right", "Right display", previous=bar,
+                                         measurements=view.measurements)
 
     def test_layout_is_remeasured_after_animation_with_same_signature(self):
         rect = (0, 1000, 1920, 1048)
@@ -267,11 +309,50 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view.blocks[("right", 0)] = block
         with patch.object(tb, "taskbars", return_value=[(111, "main", "Main display"), (222, "right", "Right display")]), \
                 patch.object(tb, "read_bar", return_value=None) as read, \
-                patch.object(tb.user32, "KillTimer"):
+                patch.object(tb.user32, "IsWindowVisible", return_value=False), \
+                patch.object(tb.user32, "IsWindow", return_value=True), \
+                patch.object(tb.user32, "KillTimer"), patch.object(tb.user32, "SetTimer"):
             view._sync()
-        read.assert_called_once_with(222, "right", "Right display", previous=None)
+        read.assert_not_called()
         self.assertEqual(view.bars, {})
+        self.assertEqual(view.waiting, {"right": 222})
         block.close.assert_called_once()
+
+    def test_blocks_are_owned_by_our_tray_instead_of_explorer(self):
+        view = self.view()
+        block = tb.TaskbarBlock(view, "claude")
+        block.bar = NS(hwnd=222)
+        self.assertEqual(block.owner, 55)
+
+    def test_taskbar_cover_can_raise_block_without_overriding_other_overlays(self):
+        with patch.object(tb, "window_rect", return_value=(2000, 1000, 2200, 1044)), \
+                patch.object(tb.user32, "WindowFromPoint", return_value=789), \
+                patch.object(tb.user32, "GetAncestor", return_value=222) as ancestor:
+            self.assertTrue(tb.block_needs_raise(456, 222))
+            ancestor.return_value = 999  # screenshot tool/menu/other overlay
+            self.assertFalse(tb.block_needs_raise(456, 222))
+
+    def test_measurement_completion_posts_without_touching_windows_on_worker(self):
+        view = self.view()
+        view.sync = Mock()
+        with patch.object(tb.user32, "PostMessageW") as post:
+            view.measurement_ready(222)
+        post.assert_called_once_with(55, tb.WM_APP_TASKBAR_MEASURED, 222, 0)
+        view.sync.assert_not_called()
+
+    def test_measurement_message_consumes_results_and_ignores_disabled_view(self):
+        view = self.view()
+        view.bars["right"] = NS(hwnd=222, measured_at=100)
+        view.stale = False
+        view.sync = Mock()
+        view.on_measurement(222, 0)
+        self.assertEqual(view.bars["right"].measured_at, 0)
+        self.assertTrue(view.stale)
+        view.sync.assert_called_once()
+        view.hooked = False
+        view.sync.reset_mock()
+        view.on_measurement(222, 0)
+        view.sync.assert_not_called()
 
     def test_secondary_taskbar_show_event_restores_its_layout_without_activation(self):
         view = self.view()
@@ -465,6 +546,39 @@ class NativeTaskbarRecoveryTests(unittest.TestCase):
         with patch.object(tb, "taskbar_covered", return_value=False):
             self.view.on_timer(tb.TIMER_COVER, 0)
         self.assertTrue(self.is_above(overlay, self.block))
+
+    def test_topmost_taskbar_can_be_raised_over_independent_block_then_repaired(self):
+        bar = self.window(None)
+        self.assertTrue(tb.user32.SetWindowPos(bar, tb.HWND_TOPMOST, 0, 0, 0, 0,
+                        tb.SWP_NOSIZE | tb.SWP_NOMOVE | tb.SWP_NOACTIVATE))
+        self.assertTrue(self.is_above(bar, self.block))
+        self.view.bars["right"].hwnd = bar
+        with patch.object(tb, "taskbar_covered", return_value=False), \
+                patch.object(tb.user32, "WindowFromPoint", return_value=bar):
+            self.view.on_timer(tb.TIMER_COVER, 0)
+        self.assertTrue(self.is_above(self.block, bar))
+
+    def test_real_block_stays_owned_by_our_hidden_tray_when_taskbar_is_destroyed(self):
+        from PIL import Image
+        tray = self.window(None)
+        tb.user32.ShowWindow(tray, tb.SW_HIDE)
+        fake_explorer = self.window(None)
+        view = tb.TaskbarView(NS(state={"accounts": []}))
+        view.hwnd = tray
+        view.later = Mock()
+        block = tb.TaskbarBlock(view, "claude")
+        self.addCleanup(block._destroy)
+        bar = tb.Bar(fake_explorer, "right", "Right display", (-30000, -30000, -29600, -29952),
+                     1, -30000, -29600, [], False, True)
+        block.place(bar, (-30000, "left", 1))
+        with patch.object(block, "render", return_value=(Image.new("RGBA", (200, 44), "black"), [])), \
+                patch.object(tb.fr, "block_width", return_value=200):
+            block.open()
+        self.assertTrue(block.hwnd)
+        self.assertEqual(tb.user32.GetWindow(block.hwnd, 4), tray)
+        self.assertTrue(tb.user32.IsWindowVisible(block.hwnd))
+        tb.user32.DestroyWindow(fake_explorer)
+        self.assertTrue(tb.user32.IsWindow(block.hwnd))
 
 
 if __name__ == "__main__":
