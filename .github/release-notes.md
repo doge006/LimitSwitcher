@@ -1,23 +1,23 @@
-The app offers it in Settings → **Update to 1.4.15** (or download below).
+The app offers it in Settings → **Update to 1.4.16** (or download below).
 
-## Taskbar account dropdowns
+## Taskbar recovery after fullscreen games
 
-Each display's left and right taskbar blocks now use dropdowns. Choose **In use**, **Next use**, a fixed account, or **Off** for each slot. Next use previews the next eligible Auto swap account, excluding the current account, and updates as usage changes.
+- Keep temporarily hidden taskbars tracked, including when the app starts during a fullscreen game.
+- Restore blocks when the taskbar returns, without requiring a click or window change.
+- Repair hidden blocks and incorrect window ordering without moving them or taking focus.
+- Preserve intentional hiding for fullscreen apps and the ordering of screenshot tools and other overlays.
 
-The dropdowns support mouse selection, keyboard navigation, and scrolling for long account lists.
+## Explorer isolation
 
-## Secondary-monitor recovery
+Taskbar blocks now belong to LimitSwitcher's own tray window instead of Explorer. This keeps the two apps' input queues separate.
 
-Taskbar visibility, position, and ordering changes now trigger recovery directly. Temporarily hidden secondary taskbars retain their monitor assignment, and unexpectedly hidden blocks can reappear without a click or window change. Full-screen coverage and intentional hiding remain respected.
+Taskbar button measurements run on a dedicated background MTA thread, with cached results delivered asynchronously to the tray thread. A stalled measurement cannot block the tray or spawn additional measurement workers.
 
-## Jev compaction 0.1.3
+These changes remove identified app-side hang risks. They do not establish the cause of any particular Explorer hang.
 
-- Preserve original tool inputs, scripts, edits, and distinct historical file versions.
-- Compress exact duplicate outputs and repeated lines while preserving their source references, whitespace, and repetition counts.
-- Protect needed evidence from size-target overrides and reject replacement notes that increase context size.
-- Validate scorer answers, limit request concurrency, and discard late replies after a compaction deadline.
+## Validation
 
-Savings depend on the workload. A falsely low relevance score can still remove unique evidence; archive retrieval remains disabled pending runtime verification. Offline retention tests and a reproducible synthetic benchmark are included.
+The Python suite ran 426 tests with 19 skips and no failures. Focused tests cover fullscreen recovery without activation, native window ownership and ordering, focus preservation, overlays, and stalled measurement providers. Python and Claude Code mod checks passed on GitHub.
 
 ## Download
 
