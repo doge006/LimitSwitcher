@@ -1,23 +1,28 @@
-The app offers it in Settings → **Update to 1.4.16** (or download below).
+The app offers it in Settings → **Update to 1.4.17** (or download below).
 
-## Taskbar recovery after fullscreen games
+## Taskbar blocks stay visible over Start and Search
 
-- Keep temporarily hidden taskbars tracked, including when the app starts during a fullscreen game.
-- Restore blocks when the taskbar returns, without requiring a click or window change.
-- Repair hidden blocks and incorrect window ordering without moving them or taking focus.
-- Preserve intentional hiding for fullscreen apps and the ordering of screenshot tools and other overlays.
+Opening Start or Search raises Windows' taskbar into a layer that ordinary windows can't reach. Explorer sometimes keeps it there after Start closes, until you click the taskbar or switch windows. The usage blocks were ordinary windows, so they went behind the taskbar during that time.
 
-## Explorer isolation
+The blocks are now drawn inside the taskbar itself, so they move with it. A small helper process shows them, and LimitSwitcher sends it only the rendered pixels and receives its mouse events. LimitSwitcher itself stays separate from Explorer.
 
-Taskbar blocks now belong to LimitSwitcher's own tray window instead of Explorer. This keeps the two apps' input queues separate.
+- The helper is replaced if it stops responding for 2 seconds.
+- If the helper can't run, the blocks fall back to the previous floating windows.
+- While the taskbar is still raised, Windows doesn't allow new blocks to be added. They appear as soon as it settles.
 
-Taskbar button measurements run on a dedicated background MTA thread, with cached results delivered asynchronously to the tray thread. A stalled measurement cannot block the tray or spawn additional measurement workers.
+## Taskbar recovery
 
-These changes remove identified app-side hang risks. They do not establish the cause of any particular Explorer hang.
+- A taskbar that briefly drops out of Windows' window list, or can't be read for a moment, keeps its blocks and is checked again. Before, its blocks were closed.
+- A failed taskbar measurement keeps the last good one, instead of falling back to an estimate that could remove a block.
 
 ## Validation
 
-The Python suite ran 426 tests with 19 skips and no failures. Focused tests cover fullscreen recovery without activation, native window ownership and ordering, focus preservation, overlays, and stalled measurement providers. Python and Claude Code mod checks passed on GitHub.
+- **Tests:** 440 ran with 15 skips. The one error, in a mod process test, occurs identically without these changes. The Python and Claude Code mod checks passed on GitHub.
+- **On a Windows 11 desktop with two displays:**
+  - The blocks stayed drawn with Start open.
+  - The hand cursor held while hovering.
+  - Clicking a block opened the panel, and right-clicking opened LimitSwitcher's menu.
+  - The helper used about 13 MB of memory and no measurable CPU while idle.
 
 ## Download
 
