@@ -2,6 +2,11 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.17](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.17) (2026-10-19)
+
+- Fixed: taskbar blocks disappeared while Start or Search was open, and sometimes stayed hidden after Start closed until the next click or window switch. They are now drawn inside the taskbar by a small helper process. LimitSwitcher itself stays separate from Explorer, and the blocks fall back to floating windows if the helper can't run.
+- Fixed: a taskbar that briefly dropped out of Windows' window list, or couldn't be read for a moment, lost its blocks until another layout change.
+
 ## [1.4.14](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.14) (2026-10-15)
 
 - Fixed: Claude usage could correct itself and then drift back to another account's cached five-hour and weekly figures. Account-specific provider checks now determine usage throughout the app, including the status line, with normal checks every minute and provider backoff respected.

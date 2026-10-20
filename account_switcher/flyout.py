@@ -311,6 +311,7 @@ class Popup:
     # Subclasses: render(hover) -> (image, hits); position(width, height); activate(action)
     modal = True             # closes on a click elsewhere, hides the tray tooltip (not the taskbar blocks)
     ex_style = 0
+    base_ex_style = WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST
     owner = None             # window this one stays above (the taskbar, for its blocks)
     dismiss_on_deactivate = True
     minute_ticks = False
@@ -393,7 +394,7 @@ class Popup:
         self.x, self.y, self.slide = self.position(*image.size)
         Popup._creating = self
         try:
-            self.hwnd = user32.CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST | self.ex_style, CLASS_NAME,
+            self.hwnd = user32.CreateWindowExW(self.base_ex_style | self.ex_style, CLASS_NAME,
                                                "LimitSwitcher", WS_POPUP, self.x, self.y, *image.size,
                                                self.owner, None, kernel32.GetModuleHandleW(None), None)
         finally:

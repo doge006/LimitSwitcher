@@ -95,6 +95,43 @@ class TaskbarMeasurementTests(unittest.TestCase):
             self.assertTrue(ready.wait(1))
             self.assertEqual(worker.buttons(123, ("layout",)), [(1, 2, 3, 4)])
 
+    def test_failed_refresh_keeps_good_rectangles(self):
+        ready = threading.Event()
+        measure = Mock(side_effect=[[(1, 2, 3, 4)], OSError("synthetic provider failure")])
+        worker = TaskbarMeasurements(measure, lambda hwnd: ready.set())
+        with self.assertLogs("account_switcher.taskbar", level="WARNING"):
+            worker.buttons(123, ("layout",))
+            self.assertTrue(ready.wait(1))
+            ready.clear()
+            worker.refresh(123)
+            self.assertEqual(worker.buttons(123, ("layout",)), [(1, 2, 3, 4)])  # stale, so measured again
+            self.assertTrue(ready.wait(1))
+        self.assertEqual(measure.call_count, 2)
+        self.assertEqual(worker.buttons(123, ("layout",)), [(1, 2, 3, 4)])
+
+    def test_refresh_during_read_measures_again_afterwards(self):
+        entered, release, ready = threading.Event(), threading.Event(), threading.Event()
+        results = iter([[(1, 2, 3, 4)], [(5, 6, 7, 8)]])
+
+        def measure(hwnd):
+            entered.set()
+            release.wait(3)
+            return next(results)
+
+        worker = TaskbarMeasurements(measure, lambda hwnd: ready.set())
+        self.addCleanup(release.set)
+        worker.buttons(123, ("layout",))
+        self.assertTrue(entered.wait(1))
+        worker.refresh(123)  # Explorer finished animating while the first read ran
+        release.set()
+        for _ in range(20):
+            ready.wait(1)
+            ready.clear()
+            with worker.lock:
+                if worker.records.get(123, (None, None, None))[2] == [(5, 6, 7, 8)] and not worker.pending:
+                    break
+        self.assertEqual(worker.buttons(123, ("layout",)), [(5, 6, 7, 8)])
+
 
 if __name__ == "__main__":
     unittest.main()
