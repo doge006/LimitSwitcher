@@ -2,7 +2,9 @@
 
 One small block per provider (Claude from the left, Codex from the right), each the compact
 panel's row laid out sideways: icon, name, and a column per limit with "% left" and
-"resets in". The blocks are layered, click-through-free popups that never take focus; a
+"resets in". The blocks are shown as children of Explorer's taskbar by a small host process
+(taskbar_host.py), so they stay up while Start or Search lifts the taskbar above other windows;
+when the host can't run, they are layered popups of our own. They never take focus; a
 click opens the panel above the block, a right-click opens the menu.
 
 The layout is worked out again only when the taskbar can have changed
@@ -14,6 +16,7 @@ one-second visibility check repairs hidden or demoted blocks without remeasuring
 """
 import ctypes
 from ctypes import wintypes
+import itertools
 import logging
 import math
 import time
@@ -22,6 +25,7 @@ import winreg
 from . import flyout as fl
 from . import flyout_render as fr
 from . import taskbar_layout
+from .taskbar_host import Host
 from .taskbar_measurements import TaskbarMeasurements
 from .placement import free_gaps, place_blocks, taskbar_buttons
 from .placement import taskbar_covered as placement_taskbar_covered
@@ -32,6 +36,8 @@ log = logging.getLogger("account_switcher.taskbar")
 
 WM_APP_TASKBAR = 0x8000 + 20
 WM_APP_TASKBAR_MEASURED = 0x8000 + 21
+WM_APP_TASKBAR_HOST = 0x8000 + 22
+HWND_MESSAGE = -3
 WM_TIMER, WM_SETTINGCHANGE, WM_DISPLAYCHANGE = 0x0113, 0x001A, 0x007E
 WM_RBUTTONUP, WM_MOUSEACTIVATE, MA_NOACTIVATE, WM_DESTROY = 0x0205, 0x0021, 3, 0x0002
 WS_EX_NOACTIVATE = 0x08000000
@@ -280,18 +286,19 @@ def taskbars():
     main_rect = window_rect(main)
     others = []
 
-    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def each(hwnd, _):
-        name = ctypes.create_unicode_buffer(40)
-        user32.GetClassNameW(hwnd, name, 40)
+    # EnumWindows can omit shell windows raised into another window band while
+    # Start/Search is open. Walk the taskbar class directly, as Explorer widgets do.
+    hwnd, seen = None, set()
+    for _ in range(64):
+        hwnd = user32.FindWindowExW(None, hwnd, "Shell_SecondaryTrayWnd", None)
+        if not hwnd or hwnd in seen:
+            break
+        seen.add(hwnd)
         rect = window_rect(hwnd)
         # Explorer can hide a secondary taskbar temporarily. It is still that display's
         # taskbar, rather than a disconnected display whose blocks should move to the main one.
-        if name.value == "Shell_SecondaryTrayWnd" and rect:
+        if rect:
             others.append((rect, hwnd))
-        return True
-
-    user32.EnumWindows(each, 0)
     counts = {}
     for rect, hwnd in sorted(others):
         side = "left" if main_rect and rect[0] < main_rect[0] else "right"
@@ -383,12 +390,18 @@ def layout_signature(hwnd, rect, notify):
             time.strftime("%x"))  # the clock's date: a wider one (10/10) moves the clock's left edge
 
 
+class TaskbarReadPending(Exception):
+    """Explorer is between geometries; retry without discarding the previous layout."""
+
+
 def read_bar(hwnd, key="main", label="Main display", previous=None, measurements=None):
     """Where a taskbar is and which parts of it are free, or None (hidden, vertical, auto-hide).
     `previous`: the last reading, reused as it is when nothing it depends on has changed."""
     rect = window_rect(hwnd)
-    if not rect or not user32.IsWindowVisible(hwnd) or auto_hide():
+    if auto_hide():
         return None
+    if not rect or rect[2] <= rect[0] or rect[3] <= rect[1] or not user32.IsWindowVisible(hwnd):
+        raise TaskbarReadPending()
     width, height = rect[2] - rect[0], rect[3] - rect[1]
     if width <= height * 3:
         return None  # a taskbar on the side of the screen has no room for a wide block
@@ -447,11 +460,15 @@ class TaskbarBlock(fl.Popup):
     ex_style = WS_EX_NOACTIVATE
     FX_SECONDS = {**fl.Popup.FX_SECONDS, "width": 0.32}
 
+    ids = itertools.count(1)
+
     def __init__(self, view, slot):
         super().__init__(view.tray)
         self.view, self.slot = view, slot
         self.spot = None  # (edge x, "left" | "right", columns) in physical px
         self.bar = None
+        self.hosted = None  # the Host showing this block in the taskbar, or None: a popup of our own
+        self.host_id, self.pixels = None, None
 
     @property
     def provider(self):
@@ -503,7 +520,39 @@ class TaskbarBlock(fl.Popup):
     def owner(self):
         # Cross-process ownership implicitly joins input queues. Keep our windows on
         # our own queue so a slow measurement cannot make Explorer wait for our UI.
-        return self.view.hwnd
+        # Hosted, ours is only a message window: timers and animation; the host shows it.
+        return HWND_MESSAGE if self.hosted else self.view.hwnd
+
+    @property
+    def base_ex_style(self):
+        return 0 if self.hosted else fl.Popup.base_ex_style  # a message window can't be layered
+
+    def open(self):
+        self.hosted, self.host_id = self.view.host, next(self.ids)
+        super().open()
+
+    def _push(self, image, alpha, offset=(0, 0)):
+        if not self.hosted:
+            return super()._push(image, alpha, offset)
+        self.alpha, self.image = alpha, image
+        if self.pixels is None or self.pixels[0] is not image:
+            self.pixels = (image, image.convert("RGBa").tobytes("raw", "BGRa"))  # as fr.write_bgra
+        self.hosted.update(self.host_id, self.bar.hwnd, self.x + offset[0], self.y + offset[1], *image.size,
+                           self.pixels[1], alpha, bool(self.hover))
+
+    def _destroy(self):
+        if self.hwnd and self.hosted:
+            self.hosted.remove(self.host_id)
+        super()._destroy()
+        self.hosted = self.pixels = None
+
+    def host_mouse(self, event):
+        """The host's report of the mouse on this block, handled as if it were our own window."""
+        lparam = (event["y"] & 0xFFFF) << 16 | (event["x"] & 0xFFFF)
+        # The host tracks the mouse leaving. Tracking our message window instead would report
+        # a leave at once (the mouse is never over it), dropping the hover and its hand cursor.
+        self.tracking = event["msg"] != fl.WM_MOUSELEAVE
+        self.wndproc(self.hwnd, event["msg"], 0, lparam)
 
     def wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_MOUSEACTIVATE:
@@ -544,6 +593,8 @@ class TaskbarView:
         self.appbar = False      # registered as an app bar: Explorer tells us when a full-screen app opens
         self.full_screen = False  # Explorer's word (ABN_FULLSCREENAPP): a full-screen app is open somewhere
         self.settle_until = 0.0  # keep checking for full screen until then (an app takes a moment to get there)
+        self.host = None         # taskbar_host.Host while it works; None: blocks are popups of our own
+        self.host_failed = False
 
     # ---------- wiring into pystray's hidden window ----------
     def attach(self, icon):
@@ -552,6 +603,7 @@ class TaskbarView:
         handlers = icon._message_handlers
         handlers[WM_APP_TASKBAR] = lambda w, l: event("taskbar: app state changed") or self.sync()
         handlers[WM_APP_TASKBAR_MEASURED] = self.on_measurement
+        handlers[WM_APP_TASKBAR_HOST] = self.on_host
         handlers[WM_TIMER] = self.on_timer
         handlers[WM_SETTINGCHANGE] = lambda w, l: event("taskbar: setting changed") or self.later()
         for message in (WM_DISPLAYCHANGE, fl_taskbar_created()):
@@ -602,6 +654,36 @@ class TaskbarView:
         if self.hooked and self.hwnd:
             user32.PostMessageW(self.hwnd, WM_APP_TASKBAR_MEASURED, hwnd, 0)
 
+    def host_ready(self):
+        """Host thread: deliver only a wake-up; events are read on the tray thread."""
+        if self.hooked and self.hwnd:
+            user32.PostMessageW(self.hwnd, WM_APP_TASKBAR_HOST, 0, 0)
+
+    def on_host(self, wparam, lparam):
+        host = self.host
+        if host is None:
+            return
+        for item in host.events():
+            block = next((b for b in self.blocks.values() if b.hosted is host and b.host_id == item.get("id")), None)
+            if item["type"] == "mouse" and block is not None and block.hwnd:
+                block.host_mouse(item)
+            elif item["type"] == "destroyed" and block is not None:
+                block._destroy()  # Explorer restarted: shown again on its new taskbar
+                self.later(100)
+            elif item["type"] == "failed" and not item.get("retry", True):
+                log.warning("taskbar host unavailable (%s); using popups", item.get("reason"))
+                self.stop_host()
+                self.host_failed = True
+                self.later(100)
+
+    def stop_host(self):
+        host, self.host = self.host, None
+        for block in self.blocks.values():
+            if block.hosted is host:
+                block._destroy()
+        if host:
+            host.close()
+
     def on_measurement(self, hwnd, unused):
         if not self.hooked or not self.enabled():
             return
@@ -628,6 +710,8 @@ class TaskbarView:
         user32.RegisterShellHookWindow(self.hwnd)
         user32.SetTimer(self.hwnd, TIMER_MINUTE, 60_000, None)
         self.register_appbar()
+        if self.host is None and not self.host_failed:
+            self.host = Host(self.host_ready)
         self.hooked = True
         self.window_callback = WINEVENTPROC(self.on_window_event)
         # Out-of-context events arrive on this message-loop thread. Include our own process:
@@ -644,6 +728,7 @@ class TaskbarView:
         self.window_hook = self.window_callback = None
         self.measurements.retain(())
         self.unregister_appbar()
+        self.stop_host()
         user32.KillTimer(self.hwnd, TIMER_MINUTE)
         user32.KillTimer(self.hwnd, TIMER_LAYOUT)
         user32.KillTimer(self.hwnd, TIMER_SETTLED)
@@ -678,6 +763,10 @@ class TaskbarView:
               .get(wparam, f"taskbar: timer {wparam}"))
         if wparam in (TIMER_LAYOUT, TIMER_SETTLED):
             user32.KillTimer(self.hwnd, wparam)
+            if wparam == TIMER_SETTLED:
+                for bar in self.bars.values():
+                    bar.measured_at = 0
+                    self.measurements.refresh(bar.hwnd)
             self.stale = True
             self.sync()
         elif wparam == TIMER_MINUTE:  # reset times move on; the taskbar may have changed too
@@ -710,7 +799,7 @@ class TaskbarView:
             self.later(100)  # a taskbar hidden during the last layout may be back now
         self.follow_taskbar()
 
-    def follow_taskbar(self):
+    def follow_taskbar(self, retry_waiting=True):
         """Hide a display's blocks while a full-screen window is drawn over its taskbar, and bring
         them back the moment the taskbar shows again.
 
@@ -736,7 +825,8 @@ class TaskbarView:
             self.covered[key] = covered
             uncovered |= changed and not covered
             for (display, _), block in self.blocks.items():
-                if display == key and block.hwnd and not block.closing:
+                # A hosted block is part of the taskbar: it shows, hides and stays on top with it.
+                if display == key and block.hwnd and not block.closing and not block.hosted:
                     # Windows can hide an owned popup independently of our coverage
                     # state. Reconcile the actual window as well as that cached state.
                     if changed or bool(user32.IsWindowVisible(block.hwnd)) != (not covered):
@@ -748,7 +838,7 @@ class TaskbarView:
                     if not covered and block_needs_raise(block.hwnd, bar.hwnd):
                         user32.SetWindowPos(block.hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                                             SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
-        for key, hwnd in list(self.waiting.items()):
+        for key, hwnd in list(self.waiting.items()) if retry_waiting else ():
             if not user32.IsWindow(hwnd) or user32.IsWindowVisible(hwnd):
                 del self.waiting[key]
                 self.later(100)  # the hidden taskbar returned, even without a shell/activation event
@@ -792,23 +882,34 @@ class TaskbarView:
                 # A display that isn't connected now: its slots go to the main one, unless the
                 # main one has its own; never some other display by accident.
                 entry = next((t for t in found if t[1] == key), None)
+                previous = self.bars.get(key)
+                if entry is None and previous is not None and previous.key == key and user32.IsWindow(previous.hwnd):
+                    # Enumeration missed a taskbar that still exists (Start/Search raised it):
+                    # keep its geometry and retry, rather than closing its blocks.
+                    waiting[key], bars[key] = previous.hwnd, previous
+                    continue
                 if entry is None and "main" not in wanted and "main" not in bars:
                     entry = next((t for t in found if t[1] == "main"), None)
                 if entry is not None:
-                    previous = self.bars.get(key)
-                    if not user32.IsWindowVisible(entry[0]):
+                    if auto_hide():
+                        bar = None
+                    elif not user32.IsWindowVisible(entry[0]):
                         waiting[key] = entry[0]
                         # A fullscreen transition is temporary. Keep the last geometry
                         # so its coverage transition can bring existing blocks back.
                         bar = previous if previous is not None and previous.hwnd == entry[0] else None
                     else:
-                        bar = read_bar(*entry, previous=previous, measurements=self.measurements)
+                        try:
+                            bar = read_bar(*entry, previous=previous, measurements=self.measurements)
+                        except TaskbarReadPending:
+                            waiting[key] = entry[0]
+                            bar = previous if previous is not None and previous.hwnd == entry[0] else None
                     if bar is not None:
                         bars[key] = bar
             self.bars, self.waiting, self.stale = bars, waiting, False
             self.measurements.retain(entry[0] for entry in found)
             self.covered = {key: value for key, value in self.covered.items() if key in bars}
-        self.follow_taskbar()
+        self.follow_taskbar(retry_waiting=False)
         shown = set()
         for key, bar in self.bars.items():
             slots = wanted.get(key) or [None, None]

@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace as NS
 from unittest.mock import Mock, patch
 
@@ -160,7 +161,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view.tray.state["taskbarLayout"] = {"right": ["claude", None]}
         bar = tb.Bar(222, "right", "Right display", (1920, 1000, 3840, 1048), 1, 1928, 3700, [], False, True)
         view.bars["right"] = bar
-        block = Mock(hwnd=456, closing=False, x=2000, size=(100, 44), bar=bar, slot="claude")
+        block = Mock(hwnd=456, closing=False, hosted=None, x=2000, size=(100, 44), bar=bar, slot="claude")
         view.blocks[("right", 0)] = block
         visible = {"value": False}
         with patch.object(tb, "taskbars", return_value=[(222, "right", "Right display")]), \
@@ -228,7 +229,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view = self.view()
         view.bars = {"main": NS(hwnd=123, rect=(0, 1000, 1920, 1048))}
         view.covered = {"main": False}
-        view.blocks[("main", 0)] = NS(hwnd=456, closing=False, x=100, size=(200, 44))
+        view.blocks[("main", 0)] = NS(hwnd=456, closing=False, hosted=None, x=100, size=(200, 44))
         with patch.object(tb.user32, "IsWindow", return_value=True), \
                 patch.object(tb, "taskbar_covered", return_value=False), \
                 patch.object(tb.user32, "IsWindowVisible", side_effect=lambda hwnd: hwnd == 123), \
@@ -241,7 +242,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view = self.view()
         view.bars = {"main": NS(hwnd=123, rect=(0, 1000, 1920, 1048))}
         view.covered = {"main": True}
-        view.blocks[("main", 0)] = NS(hwnd=456, closing=False, x=100, size=(200, 44))
+        view.blocks[("main", 0)] = NS(hwnd=456, closing=False, hosted=None, x=100, size=(200, 44))
         with patch.object(tb.user32, "IsWindow", return_value=True), \
                 patch.object(tb, "taskbar_covered", return_value=True), \
                 patch.object(tb.user32, "IsWindowVisible", return_value=True), \
@@ -254,7 +255,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
     def test_uncovered_blocks_keep_recovery_timer_without_layout_polling(self):
         view = self.view()
         view.bars = {"right": NS(hwnd=222, rect=(1920, 1000, 3840, 1048))}
-        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, x=2000, size=(200, 44))
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, hosted=None, x=2000, size=(200, 44))
         with patch.object(tb.user32, "IsWindow", return_value=True), \
                 patch.object(tb.user32, "IsWindowVisible", return_value=True), \
                 patch.object(tb, "taskbar_covered", return_value=False), \
@@ -269,7 +270,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
     def test_hidden_owner_keeps_secondary_block_hidden_until_layout_refresh(self):
         view = self.view()
         view.bars = {"right": NS(hwnd=222, rect=(1920, 1000, 3840, 1048))}
-        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, x=2000, size=(200, 44))
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, hosted=None, x=2000, size=(200, 44))
         with patch.object(tb.user32, "IsWindow", return_value=True), \
                 patch.object(tb.user32, "IsWindowVisible", side_effect=lambda hwnd: hwnd == 456), \
                 patch.object(tb, "taskbar_covered") as coverage, \
@@ -288,16 +289,8 @@ class TaskbarRecoveryTests(unittest.TestCase):
         view.follow_taskbar.assert_called_once()
 
     def test_secondary_taskbar_stays_on_its_display_while_hidden(self):
-        def windows(callback, _):
-            callback(222, 0)
-
-        def name(hwnd, buffer, count):
-            buffer.value = "Shell_SecondaryTrayWnd"
-            return len(buffer.value)
-
         with patch.object(tb.user32, "FindWindowW", return_value=111), \
-                patch.object(tb.user32, "EnumWindows", side_effect=windows), \
-                patch.object(tb.user32, "GetClassNameW", side_effect=name), \
+                patch.object(tb.user32, "FindWindowExW", side_effect=lambda parent, after, *_: None if after else 222), \
                 patch.object(tb.user32, "IsWindowVisible", return_value=False), \
                 patch.object(tb, "window_rect", side_effect=lambda h: (0, 1000, 1920, 1048) if h == 111 else (1920, 1000, 3840, 1048)):
             self.assertEqual(tb.taskbars(), [(111, "main", "Main display"), (222, "right", "Right display")])
@@ -317,6 +310,59 @@ class TaskbarRecoveryTests(unittest.TestCase):
         self.assertEqual(view.bars, {})
         self.assertEqual(view.waiting, {"right": 222})
         block.close.assert_called_once()
+
+    def two_displays(self):
+        view = self.view()
+        view.tray.state["taskbarLayout"] = {"main": ["claude", None], "right": ["codex", None]}
+        main = tb.Bar(111, "main", "Main display", (0, 1000, 1920, 1048), 1, 8, 1700, [], False, True)
+        right = tb.Bar(222, "right", "Right display", (1920, 1000, 3840, 1048), 1, 1928, 3700, [], False, True)
+        view.bars = {"main": main, "right": right}
+        for key, bar, hwnd in (("main", main, 333), ("right", right, 444)):
+            view.blocks[(key, 0)] = Mock(hwnd=hwnd, closing=False, hosted=None, x=bar.left, size=(100, 44), bar=bar,
+                                         slot="claude" if key == "main" else "codex")
+        return view, main, right
+
+    def desktop(self):
+        stack = ExitStack()
+        for name in ("SetTimer", "KillTimer", "ShowWindow", "SetWindowPos"):
+            stack.enter_context(patch.object(tb.user32, name))
+        for name in ("IsWindow", "IsWindowVisible"):
+            stack.enter_context(patch.object(tb.user32, name, return_value=True))
+        stack.enter_context(patch.object(tb, "auto_hide", return_value=False))
+        stack.enter_context(patch.object(tb, "taskbar_covered", return_value=False))
+        stack.enter_context(patch.object(tb, "block_needs_raise", return_value=False))
+        stack.enter_context(patch.object(tb.fr, "slot_account", return_value={"windows": [1]}))
+        stack.enter_context(patch.object(tb.fr, "block_width", return_value=100))
+        return stack
+
+    def test_secondary_missing_from_discovery_keeps_blocks_and_is_rediscovered(self):
+        view, main, right = self.two_displays()
+        with self.desktop(), \
+                patch.object(tb, "taskbars", return_value=[(111, "main", "Main display")]) as discovery, \
+                patch.object(tb, "read_bar", return_value=main):
+            view._sync()  # Start is open: enumeration skips the raised secondary taskbar
+            self.assertIs(view.bars["right"], right)
+            self.assertEqual(view.waiting, {"right": 222})
+            view.blocks[("right", 0)].close.assert_not_called()
+            discovery.return_value = [(111, "main", "Main display"), (222, "right", "Right display")]
+            view.on_timer(tb.TIMER_COVER, 0)
+            view.on_timer(tb.TIMER_LAYOUT, 0)
+            self.assertEqual(view.waiting, {})
+            self.assertIn("right", view.bars)
+
+    def test_unreadable_visible_secondary_keeps_geometry_and_retries(self):
+        view, main, right = self.two_displays()
+        with self.desktop(), \
+                patch.object(tb, "taskbars", return_value=[(111, "main", "Main display"), (222, "right", "Right display")]), \
+                patch.object(tb, "read_bar", side_effect=[main, tb.TaskbarReadPending(), main, right]) as read:
+            view._sync()
+            self.assertIs(view.bars["right"], right)
+            self.assertEqual(view.waiting, {"right": 222})
+            view.blocks[("right", 0)].close.assert_not_called()
+            view.on_timer(tb.TIMER_COVER, 0)
+            view.on_timer(tb.TIMER_LAYOUT, 0)
+            self.assertEqual(read.call_count, 4)
+            self.assertEqual(view.waiting, {})
 
     def test_blocks_are_owned_by_our_tray_instead_of_explorer(self):
         view = self.view()
@@ -401,7 +447,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
     def test_unexpected_secondary_block_hide_queues_recovery_without_activation(self):
         view = self.view()
         view.covered = {"main": False, "right": False}
-        view.blocks[("right", 0)] = NS(hwnd=456, closing=False)
+        view.blocks[("right", 0)] = NS(hwnd=456, closing=False, hosted=None)
         with patch.object(tb.user32, "SetTimer") as timer, \
                 patch.object(tb.user32, "GetClassNameW") as name, \
                 patch.object(tb.time, "monotonic", return_value=100):
@@ -413,7 +459,7 @@ class TaskbarRecoveryTests(unittest.TestCase):
     def test_covered_closing_or_animating_blocks_do_not_restart_layout(self):
         view = self.view()
         view.covered = {"right": True}
-        block = NS(hwnd=456, closing=False)
+        block = NS(hwnd=456, closing=False, hosted=None)
         view.blocks[("right", 0)] = block
         with patch.object(tb.user32, "SetTimer") as timer, patch.object(tb.user32, "GetClassNameW") as name:
             view.on_window_event(99, tb.EVENT_OBJECT_HIDE, 456, 0, 0, 0, 0)
@@ -473,7 +519,7 @@ class NativeTaskbarRecoveryTests(unittest.TestCase):
         self.owner, self.block = owner, block
         self.view = tb.TaskbarView(NS())
         self.view.bars = {"right": NS(hwnd=owner, rect=(-30000, -30000, -29800, -29960))}
-        self.view.blocks = {("right", 0): NS(hwnd=block, closing=False, x=-30000, size=(200, 40))}
+        self.view.blocks = {("right", 0): NS(hwnd=block, closing=False, hosted=None, x=-30000, size=(200, 40))}
         self.view.covered = {"right": False}
         for name in ("SetTimer", "KillTimer"):
             timer = patch.object(tb.user32, name)
