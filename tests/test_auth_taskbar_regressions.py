@@ -626,6 +626,19 @@ class NativeTaskbarRecoveryTests(unittest.TestCase):
         tb.user32.DestroyWindow(fake_explorer)
         self.assertTrue(tb.user32.IsWindow(block.hwnd))
 
+    def test_host_waits_for_a_restarted_explorers_taskbar(self):
+        """A frame for a taskbar Explorer just destroyed must not end hosting for the session."""
+        from account_switcher import taskbar_host_win as hw
+        events = []
+        host = hw.HostWindows(0, events.append)
+        gone = hw.user32.CreateWindowExW(0, "STATIC", "", 0, 0, 0, 1, 1, None, None, None, None)
+        hw.user32.DestroyWindow(gone)
+        frame = dict(id="main", parent=gone, x=0, y=0, width=1, height=1, rgba=b"\0" * 4)
+        host.update(frame)
+        self.assertEqual(events, [])
+        self.assertEqual(host.waiting, {"main": frame})
+        hw.user32.DestroyWindow(host.control)
+
 
 if __name__ == "__main__":
     unittest.main()

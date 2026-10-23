@@ -146,9 +146,10 @@ class HostWindows:
                                           0, 0, 1, 1, parent, None, kernel32.GetModuleHandleW(None), None)
             if not hwnd:
                 error = ctypes.get_last_error()
-                if error == 5:
+                if error == 5 or not user32.IsWindow(parent):
                     # Access denied: Start or Search has the taskbar in a higher band, and Explorer
                     # can leave it there a while. A child made earlier survives; retry until then.
+                    # Or Explorer restarted and this taskbar is gone: the tray sends the new one.
                     self.waiting[block_id] = frame
                 else:
                     self.write(dict(type="failed", id=block_id, reason="create", error=error, retry=False))

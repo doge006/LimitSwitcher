@@ -671,7 +671,7 @@ class TaskbarView:
                 block._destroy()  # Explorer restarted: shown again on its new taskbar
                 self.later(100)
             elif item["type"] == "failed" and not item.get("retry", True):
-                log.warning("taskbar host unavailable (%s); using popups", item.get("reason"))
+                log.warning("taskbar host unavailable (%s, error %s); using popups", item.get("reason"), item.get("error"))
                 self.stop_host()
                 self.host_failed = True
                 self.later(100)
