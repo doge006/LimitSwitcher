@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.18](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.18) (2026-10-22)
+
+- Fixed: after Explorer restarted, the taskbar blocks could switch to floating windows for the rest of the session and flicker out whenever Start or Search opened. They now wait for the new taskbar and appear on it.
+
 ## [1.4.17](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.17) (2026-10-19)
 
 - Fixed: taskbar blocks disappeared while Start or Search was open, and sometimes stayed hidden after Start closed until the next click or window switch. They are now drawn inside the taskbar by a small helper process. LimitSwitcher itself stays separate from Explorer, and the blocks fall back to floating windows if the helper can't run.
