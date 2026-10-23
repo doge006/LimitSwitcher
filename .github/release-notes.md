@@ -1,28 +1,15 @@
-The app offers it in Settings → **Update to 1.4.17** (or download below).
+The app offers it in Settings → **Update to 1.4.18** (or download below).
 
-## Taskbar blocks stay visible over Start and Search
+## Taskbar blocks survive an Explorer restart
 
-Opening Start or Search raises Windows' taskbar into a layer that ordinary windows can't reach. Explorer sometimes keeps it there after Start closes, until you click the taskbar or switch windows. The usage blocks were ordinary windows, so they went behind the taskbar during that time.
+When Explorer restarted (after a crash, or a manual restart), LimitSwitcher could try to add its blocks to the old taskbar in the moment before the new one appeared. Windows refused, and LimitSwitcher switched to the floating-window fallback for the rest of the session. Those floating windows go behind the taskbar whenever Start or Search opens, so the blocks flickered in and out until LimitSwitcher was restarted.
 
-The blocks are now drawn inside the taskbar itself, so they move with it. A small helper process shows them, and LimitSwitcher sends it only the rendered pixels and receives its mouse events. LimitSwitcher itself stays separate from Explorer.
-
-- The helper is replaced if it stops responding for 2 seconds.
-- If the helper can't run, the blocks fall back to the previous floating windows.
-- While the taskbar is still raised, Windows doesn't allow new blocks to be added. They appear as soon as it settles.
-
-## Taskbar recovery
-
-- A taskbar that briefly drops out of Windows' window list, or can't be read for a moment, keeps its blocks and is checked again. Before, its blocks were closed.
-- A failed taskbar measurement keeps the last good one, instead of falling back to an estimate that could remove a block.
+The blocks now wait for the new taskbar and appear on it, as they already did while Start had the taskbar raised. If the helper does fall back to floating windows, the log now records the Windows error code.
 
 ## Validation
 
-- **Tests:** 440 ran with 15 skips. The one error, in a mod process test, occurs identically without these changes. The Python and Claude Code mod checks passed on GitHub.
-- **On a Windows 11 desktop with two displays:**
-  - The blocks stayed drawn with Start open.
-  - The hand cursor held while hovering.
-  - Clicking a block opened the panel, and right-clicking opened LimitSwitcher's menu.
-  - The helper used about 13 MB of memory and no measurable CPU while idle.
+- **Tests:** a new regression test sends the helper a frame for a destroyed taskbar; it fails without this change and passes with it. The full suite ran 441 tests with 15 skips; the one error, in a mod process test, occurs identically without these changes.
+- **On a Windows 11 desktop with two displays:** after the update, the blocks were children of both taskbars and stayed visible and on top with Start open.
 
 ## Download
 
