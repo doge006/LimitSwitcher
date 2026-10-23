@@ -6,12 +6,11 @@ The mark: a gauge (Codex's violet into Claude's orange) with its needle heading 
 on a dark tile. Written as
   switcher.png      256 px, the tile filling the image (in-app header, tray, web favicon)
   switcher.ico      Windows sizes, 16-256 px
-  appicon-mac.png   1024 px on the macOS icon grid (824 px squircle, soft shadow), for the Dock
 """
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw
 
 ASSETS = Path(__file__).resolve().parent.parent / "account_switcher" / "static" / "assets"
 SS = 4  # supersampling
@@ -21,7 +20,7 @@ VIOLET = ((120, 150, 255), (150, 110, 250))    # Codex (blue to violet)
 
 
 def squircle(size, exponent=5.0):
-    """A superellipse mask (the macOS icon shape), size x size."""
+    """A superellipse mask (a rounded square), size x size."""
     mask = Image.new("L", (size, size), 0)
     half = size / 2
     points = []
@@ -93,20 +92,7 @@ def tile(size):
     return base.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def mac_icon():
-    """1024 px on the macOS grid: an 824 px squircle, centred slightly high, with a soft shadow."""
-    canvas = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    body = tile(824)
-    shadow = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
-    shadow.paste((0, 0, 0, 110), (100, 112), body.getchannel("A"))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(18))
-    canvas.alpha_composite(shadow)
-    canvas.alpha_composite(body, (100, 92))
-    return canvas
-
-
 if __name__ == "__main__":
     tile(256).save(ASSETS / "switcher.png")
     tile(256).save(ASSETS / "switcher.ico", sizes=[(s, s) for s in (16, 20, 24, 32, 40, 48, 64, 128, 256)])
-    mac_icon().save(ASSETS / "appicon-mac.png")
-    print("wrote", ", ".join(p.name for p in (ASSETS / "switcher.png", ASSETS / "switcher.ico", ASSETS / "appicon-mac.png")))
+    print("wrote", ", ".join(p.name for p in (ASSETS / "switcher.png", ASSETS / "switcher.ico")))

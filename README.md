@@ -2,11 +2,11 @@
 
 [![Tests](https://github.com/doge006/LimitSwitcher/actions/workflows/tests.yml/badge.svg)](https://github.com/doge006/LimitSwitcher/actions/workflows/tests.yml)
 [![Latest release](https://img.shields.io/github/v/release/doge006/LimitSwitcher)](https://github.com/doge006/LimitSwitcher/releases/latest)
-![Platforms](https://img.shields.io/badge/platform-Windows%20%7C%20macOS-informational)
+![Platforms](https://img.shields.io/badge/platform-Windows-informational)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
-A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit, so a long task keeps going.
+A Windows tray app that shows every Claude Code and Codex usage limit at a glance, switches accounts in one click, and can switch automatically when the account in use hits a limit, so a long task keeps going.
 
 ![The full view](docs/media/demo.gif)
 
@@ -24,7 +24,7 @@ A Windows tray / macOS menu bar app that shows every Claude Code and Codex usage
 - **Separate accounts per window**: `/swapaccount <name>` puts one Claude Code window on another account (its own limits), everything else as usual; or every new terminal gets an account of its own.
 - **Jev compaction** (optional): before a swapped session continues, compresses exact repeats and prunes older tool outputs with Jev. Preserves original inputs and needed evidence ahead of size targets. Savings and remaining information-loss limits are documented in [the compaction guide](docs/claude-code-mod.md#jev-compaction).
 - **Live usage in Claude Code's status line,** through an optional Claude Code mod.
-- **Lightweight:** native windows, no browser or Electron. About 13 MB in the Windows tray and 47 MB in the macOS menu bar, with no CPU use between checks ([measurements](docs/performance.md)).
+- **Lightweight:** native windows, no browser or Electron. About 13 MB in the Windows tray, with no CPU use between checks ([measurements](docs/performance.md)).
 - **Checking usage uses none of your quota:** it reads the same read-only endpoints as Claude Code's `/usage` and ChatGPT's usage page.
 
 ## Why
@@ -41,19 +41,9 @@ Windows may say "Windows protected your PC" the first time, because the installe
 
 Your accounts and settings are kept in `%LOCALAPPDATA%\LimitSwitcher`, so updating, reinstalling or uninstalling keeps them. Uninstall from **Settings → Apps**; it closes the app and puts the Codex and Claude Code settings back first.
 
-### Install (macOS)
+### macOS
 
-Paste this into Terminal:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/install-mac.sh | bash
-```
-
-It downloads the app (for Apple silicon Macs: M1 or later) from the [latest release](https://github.com/doge006/LimitSwitcher/releases/latest), puts **LimitSwitcher** in Applications and opens it. It brings its own Python, so nothing else is needed. Running the same command again updates it.
-
-Prefer to click? Download `LimitSwitcher-AppleSilicon.dmg` from the latest release and drag the app to Applications. The app isn't notarized by Apple (that needs a paid developer account), so macOS blocks it the first time: open **System Settings → Privacy & Security** and click **Open Anyway**. The Terminal command avoids that, because macOS only checks apps downloaded by a browser.
-
-It lives in the menu bar (no Dock icon) and starts there when you log in. Your accounts and settings are kept in `~/Library/Application Support/LimitSwitcher`.
+Mac support has ended. [1.4.19](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.19) is the last version with a Mac app, and an installed Mac copy stays on it.
 
 ### Updates
 
@@ -67,22 +57,21 @@ LimitSwitcher is a single Python process. It polls each provider's usage endpoin
 |---|---|
 | App core | Python: account model, usage clients, Codex router (`127.0.0.1`), local API |
 | Windows UI | Win32 layered windows through `ctypes`, drawn with Pillow; taskbar view, tray panel, full view |
-| macOS UI | AppKit through PyObjC: a WebKit menu bar popover, and a Core Graphics full view in its own process |
-| Secrets | Windows DPAPI, the macOS Keychain |
+| Secrets | Windows DPAPI |
 | Claude Code mod | Two TypeScript plugins (`mods/`): session activity, toasts, Jev compaction |
-| Packaging | Inno Setup with a small C launcher (Windows); a self-contained, ad-hoc signed `.app` in a DMG (macOS) |
-| CI | GitHub Actions: unit and plugin tests on every push; installer, smoke and performance tests on real Windows 10/11 and macOS runners |
+| Packaging | Inno Setup with a small C launcher |
+| CI | GitHub Actions: unit and plugin tests on every push; installer, smoke and performance tests on real Windows 10/11 runners |
 
 More detail:
 
-- **[Using LimitSwitcher](docs/usage.md):** accounts, switching, per-window accounts, Auto swap and Auto resume, the tray and menu bar, Settings.
+- **[Using LimitSwitcher](docs/usage.md):** accounts, switching, per-window accounts, Auto swap and Auto resume, the tray, Settings.
 - **[How it works](docs/how-it-works.md):** architecture, exactly what the app changes in Claude Code's and Codex's config, rate limits, storage and privacy.
 - **[Claude Code mod and Jev compaction](docs/claude-code-mod.md):** setup and benchmarks.
 - **[Performance](docs/performance.md):** measured memory and CPU, and how to measure it yourself.
 
 ## Privacy
 
-Saved logins are encrypted (DPAPI on Windows, the Keychain on macOS) and never leave your machine except to the providers' own usage and token endpoints. The local API listens on `127.0.0.1` only and needs a per-run token. Check the providers' terms for using several subscriptions this way; that's your call.
+Saved logins are encrypted (Windows DPAPI) and never leave your machine except to the providers' own usage and token endpoints. The local API listens on `127.0.0.1` only and needs a per-run token. Check the providers' terms for using several subscriptions this way; that's your call.
 
 ## Development
 

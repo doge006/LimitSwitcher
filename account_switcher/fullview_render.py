@@ -146,17 +146,8 @@ def credits_items(account):
 
 
 # ---------- text metrics ----------
-_measure = None  # a platform's own text measure (the macOS full view: Core Text); None: FreeType
-
-
-def set_measure(measure):
-    """Width of a label as the platform draws it: text_w(value, size, bold) in logical px."""
-    global _measure
-    _measure = measure
-
-
 def text_w(value, size, bold=False):
-    return _measure(value, size, bold) if _measure else fr.text_w(value, size, bold)
+    return fr.text_w(value, size, bold)
 
 
 def fit(value, size, bold, width):
@@ -355,47 +346,6 @@ class Canvas:
         self.image.alpha_composite(rounded, (self.px(x) - self.ox, self.px(y) - self.oy))
 
 
-class Recorder:
-    """The Canvas calls, kept (logical px) to be replayed by a platform's own painter instead of
-    drawn into pixels here. Colours are resolved as Canvas resolves them (alpha text and hairlines
-    are blended over the background), so a replay needs no more than the calls."""
-
-    def __init__(self, scale, bg):
-        self.s, self.bg, self.ops = scale, bg, []
-
-    def px(self, v):
-        return round(v * self.s)
-
-    def rect(self, x, y, w, h, r, fill):
-        self.ops.append(("rect", x, y, w, h, r, tuple(fill) if len(fill) == 4 else tuple(fill) + (255,)))
-
-    def outline(self, x, y, w, h, r, color, width=1):
-        self.ops.append(("outline", x, y, w, h, r, tuple(color) if len(color) == 4 else tuple(color) + (255,), width))
-
-    def dot(self, cx, cy, r, fill):
-        self.rect(cx - r, cy - r, 2 * r, 2 * r, r, fill)
-
-    def line(self, x, y, w, color):
-        self.ops.append(("line", x, y, w, over(self.bg, color) if len(color) == 4 else tuple(color)))
-
-    def text(self, x, y, value, size, fill, bold=False, anchor="ls", bg=None):
-        if len(fill) == 4:
-            fill = over(bg or self.bg, fill)
-        self.ops.append(("text", x, y, value, size, tuple(fill), bold, anchor))
-
-    def image_at(self, x, y, name, size):
-        self.ops.append(("image", x, y, name, size))
-
-    def glyph(self, kind, cx, cy, size, color):
-        self.ops.append(("glyph", kind, cx, cy, size, tuple(color), 0))
-
-    def spin_glyph(self, kind, cx, cy, size, color, degrees):
-        self.ops.append(("glyph", kind, cx, cy, size, tuple(color), degrees))
-
-    def mark(self, x, y, size, radius):
-        self.ops.append(("mark", x, y, size, radius))
-
-
 @lru_cache(maxsize=64)
 def glyph(kind, px, color):
     """Small line icons (caret, plus, refresh, check), drawn at 4x and reduced."""
@@ -503,14 +453,12 @@ def layout(state, width):
 
 # ---------- tiles ----------
 class Tile:
-    """A drawn part of the page: `image` (Pillow), or `ops` recorded for a platform's own painter
-    with the device `size` it covers and its `shape` (a card's rounded body and shadow)."""
+    """A drawn part of the page (a Pillow image) and what can be clicked in it."""
 
-    def __init__(self, image, hits, margin=0, live=(), ops=None, size=None, shape=None):
+    def __init__(self, image, hits, margin=0, live=()):
         self.image, self.hits, self.margin = image, hits, margin
         self.live = live  # parts drawn each frame on top (bars, percentages): [(kind, key, x, y, w, ...)]
-        self.ops, self.shape = ops, shape
-        self.width, self.height = image.size if image is not None else size
+        self.width, self.height = image.size
 
 
 def mixc(a, b, t):
@@ -572,13 +520,6 @@ def over_shadow(tile, card, m, band):
         tile.paste(card.crop(middle), (m + band, m + band))
 
 
-def record_card(account, w, h, scale, ui, name_mode, live, locked):
-    """draw_card as recorded drawing calls, for a platform's own painter (no pixels here)."""
-    m = round(SHADOW * scale)
-    c = Recorder(scale, SURFACE)
-    hits, live_parts, border, spent = card_content(c, account, w, h, ui, name_mode, live, locked)
-    return Tile(None, hits, m, [part + (spent,) for part in live_parts], ops=c.ops,
-                size=(round(w * scale) + 2 * m, round(h * scale) + 2 * m), shape=("card", w, h, border, spent))
 
 
 def card_content(c, account, w, h, ui, name_mode, live, locked):
@@ -814,9 +755,6 @@ def draw_topbar(state, w, scale, ui):
     return Tile(image, topbar_content(Canvas(image, scale, BG), state, w, ui))
 
 
-def record_topbar(state, w, scale, ui):
-    c = Recorder(scale, BG)
-    return Tile(None, topbar_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(TOPBAR_H * scale)))
 
 
 def topbar_content(c, state, w, ui):
@@ -910,10 +848,6 @@ def draw_group(data, w, scale):
     return Tile(image, [])
 
 
-def record_group(data, w, scale):
-    c = Recorder(scale, BG)
-    group_content(c, data, w)
-    return Tile(None, [], ops=c.ops, size=(round(w * scale), round(GROUP_HEAD_H * scale)))
 
 
 def group_content(c, data, w):
@@ -958,9 +892,6 @@ def draw_windows(state, w, h, scale, ui):
     return Tile(image, windows_content(Canvas(image, scale, BG), state, w, ui))
 
 
-def record_windows(state, w, h, scale, ui):
-    c = Recorder(scale, BG)
-    return Tile(None, windows_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(h * scale)))
 
 
 def folder_name(cwd):
@@ -1040,9 +971,6 @@ def draw_empty(state, w, scale, ui):
     return Tile(image, empty_content(Canvas(image, scale, BG), state, w, ui))
 
 
-def record_empty(state, w, scale, ui):
-    c = Recorder(scale, BG)
-    return Tile(None, empty_content(c, state, w, ui), ops=c.ops, size=(round(w * scale), round(EMPTY_H * scale)))
 
 
 def empty_content(c, state, w, ui):
@@ -1081,7 +1009,7 @@ def release():
 
 # ---------- overlays: menus, the date editor, toasts ----------
 class Surface:
-    """Where overlays draw: the whole frame (Pillow here; macOS has its own with the same calls).
+    """Where overlays draw: the whole frame (Pillow).
     With `base` (the page the frame was made from, the same pixels until an overlay draws), a
     fade needs no copy of the frame, and `boxes` says which device areas the overlays drew in."""
 
@@ -1226,9 +1154,8 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     rows = list(SETTINGS)
     if state.get("mode") == "live":
         rows.append(PER_WINDOW)
-    if state.get("mode") == "live" and sys.platform in ("win32", "darwin"):
-        rows.append(("launchAtLogin", "Launch with " + ("macOS" if sys.platform == "darwin" else "Windows"),
-                     "Start in the tray at sign-in"))
+    if state.get("mode") == "live" and sys.platform == "win32":
+        rows.append(("launchAtLogin", "Launch with Windows", "Start in the tray at sign-in"))
     taskbar = bool(state.get("taskbarAvailable"))
     if taskbar:
         rows.append(("taskbar", "Taskbar view", "Show in-use, next-use, or fixed accounts"))

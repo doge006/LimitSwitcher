@@ -3,8 +3,7 @@
 After drawing (a panel, the menu, the full view) and at startup, the process holds pages it won't
 touch again until something is drawn next. Trimming the working set hands them back; if they are
 needed again, Windows brings them back from RAM (not disk), in microseconds. Private (committed)
-memory is unchanged. On macOS, freed large blocks (a closed full view's frames) stay counted
-against the app until malloc is asked to release them: malloc_zone_pressure_relief does that. Once, a few seconds after things settle; never while something is moving.
+memory is unchanged. Once, a few seconds after things settle; never while something is moving.
 """
 import gc
 import sys
@@ -25,12 +24,6 @@ def trim():
         kernel32.GetCurrentProcess.restype = ctypes.c_void_p
         kernel32.SetProcessWorkingSetSize.argtypes = (ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t)
         kernel32.SetProcessWorkingSetSize(kernel32.GetCurrentProcess(), ctypes.c_size_t(-1), ctypes.c_size_t(-1))
-    elif sys.platform == "darwin":
-        import ctypes
-        libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
-        libc.malloc_zone_pressure_relief.argtypes = (ctypes.c_void_p, ctypes.c_size_t)
-        libc.malloc_zone_pressure_relief.restype = ctypes.c_size_t
-        libc.malloc_zone_pressure_relief(None, 0)  # every zone, as much as possible
 
 
 def trim_soon(delay=5.0):

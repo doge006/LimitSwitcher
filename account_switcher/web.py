@@ -1,5 +1,5 @@
-"""The app's controller and its loopback API (Claude Code's status line and AFK hook, the macOS
-panel, a second launch asking the running copy to show its window). Standard library only."""
+"""The app's controller and its loopback API (Claude Code's status line and AFK hook, a second
+launch asking the running copy to show its window). Standard library only."""
 from collections import deque
 from dataclasses import asdict
 import json
@@ -35,7 +35,7 @@ class Controller:
         self.log_total = 0
         self.pending = False
         self.afk = False
-        self.compact = False  # the tray / menu bar panel shows only the accounts in use
+        self.compact = False  # the tray panel shows only the accounts in use
         self.taskbar = True   # Windows: the accounts in use shown on the taskbar
         self.taskbar_display = "main"  # which display's taskbar
         self.taskbar_layout = None     # what each display's taskbar shows (taskbar_layout.py)
@@ -375,7 +375,7 @@ class Controller:
                     self.quit_app()  # the installer replaces the files once the app has closed, then starts it
             threading.Thread(target=install, daemon=True).start()
             return
-        if action == "startup":  # start at sign-in (Windows Run entry / macOS login item); instant
+        if action == "startup":  # start at sign-in (Windows Run entry); instant
             if not self.live:
                 raise ValueError("Starting at sign-in needs real-account mode")
             on = bool(body.get("on"))
@@ -801,12 +801,6 @@ def make_server(controller, port=0):
             if path in ("/assets/codex.png", "/assets/claude.png", "/assets/switcher.png"):
                 self.respond(200, (ASSETS / path.lstrip("/")).read_bytes(), "image/png")
                 return
-            assets = {"/menu": ("menu.html", "text/html; charset=utf-8"), "/menu.js": ("menu.js", "text/javascript; charset=utf-8"),
-                      "/menu.css": ("menu.css", "text/css; charset=utf-8")}  # the macOS panel
-            if path in assets:
-                name, mime = assets[path]
-                self.respond(200, (ASSETS / name).read_bytes(), mime)
-                return
             if path != "/api/state" or not self.authorized():
                 if path != "/api/state":
                     self.respond(404, {"error": "Unknown route"})
@@ -824,7 +818,7 @@ def make_server(controller, port=0):
         def do_POST(self):
             app_token = secrets.compare_digest(self.headers.get("Authorization", ""), "Bearer " + token)
             if self.path == "/api/statusline" and not app_token:  # Claude Code's status line script: live usage, narrow token
-                # (with the app's own token it's the Settings switch, like any other action; the Mac full view uses it)
+                # (with the app's own token it's the Settings switch, like any other action)
                 if self.headers.get("Host") != self.server.expected_host or not secrets.compare_digest(
                         self.headers.get("Authorization", ""), "Bearer " + self.server.hook_token):
                     self.respond(403, {"error": "Forbidden"})

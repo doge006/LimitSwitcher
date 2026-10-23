@@ -19,11 +19,11 @@ flowchart LR
         CC["Claude Code sessions"]
         CX["Codex sessions"]
         subgraph App["LimitSwitcher"]
-            UI["Tray / menu bar UI<br/>(native drawing)"]
+            UI["Tray UI<br/>(native drawing)"]
             Live["Account model<br/>usage polling, Auto swap"]
             Router["Codex router<br/>127.0.0.1"]
             API["Local API<br/>(per-run token)"]
-            Vault["Encrypted logins<br/>DPAPI / Keychain"]
+            Vault["Encrypted logins<br/>DPAPI"]
         end
     end
     Anthropic["Anthropic<br/>usage + token endpoints"]
@@ -41,12 +41,12 @@ flowchart LR
 ```
 
 - **One Python process** holds the account model (`live.py`, `core.py`), the usage clients (`providers.py`, with long-lived HTTPS connections in `connections.py`), the Codex router (`codex_proxy.py`) and a small local API (`web.py`) that Claude Code's status line, hooks and the optional mod talk to.
-- **The UI is native.** On Windows the panel, menus, taskbar view and full view are layered Win32 windows drawn with Pillow (`flyout_render.py`, `fullview_render.py`). On macOS the menu bar panel is a WebKit popover and the full view is drawn with Core Graphics in a second process that only exists while it's open.
+- **The UI is native.** On Windows the panel, menus, taskbar view and full view are layered Win32 windows drawn with Pillow (`flyout_render.py`, `fullview_render.py`).
 - **Integrations are set up while the app runs and undone on quit** (`integrations.py`): the Codex config lines, the Claude Code hook and the status line.
 
 ## Switching accounts
 
-- *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json` (on macOS, the "Claude Code-credentials" Keychain item). A running Claude Code notices and uses it on its next request. Switches hold Claude Code's own login locks, so a renewal Claude Code has in progress finishes first and its fresh single-use refresh token isn't lost.
+- *Claude Code:* the app saves the outgoing account's newest tokens and writes the chosen login into `~/.claude/.credentials.json` + `~/.claude.json`. A running Claude Code notices and uses it on its next request. Switches hold Claude Code's own login locks, so a renewal Claude Code has in progress finishes first and its fresh single-use refresh token isn't lost.
 - *Codex:* the chosen login is written into `~/.codex/auth.json` (so new windows and Codex's `/status` show it), and while the app runs, Codex sends its requests through the app (a local router on `127.0.0.1`), which adds the chosen account's login. So a switch also applies to sessions that are already open, on their next request.
 - *On quit:* the app puts `~/.codex/config.toml` back exactly as it was, so Codex works without the app, on the chosen account.
 
@@ -98,7 +98,7 @@ LimitSwitcher shows itself in Claude Code's status line (the line under the prom
 
 ## Storage and privacy
 
-- **Saved logins are encrypted:** with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\LimitSwitcher`, and on macOS with a random key kept in your login Keychain, under `~/Library/Application Support/LimitSwitcher`.
+- **Saved logins are encrypted:** with Windows DPAPI (tied to your Windows user) under `%LOCALAPPDATA%\LimitSwitcher`.
 - **Nothing is sent anywhere** except the providers' own usage and token endpoints (and, only if you turn on Jev compaction, the masked tool outputs it judges to OpenRouter).
 - **The local API** listens on 127.0.0.1 only and needs a per-run token.
 - **Updating, reinstalling or uninstalling keeps your data.** The data folder was called `AccountSwitcher` before the app was renamed; an old folder is moved over by itself.

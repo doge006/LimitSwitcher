@@ -255,9 +255,10 @@ class FullViewTests(unittest.TestCase):
         windows = [{"id": "window-0000000a", "number": 1, "accountId": "claude-2", "cwd": "/x/proj", "model": "Opus",
                     "title": "Fix the login bug"},
                    {"id": "window-0000000b", "number": 2, "accountId": None, "cwd": "", "model": None}]
-        c = vr.Recorder(1, vr.BG)
+        c, texts = vr.Canvas(vr.Image.new("RGBA", (900, 600)), 1, vr.BG), []
+        draw_text = c.text
+        c.text = lambda x, y, value, *args, **kwargs: (texts.append(value), draw_text(x, y, value, *args, **kwargs))[1]
         vr.windows_content(c, state(perWindow=True, windows=windows), 900, self.view.ui)
-        texts = [op[3] if len(op) > 3 and isinstance(op[3], str) else None for op in c.ops]
         shown = " | ".join(t for t in texts if t)
         self.assertIn("Fix the login bug", shown)
         self.assertIn("Window 1 · proj · Opus", shown)  # the number the account cards use, then folder and model
@@ -377,7 +378,7 @@ class FullViewTests(unittest.TestCase):
             self.view.frame()
         self.assertEqual([s for s in sets if s[0] == "anim"], [("anim", fullview.ANIM_MS)])
         self.assertLess(fullview.ANIM_MS, 15.625)  # Windows' timer tick
-        del self.host.timers["anim"]  # a host whose timers fire once (macOS, Linux): set again
+        del self.host.timers["anim"]  # a host whose timers fire once (Linux): set again
         self.view.frame()
         self.assertIn("anim", self.host.timers)
 
@@ -587,77 +588,5 @@ class IncrementalDrawingTests(unittest.TestCase):
                 clock[0] += 7  # the toasts fade out and go
                 step(8, 0.03)
                 self.assertIsNone(views[0].shown)
-        finally:
-            controller.close()
-
-
-class FakePainter:
-    """Stands in for the macOS painter: keeps what it was asked to draw."""
-    OPS = {"rect", "outline", "line", "text", "image", "glyph", "mark"}
-
-    def __init__(self, test):
-        self.test, self.tiles, self.live, self.overlays = test, [], [], 0
-
-    def background(self):
-        pass
-
-    def visible(self, box):
-        return True
-
-    def tile(self, tile, x, y, alpha):
-        self.test.assertIsNone(tile.image)  # recorded, never drawn into pixels
-        for op in tile.ops:
-            self.test.assertIn(op[0], self.OPS)
-        self.tiles.append((tile, x, y, alpha))
-
-    def canvas(self, bg):
-        from account_switcher import fullview_render as vr
-        rec = vr.Recorder(1.0, bg)
-        self.live.append(rec)
-        return rec
-
-    def surface(self):
-        painter = self
-
-        class Surface:
-            def canvas(self, bg):
-                painter.overlays += 1
-                return painter.canvas(bg)
-
-            def shadow(self, *args):
-                pass
-
-            def fade_begin(self, t):
-                return None
-
-            def fade_end(self, before, box, t):
-                pass
-        return Surface()
-
-
-class NativeDrawingTests(unittest.TestCase):
-    """The macOS full view records tiles as drawing calls and draws them itself."""
-
-    def test_native_frames_record_and_draw_everything(self):
-        from account_switcher.web import Controller
-        controller = Controller()
-        try:
-            view = fullview.FullView(controller, Host(), controller.snapshot())
-            view.native = True
-            view.resize(900, 600, 2.0)
-            painter = FakePainter(self)
-            boxes = view.draw_native(painter)
-            self.assertTrue(boxes)
-            cards = [t for t, *_ in painter.tiles if t.shape and t.shape[0] == "card"]
-            self.assertTrue(cards)
-            self.assertTrue(any(op[0] == "text" for t in cards for op in t.ops))
-            self.assertEqual(len(view.tiles), len(view.items))  # nothing kept but the recorded calls
-            view.activate("settings")
-            view.toast("Swapped", "ok")
-            for _ in range(10):
-                view.draw_native(painter)
-            self.assertGreater(painter.overlays, 0)
-            self.assertTrue(view.overlay_hits)
-            self.assertIsNone(view.last_page)  # no picture of the page
         finally:
             controller.close()

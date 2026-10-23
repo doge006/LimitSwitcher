@@ -3,7 +3,7 @@
     .venv\\Scripts\\python -m pip install psutil      (once; Windows)
     .venv\\Scripts\\python scripts\\measure.py         (60 s; --seconds N to change)
 
-macOS: .venv/bin/python3 in place of .venv\\Scripts\\python. Leave the app alone while it runs
+Leave the app alone while it runs
 (or open the panel / full view first to measure those). It reports, for the app's process:
 - memory: working set (what Task Manager shows) and private memory (only this app's);
 - CPU: the share of one core used over the whole stretch, and the CPU time behind it;

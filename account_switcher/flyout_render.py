@@ -108,18 +108,11 @@ def status_note(account):
 # ---------- fonts & images ----------
 @lru_cache(maxsize=1)
 def _font_files():
-    """(regular, semibold) font files: Segoe UI on Windows, San Francisco on macOS, the desktop's
-    own sans-serif on Linux (fontconfig), DejaVu as the last resort."""
+    """(regular, semibold) font files: Segoe UI on Windows, the desktop's own sans-serif on Linux
+    (fontconfig), DejaVu as the last resort."""
     if sys.platform == "win32":
         fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
         return fonts / "segoeui.ttf", fonts / "seguisb.ttf"
-    if sys.platform == "darwin":
-        for name in ("SFNS.ttf", "SFNSText.ttf"):
-            path = Path("/System/Library/Fonts") / name
-            if path.exists():
-                return path, path  # a variable font: its Semibold instance is picked in font()
-        helvetica = Path("/System/Library/Fonts/HelveticaNeue.ttc")
-        return helvetica, helvetica
     dejavu = Path("/usr/share/fonts/truetype/dejavu")
     found = []
     for pattern in ("sans-serif", "sans-serif:weight=200"):  # 200: fontconfig's semibold
@@ -139,11 +132,11 @@ def font(size, bold, scale):
     path = semibold if bold else regular
     try:
         if path.suffix == ".ttc" and bold:
-            face = ImageFont.truetype(str(path), round(size * scale), index=1)  # Helvetica Neue Bold... close enough
+            face = ImageFont.truetype(str(path), round(size * scale), index=1)  # a collection: its second face is usually the bold one
         else:
             face = ImageFont.truetype(str(path), round(size * scale))
         if regular == semibold and path.suffix == ".ttf":
-            try:  # one variable font (San Francisco): pick the weight
+            try:  # one variable font: pick the weight
                 face.set_variation_by_name("Semibold" if bold else "Regular")
             except (OSError, ValueError, AttributeError):
                 pass

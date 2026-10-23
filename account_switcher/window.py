@@ -11,7 +11,7 @@ A window already started with an ANTHROPIC_BASE_URL of its own keeps it: the rou
 Everything else goes straight to the real `claude`, unchanged: subcommands (auth, mcp, update, ...),
 print mode (-p), a window already registered, the app not running, or the setting off.
 
-    python window.py <state file> [claude arguments...]     macOS, Linux: becomes `claude` (exec)
+    python window.py <state file> [claude arguments...]     Linux: becomes `claude` (exec)
     python window.py <state file> --env <file>              Windows: writes `set` lines for claude.cmd
 
 Standard library only; it must not import the app (it runs with every `claude`).

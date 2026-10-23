@@ -4,7 +4,6 @@
 - [Separate accounts per window](#separate-accounts-per-window)
 - [Auto swap and Auto resume](#auto-swap-and-auto-resume)
 - [The tray (Windows)](#the-tray-windows)
-- [The menu bar (macOS)](#the-menu-bar-macos)
 - [Settings](#settings)
 
 What the app changes on your machine, and how it talks to the providers, is in [How it works](how-it-works.md). The optional Claude Code mod and Jev compaction are in [Claude Code mod](claude-code-mod.md).
@@ -79,18 +78,6 @@ Claude Code. Normally every Claude Code window shares one account, and **Swap to
 - **Launching again:** opens the running copy's full view instead of starting a second copy.
 - **Quit** stops everything the app started and puts the Codex and Claude Code settings back. The app starts with Windows (Codex routing depends on it); Settings → **Launch with Windows** turns that off.
 
-## The menu bar (macOS)
-
-- **Menu bar:** the tray becomes a menu bar icon.
-  - Click it for the panel: it opens under the icon, with an arrow pointing at it, on the system's frosted popover material.
-  - Drag the panel by its header or background: away from the menu bar it stays open where you leave it (the arrow goes), and you can move it again any time. Its dock button (an arrow up to a bar) slides it back under the menu bar icon. Docked, clicking elsewhere or Esc closes it.
-  - Right-click (or Control-click) for the menu; **Full View…** opens the full view in its own native window.
-  - There's no Dock icon.
-- **Claude Code** keeps its login in the macOS Keychain ("Claude Code-credentials"). The app switches that item, and a running Claude Code picks it up on its next request.
-- **Codex** works exactly as on Windows (the local router, `~/.codex/auth.json`).
-- **Saved logins** are encrypted with a random key kept in your login Keychain, under `~/Library/Application Support/LimitSwitcher`.
-- **Start at login:** a LaunchAgent (`~/Library/LaunchAgents/com.accountswitcher.app.plist`).
-
 ## Settings
 
 ![Settings](media/settings.gif)
@@ -103,6 +90,6 @@ In the full view, the gear opens Settings:
 - **Reset alerts** (on by default; needs the Claude Code Status mod): when every Claude (or every Codex) account has hit its limit, a toast in each open Claude Code session says which one has room again as soon as its limit resets (within about 30 seconds). Nothing shows while another account still has room, since Auto swap already uses it.
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.
-- **Launch with Windows / macOS:** start in the tray when you sign in.
+- **Launch with Windows:** start in the tray when you sign in.
 - **Taskbar view** (Windows): choose each display's left and right blocks from dropdowns. Each block can show a provider's **in use** account, its **next use** account, a fixed saved account, or **Off**. Next use previews the next eligible Auto swap account using the same selection rules as switching; it updates as usage changes and hides the block when no replacement is available. The block is marked **Next use** so it can be distinguished from the current account.
 - **Check for updates / Update to …**
