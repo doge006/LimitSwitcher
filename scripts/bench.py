@@ -45,7 +45,7 @@ def run_part(root, part, *args):
 def peak_rss_mb():
     import resource
     peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return peak / (2**20 if sys.platform == "darwin" else 1024)
+    return peak / 1024
 
 
 def summary(times):

@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.20](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.20) (2026-10-23)
+
+- Changed: Mac support has ended; LimitSwitcher is Windows only. 1.4.19 is the last version with a Mac app, and an installed Mac copy that offers this update reinstalls 1.4.19.
+
 ## [1.4.19](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.19) (2026-10-22)
 
 - Fixed: taskbar blocks narrowed and widened back (flickered) whenever a window opened or closed. They now keep the last taskbar reading until the new one arrives.

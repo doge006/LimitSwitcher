@@ -37,8 +37,7 @@ def _short(path):
     return f'"{text}"' if " " in text else text  # no short name: quote (Git Bash, cmd)
 
 
-# The DMG's app runs with sys.dont_write_bytecode: its bundle must stay unchanged, so its helpers
-# get -B (don't write .pyc files) too.
+# An app run without writing .pyc files (-B, PYTHONDONTWRITEBYTECODE) passes that on to its helpers.
 _NO_PYC = " -B" if sys.dont_write_bytecode else ""
 
 

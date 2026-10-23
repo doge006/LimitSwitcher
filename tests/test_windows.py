@@ -27,7 +27,7 @@ class WindowTests(unittest.TestCase):
         self.home = root / "home"
         self.home.mkdir()
         self.api = FakeAPI()
-        claude, codex = Claude(home=self.home, keychain=False), Codex(home=self.home)
+        claude, codex = Claude(home=self.home), Codex(home=self.home)
         point_at_fake(claude, codex, self.api)
         self.providers = {"claude": claude, "codex": codex}
         self.vault = Vault(root / "store")
@@ -388,7 +388,7 @@ class WindowTests(unittest.TestCase):
         (that would sign it out), and a window given that account goes with that Claude Code's token."""
         folder = profiles.root(self.vault.root) / "window-1a2b3c4d"
         folder.mkdir(parents=True)
-        own = Claude(config_dir=folder, keychain=False)
+        own = Claude(config_dir=folder)
         b = self.account("b@example.com").id
         secret = self.vault.read_secret(b)
         secret["credentials"]["claudeAiOauth"].update(accessToken="at-b7", refreshToken="rt-b7", expiresAt=int(time.time() * 1000) + 60_000)
@@ -414,7 +414,7 @@ class WindowTests(unittest.TestCase):
             os.symlink(claude_home / "projects", folder / "projects", target_is_directory=True)
         except OSError:
             self.skipTest("no symlinks here (Windows without the right): .github/win_perwindow.py covers junctions")
-        own = Claude(config_dir=folder, keychain=False)
+        own = Claude(config_dir=folder)
         secret = self.vault.read_secret(self.account("b@example.com").id)
         secret["credentials"]["claudeAiOauth"].update(accessToken="at-b9", refreshToken="rt-b9")
         own.write_live(secret)
@@ -432,7 +432,7 @@ class SignatureTests(unittest.TestCase):
         """Windows keeps file times to about 15 ms: two logins written close together can share one."""
         with tempfile.TemporaryDirectory() as folder:
             home = Path(folder)
-            claude = Claude(home=home, keychain=False)
+            claude = Claude(home=home)
             claude_login(home, "uuid-b", "b@example.com", "at-b", "rt-b")
             before = claude.signature()
             stamps = [os.stat(path).st_mtime_ns for path in (claude.credentials_file, claude.config_file)]
@@ -554,7 +554,7 @@ class WrapperTests(unittest.TestCase):
 
 
 class OpenWindowTests(unittest.TestCase):
-    @unittest.skipIf(sys.platform in ("darwin", "win32"), "the Linux terminal path")
+    @unittest.skipIf(sys.platform == "win32", "the Linux terminal path")
     def test_new_window_starts_in_the_home_folder_with_the_routers_address(self):
         env = {"ANTHROPIC_BASE_URL": "http://127.0.0.1:1/s/w1", "LIMITSWITCHER_WINDOW": "w1"}
         with tempfile.TemporaryDirectory() as tmp, \

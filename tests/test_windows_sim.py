@@ -134,7 +134,7 @@ class WindowSimulation(unittest.TestCase):
         self.anthropic = FakeAnthropic(self)
         self.upstream = mock.patch.object(claude_router, "UPSTREAM", self.anthropic.base)
         self.upstream.start()
-        claude, codex = Claude(home=self.home, keychain=False), Codex(home=self.home)
+        claude, codex = Claude(home=self.home), Codex(home=self.home)
         point_at_fake(claude, codex, self.api)
         for name in EMAILS:
             self.set_usage(name, 10 * EMAILS.index(name) + 5, 20)
@@ -229,7 +229,7 @@ class WindowSimulation(unittest.TestCase):
         return next(w["accountId"] for w in self.m.windows() if w["id"] == window_id)
 
     def main_login(self):
-        login = Claude(home=self.home, keychain=False).read_live()
+        login = Claude(home=self.home).read_live()
         return login.email if login else None
 
     def assert_ordinary(self):
@@ -239,7 +239,7 @@ class WindowSimulation(unittest.TestCase):
             self.assertEqual(row["own"], self.main_login() if row is self.entries(step="turn")[-1] else row["own"])
 
     def assert_no_renewals_of_the_main_login(self):
-        main = Claude(home=self.home, keychain=False).read_live().secret["credentials"]["claudeAiOauth"]["refreshToken"]
+        main = Claude(home=self.home).read_live().secret["credentials"]["claudeAiOauth"]["refreshToken"]
         self.assertNotIn(main, {token for _, token in self.api.refreshes}, "the app renewed the main login")
 
     # ---------- the scenario ----------

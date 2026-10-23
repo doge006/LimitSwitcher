@@ -2,13 +2,12 @@
 
 VERSION is bumped for each release; the release workflow tags `v<VERSION>` and publishes
 LimitSwitcher-Setup.exe. An installed copy has its own Python in `runtime/` and the
-uninstaller next to it; the DMG's LimitSwitcher.app has them inside its bundle; a copy from
-source has `.git`.
+uninstaller next to it; a copy from source has `.git`.
 """
 from pathlib import Path
 import sys
 
-VERSION = "1.4.19"
+VERSION = "1.4.20"
 REPO = "doge006/LimitSwitcher"
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -16,8 +15,6 @@ ROOT = Path(__file__).resolve().parent.parent
 def install_kind():
     if (ROOT / "unins000.exe").exists():
         return "installer"
-    if ".app/Contents/Resources/" in str(ROOT) + "/":
-        return "mac-app"  # the DMG's LimitSwitcher.app
     if (ROOT / ".git").exists():
         return "git"
     return "other"

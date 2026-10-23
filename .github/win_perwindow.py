@@ -160,7 +160,7 @@ def legacy_folder():
         _winapi.CreateJunction(str(source / "projects"), str(profile / "projects"))
         os.link(source / "settings.json", profile / "settings.json")
         check(profiles._is_link(profile / "projects"), "a junction is seen as a link")
-        profiles.remove(profile, keychain=False)
+        profiles.remove(profile)
         check(not profile.exists(), "the old window's folder is gone")
         check((source / "projects" / "s.jsonl").exists() and (source / "settings.json").exists(),
               "removing it never touched ~/.claude")

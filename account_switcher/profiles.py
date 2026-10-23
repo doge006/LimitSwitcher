@@ -55,8 +55,8 @@ def key(path):
     return os.path.normcase(os.path.realpath(str(path)))
 
 
-def provider(directory, keychain=None):
-    return Claude(config_dir=directory, keychain=keychain)
+def provider(directory):
+    return Claude(config_dir=directory)
 
 
 def info(directory):
@@ -147,7 +147,7 @@ def keep_changes(directory, home=None):
     return True
 
 
-def remove(directory, keychain=None):
+def remove(directory):
     """Delete a 1.3.x window folder (its login taken back first: LiveAccounts._retire_profiles). The links go,
     never what they point at."""
     directory = Path(directory)
@@ -155,7 +155,6 @@ def remove(directory, keychain=None):
         keep_changes(directory)
     except OSError:
         pass  # never keeps the folder (and the account) from being freed
-    provider(directory, keychain).forget()
     for name in SHARED:  # the links themselves; rmtree must never walk into ~/.claude
         path = directory / name
         if os.path.islink(path):
@@ -168,21 +167,8 @@ def remove(directory, keychain=None):
 def open_window(env, folder, window_id, title="Claude Code"):
     """A new terminal window running `claude` with `env` (the router's address and the window's id),
     in the home folder like a terminal opened by hand. Returns what tells when it has closed:
-    {"pid"} or, on macOS (Terminal runs the script), {"pidFile", "script"}."""
+    {"pid"}."""
     home = str(Path.home())
-    if sys.platform == "darwin":
-        # Like "Add account": a .command file Terminal runs by itself (it has the user's PATH). Its
-        # shell writes its pid, then becomes `claude`.
-        folder = Path(folder)
-        folder.mkdir(parents=True, exist_ok=True)
-        script, pid_file = folder / f"{window_id}.command", folder / f"{window_id}.pid"
-        script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(pid_file)) + "\n"
-                          + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
-                          + f"cd {shlex.quote(home)}\n"
-                          + f"printf '\\033]0;%s\\007' {shlex.quote(title)}\nexec claude\n")
-        script.chmod(0o700)
-        subprocess.Popen(["/usr/bin/open", "-a", "Terminal", str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        return {"pidFile": str(pid_file), "script": str(script)}
     if not shutil.which("claude"):
         raise RuntimeError("Claude Code (claude) not found on PATH")
     if sys.platform == "win32":
@@ -276,7 +262,7 @@ def install_wrapper(vault_root, python, state_file):
     folder goes first on the user's PATH: add_to_path.) If the app's Python is gone (uninstalled),
     the wrapper steps aside and runs the real `claude`.
 
-    No process of the wrapper's stays: on macOS and Linux it becomes `claude` (exec); on Windows its
+    No process of the wrapper's stays: on Linux it becomes `claude` (exec); on Windows its
     Python only registers the window and writes the two variables to set into a file the .cmd reads,
     then the .cmd runs the real `claude` itself."""
     folder = wrapper_dir(vault_root)

@@ -22,9 +22,6 @@ class DataDirTests(unittest.TestCase):
         """(new, old, env, patches) for a platform, all under the temporary folder."""
         if platform == "win32":
             return self.base / "LimitSwitcher", self.base / "AccountSwitcher", {"LOCALAPPDATA": str(self.base)}
-        if platform == "darwin":
-            support = self.base / "Library" / "Application Support"
-            return support / "LimitSwitcher", support / "AccountSwitcher", {}
         return self.base / "limitswitcher", self.base / "account-switcher", {"XDG_DATA_HOME": str(self.base)}
 
     def call(self, platform, env):
@@ -35,7 +32,7 @@ class DataDirTests(unittest.TestCase):
             return vault.data_dir()
 
     def test_an_old_folder_is_moved_over_with_everything_in_it(self):
-        for platform in ("win32", "darwin", "linux"):
+        for platform in ("win32", "linux"):
             with self.subTest(platform=platform):
                 self.setUp()
                 new, old, env = self.where(platform)

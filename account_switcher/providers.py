@@ -13,9 +13,7 @@ import os
 from pathlib import Path
 import re
 import ssl
-import sys
 import time
-import unicodedata
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request
@@ -272,18 +270,12 @@ class Claude:
     CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
     SHARED_KEYS = ("mcpOAuth", "mcpOAuthClientConfig", "mcpXaaIdp", "mcpXaaIdpConfig", "pluginSecrets")
 
-    def __init__(self, config_dir=None, home=None, keychain=None):
+    def __init__(self, config_dir=None, home=None):
         home = Path(home) if home else Path.home()
         custom = config_dir or os.environ.get("CLAUDE_CONFIG_DIR")
         self.config_dir = Path(custom) if custom else home / ".claude"
         self.config_file = (self.config_dir / ".claude.json") if custom else home / ".claude.json"
         self.credentials_file = self.config_dir / ".credentials.json"
-        # On macOS Claude Code keeps its login in the login Keychain, not in the file.
-        self.keychain = (sys.platform == "darwin") if keychain is None else keychain
-        suffix = "-" + hashlib.sha256(unicodedata.normalize("NFC", str(self.config_dir)).encode()).hexdigest()[:8] if custom else ""
-        self.keychain_service = "Claude Code-credentials" + suffix
-        user = os.environ.get("USER") or ""
-        self.keychain_account = user if re.fullmatch(r"[a-zA-Z0-9._-]+", user) else "claude-code-user"
 
     def locked(self):
         """Claude Code's own locks on its login (claude_locks.py), for the app's writes to it."""
@@ -291,11 +283,6 @@ class Claude:
         return claude_locks.held(self.config_dir, self.config_file)
 
     def _credentials_text(self):
-        if self.keychain:
-            from . import keychain
-            text = keychain.get(self.keychain_service, self.keychain_account)
-            if text:
-                return text
         try:
             return self.credentials_file.read_text(encoding="utf-8")
         except OSError:
@@ -310,9 +297,6 @@ class Claude:
         return data if isinstance(data, dict) else None
 
     def signature(self):
-        if self.keychain:
-            text = self._credentials_text() or ""
-            return hashlib.sha256(text.encode()).hexdigest(), _mtime(self.config_file)
         return _fingerprint(self.credentials_file), _mtime(self.config_file)
 
     def read_live(self):
@@ -345,11 +329,7 @@ class Claude:
             raise ProviderError("Claude's config file is unreadable; not switching")
         config = config or {}
         config["oauthAccount"] = secret["oauthAccount"]
-        if self.keychain:
-            from . import keychain
-            keychain.put(self.keychain_service, self.keychain_account, json.dumps(credentials))
-        else:
-            atomic_write(self.credentials_file, json.dumps(credentials, indent=2).encode(), private=True)
+        atomic_write(self.credentials_file, json.dumps(credentials, indent=2).encode(), private=True)
         atomic_write(self.config_file, json.dumps(config, indent=2).encode())
 
     def fetch(self, secret, allow_refresh, save=None):
@@ -472,12 +452,6 @@ class Claude:
 
     def login_command(self, directory):
         return ["claude", "auth", "login"], {"CLAUDE_CONFIG_DIR": str(directory)}
-
-    def forget(self):
-        """Remove an isolated sign-in's Keychain item once it has been saved (macOS)."""
-        if self.keychain:
-            from . import keychain
-            keychain.delete(self.keychain_service, self.keychain_account)
 
     def isolated(self, directory):
         return Claude(config_dir=directory)

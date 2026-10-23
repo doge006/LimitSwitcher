@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-import sys
 import threading
 import time
 import unittest
@@ -703,22 +702,6 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(self.by_email(restarted, "a@example.com").usage[0]["used"], 40)
         restarted.statusline({"five_hour": {"used_percentage": 99, "resets_at": time.time() + 3600}}, "idle")
         self.assertEqual(self.by_email(restarted, "a@example.com").usage[0]["used"], 40)
-
-    def test_mac_sign_in_opens_in_terminal(self):
-        m = self.manager()
-        started = []
-        with mock.patch.object(sys, "platform", "darwin"), \
-                mock.patch("account_switcher.live.subprocess.Popen", side_effect=lambda args, **kw: started.append(args) or mock.Mock()), \
-                mock.patch("account_switcher.live.threading.Thread"):
-            m.add("claude")
-        # Terminal runs a .command file by itself: it has the user's PATH and a window, and no
-        # permission to control Terminal is needed.
-        self.assertEqual(started[0][:3], ["/usr/bin/open", "-a", "Terminal"])
-        script = Path(started[0][3])
-        self.assertEqual(script.suffix, ".command")
-        text = script.read_text()
-        self.assertIn("export CLAUDE_CONFIG_DIR=", text)
-        self.assertIn("claude auth login", text)
 
     def test_a_service_hiccup_keeps_the_numbers_quietly(self):
         from account_switcher.providers import ProviderError

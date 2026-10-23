@@ -1,9 +1,8 @@
-"""The installer's platform-independent parts: updating the checkout safely, the macOS app
-bundle and login item. Uses throwaway git repositories; nothing is installed."""
+"""The installer's platform-independent parts: updating the checkout safely. Uses throwaway git
+repositories; nothing is installed."""
 import importlib.util
 import os
 from pathlib import Path
-import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -76,59 +75,6 @@ class CheckoutTests(unittest.TestCase):
         branches = self.installer.git("branch", "--list", "backup/*")
         self.assertIn("backup/update-", branches)
         self.assertFalse((self.clone / "mine.txt").exists())
-
-
-class MacBundleTests(unittest.TestCase):
-    def test_app_bundle_is_menu_bar_only_and_starts_the_venv(self):
-        installer = load_installer()
-        with tempfile.TemporaryDirectory() as tmp:
-            system, user = Path(tmp) / "system" / "LimitSwitcher.app", Path(tmp) / "user" / "LimitSwitcher.app"
-            system.parent.mkdir()
-            installer.MAC_APPS = (system, user)
-            installer.build_mac_app(user)  # an older install in ~/Applications
-            installer.mac_app()
-            self.assertEqual(installer.MAC_APP, system)  # writable: /Applications
-            self.assertFalse(user.exists())  # the old copy is removed
-            info = plistlib.loads((system / "Contents" / "Info.plist").read_bytes())
-            self.assertTrue(info["LSUIElement"])
-            self.assertEqual(info["LSArchitecturePriority"][0], "arm64")  # not Rosetta on Apple silicon
-            self.assertEqual(info["CFBundleExecutable"], "AccountSwitcher")
-            launcher = system / "Contents" / "MacOS" / "AccountSwitcher"
-            self.assertTrue(os.access(launcher, os.X_OK))
-            text = launcher.read_text()
-            self.assertIn("LimitSwitcher.pyw", text)
-            self.assertIn('>>"$LOG" 2>&1', text)
-            self.assertIn("arch -arm64", text)
-            self.assertIn("--at-login", text)  # a failed start leaves its error in app.log
-            self.assertTrue((system / "Contents" / "Resources" / "AppIcon.icns").exists())
-            done = subprocess.run(["sh", "-n", str(launcher)], capture_output=True, text=True)
-            self.assertEqual(done.returncode, 0, done.stderr)
-
-    def test_prebuilt_launcher_when_the_build_tools_cannot_link(self):
-        installer = load_installer()
-        self.assertTrue(installer.PREBUILT_LAUNCHER.is_file())  # universal build from CI, kept in the repo
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "LimitSwitcher"
-            self.assertTrue(installer.build_launcher(target, prebuilt_only=True))
-            self.assertEqual(target.read_bytes(), installer.PREBUILT_LAUNCHER.read_bytes())
-            self.assertTrue(os.access(target, os.X_OK))
-
-    def test_login_item(self):
-        from account_switcher import integrations
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(integrations.Path, "home", return_value=Path(tmp)):
-            integrations._set_launch_agent(True)
-            plist = plistlib.loads(integrations.launch_agent_path().read_bytes())
-            self.assertTrue(plist["RunAtLoad"])
-            self.assertTrue(plist["ProgramArguments"][1].endswith("LimitSwitcher.pyw"))
-            app = Path(tmp) / "LimitSwitcher.app"
-            (app / "Contents" / "MacOS").mkdir(parents=True)
-            (app / "Contents" / "MacOS" / "AccountSwitcher").write_text("")
-            with mock.patch.dict(os.environ, {"ACCOUNT_SWITCHER_APP": str(app)}):
-                integrations._set_launch_agent(True)  # started from the app: log in as the app
-            plist = plistlib.loads(integrations.launch_agent_path().read_bytes())
-            self.assertEqual(plist["ProgramArguments"], [str(app / "Contents" / "MacOS" / "AccountSwitcher"), "--at-login"])
-            integrations._set_launch_agent(False)
-            self.assertFalse(integrations.launch_agent_path().exists())
 
 
 if __name__ == "__main__":

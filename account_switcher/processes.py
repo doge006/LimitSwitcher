@@ -158,7 +158,7 @@ if sys.platform == "win32":
                 kernel32.CloseHandle(handle)
 
 
-# ---------- macOS / Linux ----------
+# ---------- Linux ----------
 def _ps():
     """[(pid, parent, seconds running, command)] from ps."""
     done = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,etime=,command="], capture_output=True, text=True, timeout=10)

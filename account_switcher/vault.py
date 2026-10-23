@@ -2,17 +2,12 @@
 
 Windows: DPAPI (CryptProtectData), tied to your Windows user; files under
 %LOCALAPPDATA%\\AccountSwitcher.
-macOS: encrypted with a random 256-bit key kept in your login Keychain; files under
-~/Library/Application Support/AccountSwitcher.
 Elsewhere (development): owner-only files, not encrypted.
 Nothing here ever leaves the machine.
 """
 import ctypes
-import hashlib
-import hmac
 import json
 import os
-import secrets
 from pathlib import Path
 import sys
 import tempfile
@@ -32,9 +27,6 @@ def data_dir():
         return Path(override)
     if sys.platform == "win32":
         base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        new, old = base / "LimitSwitcher", base / "AccountSwitcher"
-    elif sys.platform == "darwin":
-        base = Path.home() / "Library" / "Application Support"
         new, old = base / "LimitSwitcher", base / "AccountSwitcher"
     else:
         base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
@@ -87,42 +79,6 @@ if sys.platform == "win32":
         if not data.startswith(b"DPAPI"):
             raise ValueError("Not a DPAPI blob")
         return _call(_crypt32.CryptUnprotectData, data[5:])
-elif sys.platform == "darwin":
-    _key = None
-
-    def _master_key():
-        """A random key kept in the login Keychain, created on first use."""
-        global _key
-        if _key is None:
-            from . import keychain
-            # strict: a keychain that fails to answer must never be mistaken for "no key yet",
-            # or a new key would replace the one every saved login is encrypted with.
-            stored = keychain.get("Account Switcher", "vault-key", strict=True)
-            if not (stored and stored.startswith("k1:")):
-                stored = "k1:" + secrets.token_hex(32)
-                keychain.put("Account Switcher", "vault-key", stored)
-            _key = bytes.fromhex(stored[3:])
-        return _key
-
-    def _stream(key, nonce, length):
-        blocks = (length + 31) // 32
-        return b"".join(hmac.new(key, b"enc" + nonce + i.to_bytes(8, "big"), hashlib.sha256).digest()
-                        for i in range(blocks))[:length]
-
-    def protect(data: bytes) -> bytes:
-        """Encrypt-then-MAC with HMAC-SHA256 (counter-mode keystream + tag); stdlib only."""
-        key, nonce = _master_key(), secrets.token_bytes(16)
-        body = bytes(a ^ b for a, b in zip(data, _stream(key, nonce, len(data))))
-        tag = hmac.new(key, b"mac" + nonce + body, hashlib.sha256).digest()
-        return b"KCv1" + nonce + tag + body
-
-    def unprotect(data: bytes) -> bytes:
-        if not data.startswith(b"KCv1"):
-            raise ValueError("Unknown secret format")
-        key, nonce, tag, body = _master_key(), data[4:20], data[20:52], data[52:]
-        if not hmac.compare_digest(tag, hmac.new(key, b"mac" + nonce + body, hashlib.sha256).digest()):
-            raise ValueError("Saved login failed its integrity check")
-        return bytes(a ^ b for a, b in zip(body, _stream(key, nonce, len(body))))
 else:
     def protect(data: bytes) -> bytes:
         return b"PLAIN" + data

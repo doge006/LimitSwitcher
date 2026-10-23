@@ -18,11 +18,10 @@ import threading
 import time
 from urllib.request import ProxyHandler, Request, build_opener
 
-if sys.platform != "darwin":  # the Mac menu bar app (macos_app.py) draws with AppKit and needs neither
-    import pystray
-    from PIL import Image, ImageDraw
-    from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loaded up front, Pillow
-    # doesn't load all ~40 of its format plugins (TIFF, PDF, ...) to find it
+import pystray
+from PIL import Image, ImageDraw
+from PIL import IcoImagePlugin  # noqa: F401  pystray saves the icon as ICO; loaded up front, Pillow
+# doesn't load all ~40 of its format plugins (TIFF, PDF, ...) to find it
 
 from .web import Controller, clear_url_file, make_server, write_url_file
 
@@ -434,7 +433,7 @@ def main(argv=None):
     if sys.platform == "win32":
         from .flyout import enable_dpi_awareness
         enable_dpi_awareness()
-    if sys.platform in ("win32", "darwin"):
+    if sys.platform == "win32":
         logging.basicConfig(handlers=[log_handler()], level=logging.WARNING,
                             format="%(asctime)s %(name)s %(levelname)s %(message)s")
     logging.getLogger("account_switcher").warning("started, version %s", app_version())
@@ -442,7 +441,7 @@ def main(argv=None):
     profiler = start_profiler()  # only with LIMITSWITCH_PROFILE set (a development tool)
     controller = Controller(live=not args.demo)
     server = make_server(controller, args.port)
-    # A quit asked for before the tray or menu bar is up (an update right after opening the app) is
+    # A quit asked for before the tray is up (an update right after opening the app) is
     # kept and done once it is; stopping only the server would leave the app running without one.
     server.quit_asked = threading.Event()
     server.quit = server.quit_asked.set
@@ -480,14 +479,9 @@ def main(argv=None):
                 profiler.report()
 
     try:
-        if sys.platform == "darwin":
-            from .macos_app import run  # menu bar app
-            # Cocoa ends the process inside its own quit, so the app runs shutdown there.
-            run(controller, server, open_now=args.show or not args.quiet, cleanup=shutdown)
-        else:
-            tray = Tray(controller, server)
-            tray.on_end_session = shutdown
-            tray.run(open_now=args.show or not args.quiet)
+        tray = Tray(controller, server)
+        tray.on_end_session = shutdown
+        tray.run(open_now=args.show or not args.quiet)
     finally:
         shutdown()
 

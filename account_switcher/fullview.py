@@ -1,5 +1,5 @@
 """The full view's behaviour, independent of the platform: what is where, what the pointer is over,
-what a click or a key does, and which cached tiles to redraw. A host (fullview_win, fullview_mac,
+what a click or a key does, and which cached tiles to redraw. A host (fullview_win,
 fullview_tk) owns the window: it passes input here, asks frame() for pixels, and runs the few
 timers this asks for (a minute tick for "resets in", toast expiry, a switch timeout). Nothing runs
 while the window is idle, and closing it frees every cached tile.
@@ -181,7 +181,6 @@ class FullView:
         self.seen = set()          # tiles already on screen (new ones rise in, like the web page)
         self.last_page = None      # (layout, [(box, what)], image): the page, to redraw only what changes
         self.incremental = True
-        self.native = False        # a host that draws with the platform (macOS): tiles are recorded, not drawn
         self.changed = None        # device boxes the last frame changed (None: all of it), for the host
         self.had_overlays = False
         self.scrolled = False      # the last frame moved the page
@@ -327,25 +326,25 @@ class FullView:
         locked = bool(state.get("busy") or ui.pending)
         if kind == "card":
             cache = vr.card_key(data, ui, bool(state.get("nameMode")), live, locked)
-            make = lambda: (vr.record_card if self.native else vr.draw_card)(
+            make = lambda: vr.draw_card(
                 data, w, h, self.scale, ui, bool(state.get("nameMode")), live, locked)
         elif kind == "topbar":
             cache = (w, tuple(vr.quantize(ui.fades.get(k, 0.0)) for k in ("settings", "add", "refresh", "update:check", "update:install")),
                      ui.fades.get("spin", 0.0), ui.menu, live, state.get("busy"), state.get("afk"), state.get("autoSwap"),
                      repr(sorted((state.get("update") or {}).items())))
-            make = lambda: (vr.record_topbar if self.native else vr.draw_topbar)(state, w, self.scale, ui)
+            make = lambda: vr.draw_topbar(state, w, self.scale, ui)
         elif kind == "windows":
             cache = (w, h, json.dumps([state.get("windows"), state.get("perWindow"), vr.free_for_window(state),
                                        [(a["id"], a.get("label"), a.get("email")) for a in state.get("accounts") or []],
                                        state.get("nameMode"), ui.window,
                                        sorted((k, vr.quantize(v)) for k, v in ui.fades.items() if k.startswith("window:"))], default=str))
-            make = lambda: (vr.record_windows if self.native else vr.draw_windows)(state, w, h, self.scale, ui)
+            make = lambda: vr.draw_windows(state, w, h, self.scale, ui)
         elif kind == "group":
             cache = (w, data)
-            make = lambda: (vr.record_group if self.native else vr.draw_group)(data, w, self.scale)
+            make = lambda: vr.draw_group(data, w, self.scale)
         else:
             cache = (w, live, ui.hover)
-            make = lambda: (vr.record_empty if self.native else vr.draw_empty)(state, w, self.scale, ui)
+            make = lambda: vr.draw_empty(state, w, self.scale, ui)
         held = self.tiles.get(key)
         if held and held[0] == cache:
             return held[1]
@@ -448,34 +447,12 @@ class FullView:
         repeats by itself, and setting it again after each frame would start its wait over, so
         frames came a frame's drawing time plus 16 ms apart, which Windows' 15.6 ms timer tick
         rounds up to every other tick (32 a second). 15 ms keeps it on every tick (64 a second).
-        The macOS and Linux hosts' timers fire once, so they are set again here each frame."""
+        The Linux host's timers fire once, so they are set again here each frame."""
         if moving or self.motion.runs:
             if not self.host.has_timer("anim"):
                 self.host.set_timer("anim", ANIM_MS)
         else:
             self.host.kill_timer("anim")
-
-    def draw_native(self, painter):
-        """Draw the frame with a platform painter (macOS: fullview_cg), straight to the window:
-        the recorded tiles, the live bars and percentages, then menus and toasts. No pixels are
-        kept here; returns the frame's [(device box, signature)] so the host can tell what moved."""
-        ops, moving = self.build()
-        painter.background()
-        for box, _, how in ops:
-            if not painter.visible(box):
-                continue
-            if how[0] == "tile":
-                _, t, tx, ty, rise = how
-                painter.tile(t, tx, ty, rise)
-            else:
-                self.paint_live(painter.canvas(vr.BG), how[1])
-        self.overlay_hits = []
-        overlays = self.overlays_showing()
-        moving |= self.draw_overlays(painter.surface())
-        self.had_overlays = overlays
-        self.changed = None
-        self.after_frame(moving)
-        return [(box, sig) for box, sig, _ in ops]
 
     def overlays_showing(self):
         ui = self.ui

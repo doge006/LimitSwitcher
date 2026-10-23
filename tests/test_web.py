@@ -39,9 +39,7 @@ class WebTests(unittest.TestCase):
             with self.request('/assets/' + provider + '.png', auth=False) as response:
                 self.assertEqual(response.headers['Content-Type'], 'image/png')
                 self.assertTrue(response.read().startswith(b'\x89PNG\r\n\x1a\n'))
-        with self.request("/menu", auth=False) as response:  # the macOS panel's page
-            self.assertIn(b"Auto resume", response.read())
-            self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
+                self.assertIn("frame-ancestors 'none'", response.headers["Content-Security-Policy"])
         with self.assertRaises(HTTPError) as gone:  # no web full view any more
             self.request("/", auth=False)
         self.assertEqual(gone.exception.code, 404)

@@ -33,7 +33,6 @@ import random
 import secrets
 import shutil
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -82,7 +81,7 @@ AFK_NOTE = "The usage limit was reached, so the session moved to another account
 AFK_COMPACTED = (" Some older tool outputs in this conversation were shortened to save tokens on the new account; each says what it "
                  "held. Re-run the tool before relying on exact details from one of them.")
 JEV_WAIT = 240           # seconds a session's Jev compaction may take (3 tries 30 s apart) before it goes on without
-STATUS_SYNC = 3.0        # seconds between a status line's look at the login files (it reports every second; on macOS that reads the Keychain)
+STATUS_SYNC = 3.0        # seconds between a status line's look at the login files (it reports every second)
 JEV_SHOWN = 45           # seconds the status line says a compaction saved something, after it
 JEV_AGAIN = 900          # a session compacted (or tried) this recently is not compacted again
 MOVED_RECENTLY = 120     # seconds: a limit reported this soon after an automatic switch was the old account's
@@ -295,9 +294,6 @@ class LiveAccounts:
         """Accounts a window has as its own."""
         return {w["account"] for w in self.claude_windows.values() if w.get("account")}
 
-    def _keychain(self):
-        return getattr(self.providers.get("claude"), "keychain", None)
-
     def _token_lock(self, account_id):
         """One renewal of a login at a time. Copying a saved login to Claude Code (a switch, a window)
         holds it too: a renewal still under way would spend the refresh token being copied, and the
@@ -333,11 +329,6 @@ class LiveAccounts:
         changed = False
         for window_id, window in list(self.claude_windows.items()):
             pid = window.get("pid")
-            if not pid and window.get("pidFile"):
-                try:
-                    pid = window["pid"] = int(Path(window["pidFile"]).read_text().strip())
-                except (OSError, ValueError):
-                    pass
             started = float(window.get("started") or 0)
             if pid:
                 gone = now - started > WINDOW_GRACE and not profiles.alive(pid)
@@ -355,15 +346,9 @@ class LiveAccounts:
         return changed
 
     def _forget_window(self, window_id):
-        window = self.claude_windows.pop(window_id, None) or {}
+        self.claude_windows.pop(window_id, None)
         self.window_reports.pop(window_id, None)
         self.window_seen.pop(window_id, None)
-        for path in (window.get("pidFile"), window.get("script")):
-            if path:
-                try:
-                    os.unlink(path)
-                except OSError:
-                    pass
 
     def _retire_profiles(self):
         """Windows from before the router (1.3.x) had a config folder with their own login: its newest
@@ -371,11 +356,11 @@ class LiveAccounts:
         changed = False
         held = {}
         for name, directory in profiles.existing(self.vault.root).items():
-            login = profiles.provider(directory, self._keychain()).read_live()
+            login = profiles.provider(directory).read_live()
             account_id = self.adopt("claude", login, source=f"a window from before 1.4 ({name})") if login else None
             window = profiles.info(directory)
             if window.get("how") != "manual" and not profiles.alive(window.get("pid")):
-                profiles.remove(directory, self._keychain())
+                profiles.remove(directory)
                 changed = True
             elif account_id:
                 held[account_id] = directory  # its Claude Code renews that login: never the app, until it closes
@@ -595,7 +580,7 @@ class LiveAccounts:
     def window_process(self, window_id, parent):
         """A window's status line reported its parent process: the window's own process is the first
         Claude Code above it (once per window). On Windows the wrapper only knows the cmd.exe that runs
-        claude.cmd; on macOS and Linux it became Claude Code itself, which is kept. The look stops at the
+        claude.cmd; on Linux it became Claude Code itself, which is kept. The look stops at the
         process already known, and a few levels up, so a Claude Code further up (one the window was
         started from) is never taken for it."""
         window = self.claude_windows.get(window_id)
@@ -647,7 +632,7 @@ class LiveAccounts:
                 legacy = self.legacy_held.get(account_id)
             if entry is None:
                 raise ValueError("Unknown account")
-            holder = provider if live else profiles.provider(legacy, self._keychain()) if legacy else None
+            holder = provider if live else profiles.provider(legacy) if legacy else None
             if holder is not None:  # Claude Code owns renewal of this login
                 login = holder.read_live()
                 if login is not None and login.identity == entry["identity"]:
@@ -1677,45 +1662,27 @@ class LiveAccounts:
             raise ValueError("Unknown provider")
         if name in self.logins:
             raise RuntimeError(f"A {name.title()} sign-in is already open")
-        # The real path (/private/var/... on macOS): Claude Code names its Keychain item after it.
         directory = Path(tempfile.mkdtemp(prefix=f"account-switcher-{name}-")).resolve()
         command, env = provider.login_command(directory)
-        if sys.platform == "darwin":
-            # In Terminal: it has the user's PATH (an app opened from Finder does not) and a
-            # window to sign in from. A .command file, which Terminal runs by itself: telling
-            # Terminal what to do (AppleScript) needs a permission macOS silently refuses.
-            # The login is picked up from its folder as it lands.
-            import shlex
-            script = directory / "Sign in.command"
-            script.write_text("#!/bin/sh\necho $$ > " + shlex.quote(str(directory / "login.pid")) + "\n"
-                              + "".join(f"export {k}={shlex.quote(v)}\n" for k, v in env.items())
-                              + " ".join(shlex.quote(c) for c in command)
-                              + "\necho\necho 'Done. You can close this window.'\n")
-            script.chmod(0o700)
-            process = subprocess.Popen(["/usr/bin/open", "-a", "Terminal", str(script)],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            watch_process = False
-        else:
-            executable = shutil.which(command[0])
-            if not executable:
-                shutil.rmtree(directory, ignore_errors=True)
-                raise RuntimeError(f"{name.title()} CLI not found on PATH")
-            flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
-            process = subprocess.Popen([executable, *command[1:]], env=dict(os.environ, **env), creationflags=flags)
-            watch_process = True
+        executable = shutil.which(command[0])
+        if not executable:
+            shutil.rmtree(directory, ignore_errors=True)
+            raise RuntimeError(f"{name.title()} CLI not found on PATH")
+        flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
+        process = subprocess.Popen([executable, *command[1:]], env=dict(os.environ, **env), creationflags=flags)
         self.logins[name] = process
         self.notify("log", f"{name.title()} sign-in opened in a new window")
-        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory, watch_process, expect),
+        threading.Thread(target=self._finish_login, args=(name, process, provider.isolated(directory), directory, expect),
                          daemon=True).start()
 
-    def _finish_login(self, name, process, isolated, directory, watch_process=True, expect=None):
+    def _finish_login(self, name, process, isolated, directory, expect=None):
         try:
             # Watch for the login file (the CLI may stay open); stop after 10 minutes.
             deadline = time.monotonic() + 600
             login = None
             while time.monotonic() < deadline:
                 login = isolated.read_live()
-                if login or (watch_process and process.poll() is not None):
+                if login or process.poll() is not None:
                     login = login or isolated.read_live()
                     break
                 time.sleep(1.5)
@@ -1723,8 +1690,6 @@ class LiveAccounts:
                 with self.lock:
                     account_id = self.adopt(name, login, source="a sign-in in LimitSwitcher")
                     self.save()
-                if hasattr(isolated, "forget"):
-                    isolated.forget()
                 self._set(account_id, backoffUntil=0.0, backoffFailures=0, pace=1.0, status="")
                 wanted = self.meta["accounts"].get(expect) if expect else None
                 if wanted and account_id != expect:  # the browser was signed in to another account
@@ -1737,14 +1702,8 @@ class LiveAccounts:
         finally:
             # End the sign-in with everything it started: on Windows `claude` is a .cmd shim, so ending
             # only that leaves the real Claude Code running (and spending usage) after the window is gone.
-            if watch_process:
-                if process.poll() is None:
-                    processes.end_tree(process.pid)
-            else:  # macOS: Terminal's script wrote its own id; the window stays, the CLI inside must not
-                try:
-                    processes.end_tree(int((directory / "login.pid").read_text().strip()))
-                except (OSError, ValueError):
-                    pass
+            if process.poll() is None:
+                processes.end_tree(process.pid)
             self.logins.pop(name, None)
             shutil.rmtree(directory, ignore_errors=True)
             self.notify("accounts", None)

@@ -1,8 +1,8 @@
 """TLS for the app's HTTPS requests (usage APIs, the Codex router's upstream).
 
-Python from python.org on macOS has no trusted certificates until its "Install Certificates"
-step has been run, so every HTTPS request fails verification. When Python's own store is
-empty, the certificates from certifi (installed with the app on macOS) are used instead."""
+Some Pythons come with no trusted certificates, so every HTTPS request would fail
+verification. When Python's own store is empty, the certificates from certifi are used
+instead, if it is installed."""
 import ssl
 from urllib.request import HTTPSHandler
 

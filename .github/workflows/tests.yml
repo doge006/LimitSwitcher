@@ -1,7 +1,7 @@
 name: Tests
 
 # The unit tests (tests/) and the Claude Code mod's tests (mods/*), on every push and pull request.
-# One Linux runner, a few minutes; the Windows and macOS workflows (real desktops, installers) stay manual.
+# One Linux runner, a few minutes; the Windows workflows (a real desktop, the installer) stay manual.
 on:
   push:
     branches: [main]

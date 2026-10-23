@@ -521,17 +521,8 @@ def launcher():
     return command()
 
 
-LAUNCH_AGENT = "com.accountswitcher.app"
-
-
-def launch_agent_path():
-    return Path.home() / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT}.plist"
-
-
 def set_start_with_windows(enabled):
-    """Start at sign-in: a Run entry on Windows, a LaunchAgent (login item) on macOS."""
-    if sys.platform == "darwin":
-        return _set_launch_agent(enabled)
+    """Start at sign-in: a Run entry on Windows."""
     if sys.platform != "win32":
         return
     import winreg
@@ -547,35 +538,3 @@ def set_start_with_windows(enabled):
                     pass
     except OSError as error:
         log.warning("start with Windows: %s", error)
-
-
-def _set_launch_agent(enabled):
-    import plistlib
-    path = launch_agent_path()
-    if not enabled:
-        try:
-            path.unlink()
-        except OSError:
-            pass
-        return
-    python = Path(sys.executable)
-    script = Path(__file__).resolve().parent.parent / "LimitSwitcher.pyw"
-    arguments = [str(python), str(script)]
-    app = os.environ.get("ACCOUNT_SWITCHER_APP")
-    if app:  # started as the app: log in as the app (its launcher, quietly)
-        for name in ("LimitSwitcher", "AccountSwitcher"):
-            if (Path(app) / "Contents" / "MacOS" / name).exists():
-                arguments = [str(Path(app) / "Contents" / "MacOS" / name), "--at-login"]
-                break
-    plist = {"Label": LAUNCH_AGENT, "ProgramArguments": arguments, "RunAtLoad": True,
-             "ProcessType": "Interactive", "WorkingDirectory": str(script.parent)}
-    from .vault import data_dir
-    log_file = str(data_dir() / "app.log")  # a failed start at login is not silent either
-    plist.update(StandardOutPath=log_file, StandardErrorPath=log_file)
-    data = plistlib.dumps(plist)
-    try:
-        if not path.exists() or path.read_bytes() != data:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            atomic_write(path, data)
-    except OSError as error:
-        log.warning("start at login: %s", error)

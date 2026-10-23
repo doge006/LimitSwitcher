@@ -1,8 +1,10 @@
 #!/bin/bash
-# Installs (or updates) LimitSwitcher on macOS from the latest GitHub release:
+# Installs LimitSwitcher 1.4.19 on macOS, the last version with a Mac app (Mac support has ended):
 #   curl -fsSL https://raw.githubusercontent.com/doge006/LimitSwitcher/main/scripts/install-mac.sh | bash
 # It downloads the Apple silicon DMG, closes a running copy (which puts the
 # Codex and Claude Code settings back), puts LimitSwitcher.app in Applications and opens it.
+# A Mac copy's updater runs this when it sees a newer (Windows-only) release; it quits itself
+# first, so this puts 1.4.19 back and starts it again rather than leaving no app running.
 # Saved accounts and settings are in ~/Library/Application Support/LimitSwitcher and are kept.
 #
 # The app isn't notarized by Apple. macOS checks apps downloaded by a browser, and warns about
@@ -45,15 +47,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# 1. The disk image: the latest release's, or the newest pre-release's while there is no release.
-if [ -z "$DMG" ]; then
-  DMG="https://github.com/$REPO/releases/latest/download/LimitSwitcher-$KIND.dmg"
-  if ! curl -fsIL -o /dev/null "$DMG" 2>/dev/null; then
-    DMG="$(curl -fsSL "https://api.github.com/repos/$REPO/releases?per_page=10" 2>/dev/null \
-      | grep -o "\"browser_download_url\": *\"[^\"]*/LimitSwitcher-$KIND\.dmg\"" | head -n 1 | sed 's/.*"\(https[^"]*\)"$/\1/' || true)"
-    [ -n "$DMG" ] || fail "No release to install yet (github.com/$REPO/releases)."
-  fi
-fi
+# 1. The disk image: 1.4.19's, the last release with one.
+[ -n "$DMG" ] || DMG="https://github.com/$REPO/releases/download/v1.4.19/LimitSwitcher-$KIND.dmg"
 case "$DMG" in
   http://*|https://*)
     say "Downloading LimitSwitcher..."
