@@ -176,6 +176,14 @@ class FullViewProcessTest(unittest.TestCase):
         running.close()
         self.assertTrue(later.terminated)
 
+    def test_app_gone_while_it_starts_ends_it_quietly(self):
+        """Quit while the full view's process is still starting: it ends without the startup alert."""
+        from account_switcher import fullview_mac_app
+        gone = RuntimeError("LimitSwitcher isn't responding ([Errno 54] Connection reset by peer)")
+        with mock.patch.dict(os.environ, {fullview_mac_app.ENV: "http://127.0.0.1:1/#token=t"}), \
+                mock.patch.object(fullview_mac_app.Remote, "state", side_effect=gone):
+            self.assertIsNone(fullview_mac_app.main())
+
     def test_remote_state_and_actions(self):
         import threading
         from account_switcher.fullview_mac_app import Remote

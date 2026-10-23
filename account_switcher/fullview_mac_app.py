@@ -80,7 +80,13 @@ def main():
     url = os.environ.pop(ENV)  # not passed on to anything this process starts
     memory_note("started")
     remote = Remote(url)
-    state = remote.state()
+    try:
+        state = remote.state()
+    except RuntimeError as error:
+        # The menu bar app quit while this was starting: end quietly, as watch() does, rather
+        # than raise into the startup alert, which would keep this process open behind it.
+        log.warning("full view: not started, %s", error)
+        return
 
     import objc
     from AppKit import (NSApp, NSApplication, NSApplicationActivationPolicyRegular, NSBackingStoreBuffered, NSBundle, NSColor,

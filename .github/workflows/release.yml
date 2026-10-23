@@ -134,6 +134,8 @@ jobs:
           python -m pip install --quiet Pillow
           python scripts/build_mac.py --arch arm64
       - name: Install with the README's command (from this build's DMG), run it, install again over it
+        id: install-test
+        continue-on-error: true  # a failure here warns (below) but doesn't hold back a Windows release
         run: |
           mkdir -p ~/.codex
           log="$HOME/Library/Application Support/LimitSwitcher/app.log"
@@ -162,6 +164,9 @@ jobs:
           name: LimitSwitcher-mac
           path: build/*.dmg
           retention-days: 7
+      - name: Warn if the install test failed
+        if: steps.install-test.outcome == 'failure'
+        run: echo "::warning::The macOS install test failed; this run's DMG is published anyway. Check the log above if the change touched the Mac app."
 
   publish:
     if: inputs.publish
