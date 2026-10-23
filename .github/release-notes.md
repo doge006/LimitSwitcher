@@ -1,15 +1,17 @@
-The app offers it in Settings → **Update to 1.4.18** (or download below).
+The app offers it in Settings → **Update to 1.4.19** (or download below).
 
-## Taskbar blocks survive an Explorer restart
+## Taskbar blocks no longer flicker when a window opens or closes
 
-When Explorer restarted (after a crash, or a manual restart), LimitSwitcher could try to add its blocks to the old taskbar in the moment before the new one appeared. Windows refused, and LimitSwitcher switched to the floating-window fallback for the rest of the session. Those floating windows go behind the taskbar whenever Start or Search opens, so the blocks flickered in and out until LimitSwitcher was restarted.
+Each time a window opens or closes, LimitSwitcher reads where the taskbar's buttons now are, which takes about a tenth of a second. Until that reading arrived, it laid the blocks out with a rough estimate that assumed the buttons covered the middle half of the taskbar. The blocks narrowed for that moment, then animated back to their width once the reading came in, so they flickered on every window opened or closed.
 
-The blocks now wait for the new taskbar and appear on it, as they already did while Start had the taskbar raised. If the helper does fall back to floating windows, the log now records the Windows error code.
+The blocks now keep the last reading until the new one arrives. They change width only when a new button really needs their space, in one move. The estimate is still used when there is no earlier reading, or the taskbar moved or changed size.
 
 ## Validation
 
-- **Tests:** a new regression test sends the helper a frame for a destroyed taskbar; it fails without this change and passes with it. The full suite ran 441 tests with 15 skips; the one error, in a mod process test, occurs identically without these changes.
-- **On a Windows 11 desktop with two displays:** after the update, the blocks were children of both taskbars and stayed visible and on top with Start open.
+- **Tests:** a new regression test checks that a pending reading keeps the last one, and that a moved taskbar does not; it fails without this change. The full suite ran 442 tests with 15 skips; the one error, in a mod process test, occurs identically without these changes.
+- **On a Windows 11 desktop:**
+  - Polling the taskbar reading while Notepad opened and closed: before, one reading each time dropped the widest free space from 676 px to 274 px. After, the space changed only by the new button's own width.
+  - The block's on-screen width, sampled every 16 ms, stayed at 352 px while a window opened and closed.
 
 ## Download
 
