@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.19](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.19) (2026-10-22)
+
+- Fixed: taskbar blocks narrowed and widened back (flickered) whenever a window opened or closed. They now keep the last taskbar reading until the new one arrives.
+
 ## [1.4.18](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.18) (2026-10-22)
 
 - Fixed: after Explorer restarted, the taskbar blocks could switch to floating windows for the rest of the session and flicker out whenever Start or Search opened. They now wait for the new taskbar and appear on it.
