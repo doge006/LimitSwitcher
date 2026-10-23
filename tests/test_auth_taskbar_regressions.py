@@ -156,6 +156,23 @@ class TaskbarRecoveryTests(unittest.TestCase):
             self.assertEqual(view.waiting, {})
             read.assert_called_once_with(123, "main", "Main display", previous=None, measurements=view.measurements)
 
+    def test_new_button_keeps_last_measurement_until_its_reading_arrives(self):
+        """A window opening or closing must not narrow the blocks to an estimate for a moment."""
+        rect = (0, 1000, 1920, 1048)
+        previous = tb.Bar(123, "main", "Main display", rect, 1, 8, 1700, [(800, 1120)], False, True)
+        previous.signature = ("before",)
+        measurements = Mock(buttons=Mock(return_value=None))  # the new signature's reading is pending
+        with patch.object(tb, "window_rect", return_value=rect), patch.object(tb, "auto_hide", return_value=False), \
+                patch.object(tb.user32, "IsWindowVisible", return_value=True), \
+                patch.object(tb, "layout_signature", return_value=("after",)), \
+                patch.object(tb.fl, "monitor_at", return_value=(None, None, 1)):
+            bar = tb.read_bar(123, previous=previous, measurements=measurements)
+            self.assertEqual(bar.occupied, [(800, 1120)])
+            self.assertIsNone(bar.signature)  # still measured again
+            self.assertEqual(tb.read_bar(123, previous=bar, measurements=measurements).occupied, [(800, 1120)])
+            moved = tb.Bar(123, "main", "Main display", (0, 0, 1920, 48), 1, 8, 1700, [(800, 1120)], False, True)
+            self.assertNotEqual(tb.read_bar(123, previous=moved, measurements=measurements).occupied, [(800, 1120)])
+
     def test_fullscreen_refresh_retains_secondary_bar_until_it_returns(self):
         view = self.view()
         view.tray.state["taskbarLayout"] = {"right": ["claude", None]}

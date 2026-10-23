@@ -437,7 +437,13 @@ def read_bar(hwnd, key="main", label="Main display", previous=None, measurements
             measured = bool(occupied)
     except Exception:
         log.warning("taskbar buttons could not be read", exc_info=True)
-    if not measured:
+    held = not measured and previous is not None and previous.measured and previous.hwnd == hwnd \
+        and previous.rect == rect
+    if held:
+        # A button came or went and its new reading is on the way: keep the last one meanwhile.
+        # An estimate would narrow the blocks for that moment, then widen them back.
+        occupied = previous.occupied
+    elif not measured:
         # Estimate: Windows 11 centres the buttons (widgets on the far left), Windows 10 starts them on the left.
         centred = setting("TaskbarAl", 1) == 1
         mid = (rect[0] + rect[2]) // 2
@@ -447,8 +453,8 @@ def read_bar(hwnd, key="main", label="Main display", previous=None, measurements
         if key != "main":
             occupied.append((rect[2] - round(130 * scale), rect[2]))  # its clock
     bar = Bar(hwnd, key, label, rect, scale, rect[0] + round(8 * scale), right - round(12 * scale), occupied,
-              light_taskbar(), measured)
-    bar.signature = signature if measured else None  # an estimate is worth measuring again next time
+              light_taskbar(), measured or held)
+    bar.signature = signature if measured else None  # an estimate (or held reading) is worth measuring again next time
     return bar
 
 
