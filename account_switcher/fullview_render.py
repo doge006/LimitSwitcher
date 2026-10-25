@@ -546,7 +546,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
     side_w = 0
     sub = subscription_text(account)
     renew = sub or ("Set renewal date" if live else "")
-    badge = "In use" if active else ("Limit reached" if not eligible else "")
+    badge = "In use" if active else ("No subscription" if account.get("unsubscribed") else "Limit reached" if not eligible else "")
     for value, size in ((renew, 11.5), (badge, 12)):
         if value:
             side_w = max(side_w, text_w(value, size, size == 12) + (13 if value == badge else 0))
@@ -605,7 +605,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
     y = 16 + identity_height(account, name_mode) + 14
     windows = account.get("windows") or []
     if not windows:
-        c.text(18, y + 18, "Usage not loaded yet", 12.5, FAINT)
+        c.text(18, y + 18, "Claude Code needs a paid plan" if account.get("unsubscribed") else "Usage not loaded yet", 12.5, FAINT)
         y += 28
     for win in windows:
         left = remaining(win.get("used", 0))
@@ -708,7 +708,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         elif not eligible:
             c.rect(bx, fy, bw, 32, 8, SURFACE_2 + (102,))
             c.outline(bx, fy, bw, 32, 8, LINE_STRONG[:3] + (40,))
-            c.text(bx + bw / 2, fy + 16, "Limit reached", 13, blend(TEXT, SURFACE, .4), anchor="mm")
+            c.text(bx + bw / 2, fy + 16, "Free plan" if account.get("unsubscribed") else "Limit reached", 13, blend(TEXT, SURFACE, .4), anchor="mm")
         else:
             t = 0.0 if locked else a("swap")
             fill = blend(accent, SURFACE, .45) if locked else mixc(accent, blend((255, 255, 255), accent, .1), t)

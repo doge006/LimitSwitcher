@@ -73,6 +73,7 @@ SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is r
 MAX_BACKOFF = 3600
 WAITING_LOOK = 20           # while the client renews the login in use: how often its login file is looked at
 SIGNED_OUT_AFTER = 300      # the client hasn't replaced a refused login in this long: it was signed out, not renewing
+NO_PLAN = "That account has no subscription (Free plan), so it can't be used"
 WINDOW_KEYS = {300: ("five_hour", "5-hour"), 10080: ("weekly", "Weekly"), 43200: ("monthly", "30-day")}
 NEAR_RESET = 15 * 60     # seconds: a 5-hour limit that resets this soon is waited out, not swapped away from
 PENDING_TTL = 6 * 3600   # a continue nobody answered is forgotten (the hook gives up after this too)
@@ -224,7 +225,8 @@ class LiveAccounts:
                                     status=status, updated_at=m.get("updatedAt", 0.0),
                                     subscription=subscription_view(m), credits=m.get("credits"),
                                     pinned=account_id in pinned, window=numbers.get(account_id, 0),
-                                    signed_out=m["provider"] in self.signed_out and self.active.get(m["provider"]) == account_id))
+                                    signed_out=m["provider"] in self.signed_out and self.active.get(m["provider"]) == account_id,
+                                    unsubscribed=bool(m.get("unsubscribed"))))
             order = {"claude": 0, "codex": 1}
             return sorted(rows, key=lambda a: (order.get(a.provider, 9), a.email or a.alias))
 
@@ -439,6 +441,8 @@ class LiveAccounts:
         entry = self.meta["accounts"].get(account_id)
         if entry is None or entry["provider"] != "claude":
             raise ValueError("Only a Claude account can be used in a window of its own")
+        if entry.get("unsubscribed"):
+            raise ValueError(NO_PLAN)
         if self.router_url is None:
             raise RuntimeError("Separate accounts per window isn't running")
         window_id = self._new_window(account_id, "terminal", cwd=str(Path.home()))
@@ -469,6 +473,8 @@ class LiveAccounts:
                 entry = self.meta["accounts"].get(account_id)
                 if entry is None or entry["provider"] != "claude":
                     raise ValueError("Only a Claude account can be used in a window")
+                if entry.get("unsubscribed"):
+                    raise ValueError(NO_PLAN)
                 if account_id == self.live_ids.get("claude"):
                     account_id = None
             if window.get("account") == account_id:
@@ -831,7 +837,7 @@ class LiveAccounts:
                             pass
                         self._set(account_id, deadLogin=login_mark(secret))
                     if error.unsubscribed:  # old numbers would read as room left
-                        self._set(account_id, usage=[], plan="Free")
+                        self._set(account_id, usage=[], plan="Free", unsubscribed=True)
                     self._set(account_id, status=message)
                     continue
                 except Exception as error:  # a malformed response must not stop the loop
@@ -842,7 +848,7 @@ class LiveAccounts:
                 if updated is not None:
                     self.vault.write_secret(account_id, updated)
                     secret = updated
-            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", updatedAt=time.time(), apiAt=time.time(),
+            self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", unsubscribed=False, updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
             subscriptions.append((account_id, meta, provider, secret))
@@ -977,6 +983,8 @@ class LiveAccounts:
             target = self.meta["accounts"].get(account_id)
             if target is None:
                 raise ValueError("Unknown account")
+            if target.get("unsubscribed"):
+                raise ValueError(NO_PLAN)
             name = target["provider"]
             logging.getLogger("account_switcher").warning(
                 "switching %s to %s (%s)", name.title(), target.get("email") or "?", reason)

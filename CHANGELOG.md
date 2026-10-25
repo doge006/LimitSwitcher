@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.22](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.22) (2026-10-25)
+
+- Changed: a Claude account with no subscription (Free plan) can't be switched to, by hand, by Auto swap or for a window. The taskbar panel leaves it out; the full view still lists it, marked "No subscription".
+
 ## [1.4.21](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.21) (2026-10-25)
 
 - Fixed: a Claude account whose subscription ended kept showing its last numbers (often 100% left) with "Login expired", and its login was renewed on every check. It now shows "No subscription · Free plan" with no numbers, and Auto swap skips it.

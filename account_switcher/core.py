@@ -29,6 +29,7 @@ class Account:
     pinned: bool = False        # held by a window of its own (profiles.py)
     window: int = 0             # that window's number in the list
     signed_out: bool = False    # in use, but the client's login file has no login: a switch to it puts it back
+    unsubscribed: bool = False  # a Free account (subscription ended): no usage, nothing to switch to
 
     def account_windows(self):
         return [w for w in self.windows() if w["scope"] == "account"]
@@ -37,7 +38,7 @@ class Account:
     def eligible(self):
         # A reset timestamp alone is insufficient evidence of restored quota. Unknown
         # usage is not treated as exhausted, so a manual swap is still possible.
-        return not self.exhausted and all(w["used"] < 100 for w in self.account_windows())
+        return not self.exhausted and not self.unsubscribed and all(w["used"] < 100 for w in self.account_windows())
 
     @property
     def headroom(self):
