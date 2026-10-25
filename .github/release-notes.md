@@ -1,16 +1,17 @@
-The app offers it in Settings → **Update to 1.4.20** (or download below).
+The app offers it in Settings → **Update to 1.4.21** (or download below).
 
-## Mac support has ended
+## An ended Claude subscription shows as the Free plan
 
-LimitSwitcher is now Windows only. This release removes the Mac app and everything that served only it: the menu bar app and its panel, the Mac full view, the Keychain storage, the Mac installer and its build.
+When a Claude subscription ends, Anthropic's usage service refuses the account's login with "OAuth authentication is currently not allowed for this organization". LimitSwitcher read that as an expired login: it kept the account's last numbers on screen (often 100% left), showed "Login expired", and renewed the login on every check, which could never help.
 
-- **On Windows** nothing changes. Your accounts, settings and the app work exactly as before.
-- **On a Mac,** [1.4.19](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.19) is the last version. An installed Mac copy that offers this update reinstalls 1.4.19 and starts again, rather than being left without an app.
+The account now shows **No subscription · Free plan** with no usage numbers, and its login is no longer renewed. Auto swap skips it. It is still checked every few minutes, so its numbers come back on their own once the subscription is renewed.
+
+Also fixed: a saved login that was renewed and then still refused was renewed again on every check, instead of waiting for a new sign-in.
 
 ## Validation
 
-- **Tests:** the full suite passes on Windows; the tests for Mac-only code were removed with it.
-- The Mac install script still downloads 1.4.19's disk image, which remains on its release page.
+- **Tests:** two new regression tests cover the ended subscription and the repeated renewal; both fail without this change. The full suite ran 431 tests with 11 skips; the one error, in a mod process test, occurs identically without these changes.
+- **On a Windows 11 desktop** with an account whose subscription had ended: after the update, the account made one usage call, renewed nothing, and showed the Free plan with no numbers.
 
 ## Download
 

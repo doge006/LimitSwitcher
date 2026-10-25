@@ -35,6 +35,7 @@ class FakeAPI:
         self.claude_usage, self.codex_usage = {}, {}
         self.claude_profile, self.codex_check = {}, {}
         self.limited = set()
+        self.free = set()  # tokens of accounts whose subscription ended
         self.calls = []
         self.refreshes = []
         api = self
@@ -60,6 +61,9 @@ class FakeAPI:
                 table = api.claude_usage if self.path == "/claude/usage" else api.codex_usage
                 if token in api.limited:  # Anthropic answers an expired token with 429, not 401
                     return self.reply(429, {"error": "rate_limited"})
+                if token in api.free:
+                    return self.reply(403, {"type": "error", "error": {"type": "permission_error",
+                                      "details": {"error_code": "oauth_not_allowed_for_organization"}}})
                 if token not in table:
                     return self.reply(401, {"error": "expired"})
                 self.reply(200, table[token])
@@ -740,6 +744,39 @@ class LiveTests(unittest.TestCase):
         self.assertIn(("/claude/token", "rt-b"), self.api.refreshes)
         self.assertEqual(m.meta["accounts"][b.id].get("backoffUntil", 0.0), 0.0)
         self.assertNotIn(("/claude/token", "rt-a"), self.api.refreshes)  # the login in use here is never renewed
+
+    def test_an_ended_subscription_shows_the_free_plan_without_numbers_or_renewals(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.claude_usage["at-b"] = claude_usage(0, 0)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        m.refresh(force=True)
+        self.assertTrue(self.by_email(m, "b@example.com").windows())
+        self.api.free.add("at-b")  # the subscription ended: Anthropic refuses the login with 403
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertIn("Free plan", b.status)
+        self.assertEqual(b.windows(), [])  # old numbers would read as 100% left
+        self.assertEqual(m.meta["accounts"][b.id]["plan"], "Free")
+        self.assertNotIn(("/claude/token", "rt-b"), self.api.refreshes)  # renewing can't help
+
+    def test_a_login_refused_after_renewal_is_not_renewed_on_every_check(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        self.api.uuid_for["rt-b"] = "uuid-b"  # renewal works, but the usage API refuses every token
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertIn("expired", b.status.lower())
+        tries = len(self.api.refreshes)
+        for _ in range(3):
+            m.meta["accounts"][b.id]["attemptedAt"] = m.meta["accounts"][b.id]["updatedAt"] = 0.0
+            m.refresh()
+        self.assertEqual(len(self.api.refreshes), tries)
 
     def test_two_checks_at_once_renew_a_login_only_once(self):
         """Single-use refresh tokens: a second renewal with the same token kills the login."""
