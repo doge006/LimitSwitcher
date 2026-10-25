@@ -237,6 +237,12 @@ class FlyoutRenderTests(unittest.TestCase):
         self.assertIn("toggle:taskbar", actions)     # the Taskbar switch, next to AFK
         self.assertNotIn("compact", actions)
 
+    def test_a_free_account_is_left_out_of_the_panel(self):
+        free = [dict(a, unsubscribed=True, eligible=False) if a["id"] == "claude-b" else a for a in self.state["accounts"]]
+        name = next(a["name"] for a in free if a["id"] == "claude-b")
+        layout, _ = fr.build(dict(self.state, accounts=free), only="claude")
+        self.assertNotIn(name, [t[2] for t in layout.texts])  # the full view still lists it
+
     def test_block_keeps_to_the_plan_and_the_age(self):
         """The taskbar is short on room: the plan and how old the numbers are, nothing more (the
         provider is the icon; banked resets are one click away in the panel)."""

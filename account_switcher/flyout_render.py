@@ -347,6 +347,8 @@ def build(state, hover=None, pending=None, pinned=False, fx=None, armed=None, co
     only: a provider; the panel opened from its taskbar block lists just that provider's accounts.
     """
     L, W = Layout(), WIDTH
+    # A Free account (subscription ended) can't be switched to: the full view still lists it.
+    state = dict(state, accounts=[a for a in state["accounts"] if a["active"] or not a.get("unsubscribed")])
     busy = state.get("busy")
     rest = targets(state, hover)
     fx = {**rest, **(fx or {})}

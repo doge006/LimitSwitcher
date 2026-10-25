@@ -761,6 +761,13 @@ class LiveTests(unittest.TestCase):
         self.assertEqual(b.windows(), [])  # old numbers would read as 100% left
         self.assertEqual(m.meta["accounts"][b.id]["plan"], "Free")
         self.assertNotIn(("/claude/token", "rt-b"), self.api.refreshes)  # renewing can't help
+        self.assertFalse(b.eligible)  # nothing to switch to: not by hand, not by Auto swap
+        with self.assertRaises(ValueError):
+            m.swap(b.id)
+        self.assertNotEqual(m.active.get("claude"), b.id)
+        self.api.free.discard("at-b")  # subscribed again: usable from the next check
+        m.refresh(force=True)
+        self.assertTrue(self.by_email(m, "b@example.com").eligible)
 
     def test_a_login_refused_after_renewal_is_not_renewed_on_every_check(self):
         m = self.manager()
