@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.21](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.21) (2026-10-25)
+
+- Fixed: a Claude account whose subscription ended kept showing its last numbers (often 100% left) with "Login expired", and its login was renewed on every check. It now shows "No subscription · Free plan" with no numbers, and Auto swap skips it.
+
 ## [1.4.20](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.20) (2026-10-23)
 
 - Changed: Mac support has ended; LimitSwitcher is Windows only. 1.4.19 is the last version with a Mac app, and an installed Mac copy that offers this update reinstalls 1.4.19.

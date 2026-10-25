@@ -825,7 +825,13 @@ class LiveAccounts:
                             self._set(account_id, waitingMark=login_mark(secret), waitingSince=time.time())
                         recover.append((account_id, login_mark(secret)))
                     elif error.relogin:
+                        try:  # the login as saved now: fetch may have renewed it before being refused
+                            secret = self.vault.read_secret(account_id) or secret
+                        except (OSError, ValueError):
+                            pass
                         self._set(account_id, deadLogin=login_mark(secret))
+                    if error.unsubscribed:  # old numbers would read as room left
+                        self._set(account_id, usage=[], plan="Free")
                     self._set(account_id, status=message)
                     continue
                 except Exception as error:  # a malformed response must not stop the loop

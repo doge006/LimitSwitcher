@@ -36,9 +36,10 @@ def token_mark(token):
 class ProviderError(Exception):
     """Short, user-facing problem description."""
 
-    def __init__(self, message, retry_after=None, relogin=False, rate_limited=False, transient=False):
+    def __init__(self, message, retry_after=None, relogin=False, rate_limited=False, transient=False, unsubscribed=False):
         super().__init__(message)
         self.retry_after, self.relogin, self.rate_limited = retry_after, relogin, rate_limited
+        self.unsubscribed = unsubscribed  # the login works, but the account has no paid plan (no usage to show)
         self.transient = transient  # the service or network had a hiccup: retry soon, keep the numbers
 
 
@@ -84,6 +85,9 @@ def _http(method, url, headers, body=None, attempt=0):
             if error.code == 403 and ("error_code\":1010" in detail or "Error 1010" in detail):
                 # Cloudflare turned this client away by its signature: nothing wrong with the login.
                 raise ProviderError("Claude's sign-in service blocked this request; retrying", transient=True)
+            if "oauth_not_allowed_for_organization" in detail:
+                # A Free account (the subscription ended): renewing the login can't change that.
+                raise ProviderError("No subscription · Free plan", unsubscribed=True)
             raise ProviderError("Login expired", relogin=True)
         if error.code >= 500:  # the service is briefly unavailable (503 and friends): one quick retry
             if attempt == 0:

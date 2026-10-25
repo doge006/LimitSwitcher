@@ -7,7 +7,7 @@ uninstaller next to it; a copy from source has `.git`.
 from pathlib import Path
 import sys
 
-VERSION = "1.4.20"
+VERSION = "1.4.21"
 REPO = "doge006/LimitSwitcher"
 ROOT = Path(__file__).resolve().parent.parent
 
