@@ -769,6 +769,39 @@ class LiveTests(unittest.TestCase):
         m.refresh(force=True)
         self.assertTrue(self.by_email(m, "b@example.com").eligible)
 
+    def test_a_free_account_is_asked_hourly_and_a_429_keeps_it_free(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        self.api.free.add("at-b")
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        meta = m.meta["accounts"][b.id]
+        now = time.time()
+        self.assertGreaterEqual(m.due(b.id, meta, False, now), now + 3000)  # not every 5 minutes
+        self.api.limited.add("at-b")
+        m.refresh(force=True, only=b.id)
+        self.assertIn("Free plan", self.by_email(m, "b@example.com").status)  # not "Rate limited · retrying"
+
+    def test_a_free_account_in_use_can_be_removed_and_stays_removed(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.free.add("at-b")
+        m.sync_live()
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertEqual(m.active["claude"], b.id)
+        m.remove(b.id)
+        m.sync_live(force=True)  # Claude Code still has that login: it is not imported again
+        self.assertNotIn(b.id, m.meta["accounts"])
+        self.assertNotIn("b@example.com", [a.email for a in m.accounts()])
+        self.assertNotIn("claude", m.active)
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b2", "rt-b2")  # signed in to it again in Claude Code
+        m.sync_live()
+        self.assertIn("b@example.com", [a.email for a in m.accounts()])
+
     def test_a_login_refused_after_renewal_is_not_renewed_on_every_check(self):
         m = self.manager()
         claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")

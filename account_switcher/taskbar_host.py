@@ -27,6 +27,15 @@ def command():
             + "); from account_switcher.taskbar_host_win import main; main()", str(__import__("os").getpid())]
 
 
+def session_ending():
+    """Windows is shutting down or signing out. A process started now fails to start, and Windows
+    shows "python.exe - Application Error (0xc0000142)" over the shutdown screen."""
+    if sys.platform != "win32":
+        return False
+    import ctypes
+    return bool(ctypes.windll.user32.GetSystemMetrics(0x2000))  # SM_SHUTTINGDOWN
+
+
 class Host:
     """Nonblocking controller. Block IDs must be unique across remove/recreate.
 
@@ -111,8 +120,8 @@ class Host:
             with self._condition:
                 while not self._desired and not self._closed:
                     self._condition.wait()
-            if self._closed:
-                return
+            if self._closed or session_ending():
+                return  # at shutdown Windows ends the host first: starting another fails with an error box
             process, started = None, time.monotonic()
             try:
                 process = self._popen(self._command or command(), stdin=subprocess.PIPE,

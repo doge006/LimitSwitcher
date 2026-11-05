@@ -647,7 +647,11 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         hit(bx, fy, 80, 32, "remove-no")
     else:
         status = account.get("status") or ""
-        relogin = live and any(s in status.lower() for s in ("sign in", "expired", "missing"))
+        # A Free account's login stays refused after upgrading: only a new sign-in picks up the plan
+        free = account.get("unsubscribed")
+        relogin = live and (free or any(s in status.lower() for s in ("sign in", "expired", "missing")))
+        # an account in use that can't be used (Free, expired, signed out) can still be removed
+        removable = live and (not active or relogin or account.get("signed_out"))
         # can open a window of its own (only offered while "Separate accounts per window" is on);
         # not while its login has expired (that needs signing in first) or its limit is reached
         own = (live and provider == "claude" and getattr(ui, "per_window", False) and not active
@@ -662,7 +666,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         bw = max(124, text_w(pick, 13, True) + 24) if pick else 124
         if relogin:
             signing = provider in (ui.signing_in or ())
-            label = "Login expired · Sign in again"
+            label = "Upgraded? Sign in again" if free else "Login expired · Sign in again"
             color = FAINT if signing else mixc(MUTED, TEXT, 0.6 + 0.4 * a("relogin"))
             c.text(18, fy + 21, label, 12, color)
             c.line(18, fy + 23, text_w(label, 12), color + (160,))
@@ -683,7 +687,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
                 hints = [" · ".join(parts + [updated] if updated else parts)]
                 if updated:
                     hints += [" · ".join(parts + [updated.replace("Updated ", "")]), updated]
-            room = w - 36 - bw - (0 if active else 96)  # the in-use card has no Remove button to leave room for
+            room = w - 36 - bw - (96 if removable else 0)  # room for the Remove button
             hint = best_fit(hints, 12, room)
             color = WARN if status and not account.get("pinned") else FAINT
             if own and text_w(hint, 12) > room - 96:  # "New window" fades in over it on hover: the hint fades out
@@ -717,7 +721,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
             c.text(bx + bw / 2, fy + 16 - lift, "Swap to this", 13, ON_ACCENT, True, anchor="mm", bg=fill)
             if not locked:
                 hit(bx, fy, bw, 32, "swap")
-        if live and not active and not switching and card_t > 0:  # Remove fades in while the card is hovered
+        if removable and not switching and card_t > 0:  # Remove fades in while the card is hovered
             rx = bx - 6 - 80
             if not pinned:
                 quiet_button(c, rx, fy, 80, "Remove", a("remove"), card_t)
