@@ -10,7 +10,7 @@ from ctypes import wintypes
 import logging
 import time
 
-from . import flyout_render as fr
+from . import flyout_render as fr, vsync
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -335,7 +335,7 @@ class Popup:
             if (running[1] if running else current) != target:
                 self.fx_anims[key] = (current, target, now, self.FX_SECONDS[key[0]])
         if self.fx_anims and self.hwnd:
-            user32.SetTimer(self.hwnd, TIMER_FX, 15, None)
+            vsync.start(self.hwnd, TIMER_FX)  # a frame per display refresh
 
     def fx_step(self):
         now = time.perf_counter()
@@ -347,7 +347,7 @@ class Popup:
                 if key[0] == "hover" and end == 0.0:
                     self.fx.pop(key, None)
         if not self.fx_anims:
-            user32.KillTimer(self.hwnd, TIMER_FX)  # nothing moving: no timer at all
+            vsync.stop(self.hwnd, TIMER_FX)  # nothing moving: no ticks at all
         self.redraw(retarget=False)
 
     opener = "left"          # mouse button on the tray icon that opens this popup
@@ -502,7 +502,7 @@ class Popup:
     # ---------- animation (timer only while moving) ----------
     def _animate(self, start, end, duration):
         self.anim = (start, end, time.perf_counter(), duration)
-        user32.SetTimer(self.hwnd, TIMER_ANIM, 10, None)
+        vsync.start(self.hwnd, TIMER_ANIM)  # a frame per display refresh
         self._tick()
 
     def _tick(self):
@@ -512,7 +512,7 @@ class Popup:
         travel = round(8 * self.scale * (1 - value))  # short slide in from the screen side,
         self._push(self.image, value, (-self.slide[0] * travel, -self.slide[1] * travel))  # never over the taskbar
         if progress >= 1:
-            user32.KillTimer(self.hwnd, TIMER_ANIM)
+            vsync.stop(self.hwnd, TIMER_ANIM)
             self.anim = None
             if end == 0.0:
                 self._destroy()
@@ -533,6 +533,8 @@ class Popup:
 
     def wndproc(self, hwnd, msg, wparam, lparam):
         if msg == WM_TIMER:
+            if wparam in (TIMER_ANIM, TIMER_FX):
+                vsync.ack(hwnd, wparam)  # frames are pushed at once: the next refresh can come
             if wparam == TIMER_ANIM and self.anim:
                 self._tick()
             elif wparam == TIMER_MINUTE:
@@ -619,6 +621,8 @@ class Popup:
             Popup._windows.pop(hwnd, None)
             for timer in (TIMER_ANIM, TIMER_MINUTE, TIMER_PENDING, TIMER_FX, TIMER_FOCUS):
                 user32.KillTimer(hwnd, timer)
+            for timer in (TIMER_ANIM, TIMER_FX):
+                vsync.stop(hwnd, timer)
             user32.DestroyWindow(hwnd)
             self._release_surface()
             self.painter = None
