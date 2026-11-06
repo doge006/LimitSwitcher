@@ -494,6 +494,7 @@ class LiveAccounts:
         number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
         who = self.shown_name(account_id) if account_id else "the main account"
         self.notify("log", f"Window {number} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
+        self.wake_waiting_hooks()
         self.notify("accounts", None)
 
     def swap_account(self, window_id, session, query, cwd=None, upstream=None):
@@ -1032,6 +1033,8 @@ class LiveAccounts:
             self.save()
         if reason == "auto":
             self.auto_moved[name] = (account_id, time.time())
+        if name == "claude":
+            self.wake_waiting_hooks()
         self.on_swap(name)
         if reason == "quiet":
             return
@@ -1516,6 +1519,14 @@ class LiveAccounts:
                                      "tokens": tokens, "afk": afk}
         self.notify("log", "Compacting the session with Jev before it goes on")
         return {"action": "wait", "seconds": 3}
+
+    def wake_waiting_hooks(self):
+        """Sessions waiting for a reset ask again now (afk_hook.wait watches this file's time):
+        after a switch the new account may have room long before the old one resets."""
+        try:
+            os.utime(Path(self.vault.root) / "afk-hook.json")
+        except OSError:
+            pass  # no hook set up (or the file is being rewritten): nothing waits on it
 
     def _claude_limit(self, session, tokens=None, window=None, current=None):
         """window: a window on an account of its own (`current`); only it moves."""

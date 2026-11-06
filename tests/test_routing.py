@@ -790,6 +790,31 @@ class AfkTests(unittest.TestCase):
             server.server_close()
 
 
+    def test_a_waiting_hook_asks_again_as_soon_as_the_app_switches(self):
+        state = Path(self.tmp.name) / "state.json"
+        state.write_text("{}")
+        os.utime(state, ns=(10**18, 10**18))
+        sleeps = []
+
+        def sleep(seconds):
+            sleeps.append(seconds)
+            if len(sleeps) == 2:
+                os.utime(state)  # the app switched Claude to another account meanwhile
+
+        with mock.patch.object(afk_hook.time, "sleep", sleep):
+            began = time.time()
+            self.assertTrue(afk_hook.wait(6 * 3600, None, str(state)))
+        self.assertEqual(len(sleeps), 2)  # not the hours until the reset
+        self.assertLess(time.time() - began, 5)
+
+    def test_a_claude_switch_wakes_waiting_hooks(self):
+        state = Path(self.manager.vault.root) / "afk-hook.json"
+        state.write_text("{}")
+        os.utime(state, ns=(10**18, 10**18))
+        self.manager.swap(next(a.id for a in self.manager.accounts() if a.email == "b@example.com"))
+        self.assertNotEqual(os.stat(state).st_mtime_ns, 10**18)
+
+
 class ClaudeFullUseTests(AfkTests):
     def test_keeps_using_an_account_until_its_limit(self):
         self.api.claude_usage["at-a"] = claude_usage(99, 50)
