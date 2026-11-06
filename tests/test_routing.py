@@ -1442,20 +1442,31 @@ class StatusLineMarkerTests(unittest.TestCase):
             def line(**entry):
                 return json.dumps(entry) + "\n"
 
-            path.write_text(line(type="user", uuid="u1") + line(type="assistant", uuid="a1")
+            path.write_text(line(type="user", uuid="u1", origin={"kind": "human"}) + line(type="assistant", uuid="a1")
                             + line(type="assistant", uuid="e1", isApiErrorMessage=True))  # the limit's own reply
             before = afk_hook.stamp(str(path))
-            self.assertEqual(before, "a1")
+            self.assertEqual(before, "u1")
+            with path.open("a") as handle:  # the limited turn goes on for its grace allowance: not a new turn
+                handle.write(line(type="user", uuid="g1", isMeta=True, message={"content": "[Usage limit reached; a short grace allowance remains]"}))
+                handle.write(line(type="assistant", uuid="a2", message={"content": [{"type": "tool_use"}]}))
+                handle.write(line(type="user", uuid="r1", message={"content": [{"type": "tool_result", "content": "ok"}]}))
+                handle.write(line(type="assistant", uuid="a3", message={"content": [{"type": "text", "text": "Committed."}]}))
+            self.assertEqual(afk_hook.stamp(str(path)), before)
             with path.open("a") as handle:  # notices while the hook waits: not the session going on
                 handle.write(line(type="system", uuid="s1", content="Remote Control disconnected"))
                 handle.write(line(type="system", subtype="compact_boundary", uuid="s2"))
                 handle.write(line(type="user", uuid="m1", isMeta=True))
+                handle.write(line(type="user", uuid="c1", isCompactSummary=True))
                 handle.write(line(type="file-history-snapshot"))
                 handle.write("not json\n")
             self.assertEqual(afk_hook.stamp(str(path)), before)
-            with path.open("a") as handle:  # a new reply: it went on
-                handle.write(line(type="assistant", uuid="a2"))
-            self.assertNotEqual(afk_hook.stamp(str(path)), before)
+            with path.open("a") as handle:  # Claude Code continued by itself at the reset: it went on
+                handle.write(line(type="user", uuid="ac1", isMeta=True, origin={"kind": "auto-continuation"},
+                                  message={"content": "Your claude.ai usage limit has reset."}))
+            self.assertEqual(afk_hook.stamp(str(path)), "ac1")
+            with path.open("a") as handle:  # you typed something: it went on
+                handle.write(line(type="user", uuid="u2", origin={"kind": "human"}, message={"content": "continue"}))
+            self.assertEqual(afk_hook.stamp(str(path)), "u2")
             self.assertIsNone(afk_hook.stamp(str(Path(tmp) / "missing")))
 
     def test_own_status_line_gets_the_apps_freshest_numbers(self):

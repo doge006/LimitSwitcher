@@ -94,11 +94,26 @@ def context_tokens(path):
     return None
 
 
+TURN_STARTS = ("auto-continuation", "peer")  # meta prompts that start a turn: Claude Code's own continue, another session
+
+
+def starts_a_turn(entry):
+    """A prompt: typed, Claude Code's own continue at the reset, or a notification (another hook's wake).
+    Not a tool result, a reply, or a notice: the turn that met the limit may go on writing those for a
+    few seconds (Claude Code's grace allowance), and taking them for the session going on swallowed
+    the continue."""
+    if entry.get("type") != "user" or entry.get("isCompactSummary"):
+        return False
+    if entry.get("isMeta") and (entry.get("origin") or {}).get("kind") not in TURN_STARTS:
+        return False
+    content = (entry.get("message") or {}).get("content")
+    return not (isinstance(content, list) and any(isinstance(part, dict) and part.get("type") == "tool_result"
+                                                  for part in content))
+
+
 def stamp(path):
-    """The session's last real message (a prompt, a reply, a tool result), or None when it can't
-    be told. Only these say the session went on: Claude Code also appends notices to the transcript
-    while the hook waits (the account switch, a compaction's log line, its own wait being
-    cancelled), and taking those for the session going on swallowed the continue."""
+    """The session's last prompt (see starts_a_turn), or None when it can't be told. A new one since
+    the wait began means the session went on without the hook."""
     try:
         with open(path, "rb") as handle:
             handle.seek(0, os.SEEK_END)
@@ -111,11 +126,8 @@ def stamp(path):
             entry = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(entry, dict) or entry.get("type") not in ("user", "assistant"):
-            continue  # notices, summaries, snapshots, titles
-        if entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isApiErrorMessage"):
-            continue  # not the conversation going on (the limit's own error reply is one)
-        return entry.get("uuid") or line
+        if isinstance(entry, dict) and starts_a_turn(entry):
+            return entry.get("uuid") or line
     return None
 
 
