@@ -2,6 +2,15 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.23](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.23) (2026-11-05)
+
+- Fixed: a "python.exe - Application Error" box could appear at shutdown. The taskbar helper is no longer restarted while Windows ends the session.
+- Fixed: a session waiting for a usage limit to reset kept waiting after LimitSwitcher switched to an account with room. It now continues within about 15 seconds of the switch.
+- Fixed: Free accounts were checked every 5 minutes, got rate limited, and showed "Rate limited · retrying". They are checked hourly, keep showing "Free plan", and offer "Upgraded? Sign in again".
+- Fixed: an account that went Free kept its old renewal date. The date is dropped and looked up again after a new purchase.
+- Changed: any account can be removed, including the one in use.
+- Changed: animation frames are timed to the display's refresh, for smoother motion.
+
 ## [1.4.22](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.22) (2026-10-25)
 
 - Changed: a Claude account with no subscription (Free plan) can't be switched to, by hand, by Auto swap or for a window. The taskbar panel leaves it out; the full view still lists it, marked "No subscription".
