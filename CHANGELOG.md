@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.24](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.24) (2026-11-05)
+
+- Fixed: a session waiting at a usage limit still often didn't continue after LimitSwitcher switched to an account with room. The rest of the turn that hit the limit was taken as the session having continued by itself.
+
 ## [1.4.23](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.23) (2026-11-05)
 
 - Fixed: a "python.exe - Application Error" box could appear at shutdown. The taskbar helper is no longer restarted while Windows ends the session.
