@@ -443,11 +443,9 @@ class FullView:
         self.animate(moving)
 
     def animate(self, moving):
-        """Frames keep coming while something moves. A running timer is left alone: on Windows it
-        repeats by itself, and setting it again after each frame would start its wait over, so
-        frames came a frame's drawing time plus 16 ms apart, which Windows' 15.6 ms timer tick
-        rounds up to every other tick (32 a second). 15 ms keeps it on every tick (64 a second).
-        The Linux host's timers fire once, so they are set again here each frame."""
+        """Frames keep coming while something moves. On Windows "anim" ticks with the display's
+        refreshes (vsync.py) and repeats by itself, so a running one is left alone. The Linux
+        host's timers fire once, so they are set again here each frame."""
         if moving or self.motion.runs:
             if not self.host.has_timer("anim"):
                 self.host.set_timer("anim", ANIM_MS)

@@ -47,13 +47,25 @@ def owner():
         return None, None
 
 
-def wait(seconds, running):
-    """Sleep up to `seconds`; False as soon as Claude Code is gone."""
+def changed(path):
+    """The state file's time: the app touches it after switching Claude to another account."""
+    try:
+        return os.stat(path).st_mtime_ns
+    except OSError:
+        return None
+
+
+def wait(seconds, running, state_file=None):
+    """Sleep up to `seconds`; False as soon as Claude Code is gone. Ends early when the app switched
+    accounts (the state file was touched): the new account may have room now, not only at the reset."""
     end = time.time() + seconds
+    seen = changed(state_file) if state_file else None
     while time.time() < end:
         if running is not None and not running():
             return False
         time.sleep(max(0.0, min(CHECK, end - time.time())))
+        if state_file and changed(state_file) != seen:
+            break
     return running is None or running()
 
 
@@ -150,7 +162,7 @@ def main(argv):
                 started = stamp(transcript)
             seconds = answer.get("seconds")
             seconds = seconds if isinstance(seconds, (int, float)) else 600
-            if not wait(max(5.0, min(float(seconds), deadline - time.time())), running):
+            if not wait(max(5.0, min(float(seconds), deadline - time.time())), running, argv[1]):
                 return 0
             continue
         return 0

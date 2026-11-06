@@ -9,7 +9,7 @@ from ctypes import wintypes
 import logging
 from pathlib import Path
 
-from . import fullview_render as vr
+from . import fullview_render as vr, vsync
 from .fullview import FullView, window_size
 
 log = logging.getLogger("account_switcher.fullview")
@@ -91,6 +91,7 @@ _sig(user32.SetWindowPos, wintypes.BOOL, wintypes.HWND, wintypes.HWND, ctypes.c_
 _sig(user32.PostMessageW, wintypes.BOOL, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 _sig(user32.SetTimer, ctypes.c_size_t, wintypes.HWND, ctypes.c_size_t, wintypes.UINT, ctypes.c_void_p)
 _sig(user32.KillTimer, wintypes.BOOL, wintypes.HWND, ctypes.c_size_t)
+_sig(user32.UpdateWindow, wintypes.BOOL, wintypes.HWND)
 _sig(user32.TrackMouseEvent, wintypes.BOOL, ctypes.POINTER(TRACKMOUSEEVENT))
 _sig(user32.SetCursor, H, H)
 _sig(user32.LoadCursorW, H, wintypes.HINSTANCE, ctypes.c_void_p)
@@ -255,12 +256,18 @@ class FullViewWindow:
 
     def set_timer(self, name, ms):
         if self.hwnd:
-            user32.SetTimer(self.hwnd, TIMERS[name], max(10, int(ms)), None)
+            if name == "anim":  # animation frames come with the display's refreshes (vsync.py)
+                vsync.start(self.hwnd, TIMERS[name])
+            else:
+                user32.SetTimer(self.hwnd, TIMERS[name], max(10, int(ms)), None)
             self.timers.add(name)
 
     def kill_timer(self, name):
         if self.hwnd and name in self.timers:
-            user32.KillTimer(self.hwnd, TIMERS[name])
+            if name == "anim":
+                vsync.stop(self.hwnd, TIMERS[name])
+            else:
+                user32.KillTimer(self.hwnd, TIMERS[name])
         self.timers.discard(name)
 
     def has_timer(self, name):
@@ -374,6 +381,12 @@ class FullViewWindow:
             name = next((n for n, i in TIMERS.items() if i == wparam), None)
             if name:
                 view.timer(name)
+            if name == "anim":
+                # The frame drawn and shown now, then the next refresh's tick: a paint waiting
+                # behind the ticks (Windows paints only when no message is queued) can't fall behind.
+                self.render()
+                user32.UpdateWindow(hwnd)
+                vsync.ack(hwnd, wparam)
             return 0
         if msg == WM_GETMINMAXINFO:
             info = ctypes.cast(lparam, ctypes.POINTER(MINMAXINFO)).contents

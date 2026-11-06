@@ -405,8 +405,9 @@ class LiveTests(unittest.TestCase):
         m.refresh()
         x = self.by_email(m, "x@example.com")
         self.assertFalse(x.eligible)
-        with self.assertRaises(RuntimeError):
-            m.remove(x.id)  # cannot remove the account in use
+        m.remove(x.id)  # the account in use can be removed
+        m.sync_live(force=True)
+        self.assertNotIn("x@example.com", [a.email for a in m.accounts()])  # and isn't imported again
 
     def test_reset_alert_is_offered_to_the_mod_once_a_used_up_provider_has_room(self):
         controller = Controller(gateway=lambda notify: LiveGateway(notify, self.vault, self.providers, background=False))
@@ -768,6 +769,58 @@ class LiveTests(unittest.TestCase):
         self.api.free.discard("at-b")  # subscribed again: usable from the next check
         m.refresh(force=True)
         self.assertTrue(self.by_email(m, "b@example.com").eligible)
+
+    def test_a_renewal_date_is_forgotten_when_the_account_goes_free_and_found_again_after_rebuying(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.claude_usage["at-b"] = claude_usage(0, 0)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        b = self.by_email(m, "b@example.com").id
+        old = time.time() + 20 * 86400
+        m.set_subscription(b, old, False)  # a date set by hand while it was paid
+        self.api.free.add("at-b")  # the subscription ended
+        m.refresh(force=True, only=b)
+        self.assertIsNone(self.by_email(m, "b@example.com").subscription)
+        new = time.time() + 30 * 86400
+        self.api.claude_profile["at-b"] = {"organization": {"subscription": {"current_period_end": new}}}
+        self.api.free.discard("at-b")  # bought again: a new period
+        m.refresh(force=True, only=b)
+        self.assertAlmostEqual(self.by_email(m, "b@example.com").subscription["at"], new, delta=1)
+
+    def test_a_free_account_is_asked_hourly_and_a_429_keeps_it_free(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        self.api.free.add("at-b")
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        meta = m.meta["accounts"][b.id]
+        now = time.time()
+        self.assertGreaterEqual(m.due(b.id, meta, False, now), now + 3000)  # not every 5 minutes
+        self.api.limited.add("at-b")
+        m.refresh(force=True, only=b.id)
+        self.assertIn("Free plan", self.by_email(m, "b@example.com").status)  # not "Rate limited · retrying"
+
+    def test_a_free_account_in_use_can_be_removed_and_stays_removed(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.free.add("at-b")
+        m.sync_live()
+        m.refresh(force=True)
+        b = self.by_email(m, "b@example.com")
+        self.assertEqual(m.active["claude"], b.id)
+        m.remove(b.id)
+        m.sync_live(force=True)  # Claude Code still has that login: it is not imported again
+        self.assertNotIn(b.id, m.meta["accounts"])
+        self.assertNotIn("b@example.com", [a.email for a in m.accounts()])
+        self.assertNotIn("claude", m.active)
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b2", "rt-b2")  # signed in to it again in Claude Code
+        m.sync_live()
+        self.assertIn("b@example.com", [a.email for a in m.accounts()])
 
     def test_a_login_refused_after_renewal_is_not_renewed_on_every_check(self):
         m = self.manager()

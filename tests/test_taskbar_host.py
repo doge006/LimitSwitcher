@@ -43,6 +43,16 @@ class HostTransportTests(unittest.TestCase):
                 return events
         self.fail(f"no {kind} event")
 
+    def test_no_host_is_started_while_windows_shuts_down(self):
+        popen = Mock()
+        with patch.object(taskbar_host, "session_ending", return_value=True):
+            host = Host(lambda: None, _popen=popen)
+            self.addCleanup(host.close)
+            host.update(7, 123, 10, 20, 2, 1, b"\0" * 8)
+            host._thread.join(2)
+        self.assertFalse(host._thread.is_alive())
+        popen.assert_not_called()
+
     def test_frame_reaches_host_and_mouse_comes_back(self):
         host, woke = self.host(ECHO)
         host.update(7, 123, 10, 20, 2, 1, b"\0" * 8, 0.5, True)

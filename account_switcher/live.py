@@ -71,6 +71,7 @@ SPACING = 1.5               # seconds between consecutive API calls
 SUBSCRIPTION_INTERVAL = 86400
 SUBSCRIPTION_LOGIC = 2      # bump when detection changes, so every account is re-checked
 MAX_BACKOFF = 3600
+FREE_EVERY = 3600           # a Free account: its answer only changes with a new sign-in after upgrading
 WAITING_LOOK = 20           # while the client renews the login in use: how often its login file is looked at
 SIGNED_OUT_AFTER = 300      # the client hasn't replaced a refused login in this long: it was signed out, not renewing
 NO_PLAN = "That account has no subscription (Free plan), so it can't be used"
@@ -267,6 +268,14 @@ class LiveAccounts:
                             changed |= self.active.pop(name, None) is not None
                     continue
                 self.signed_out.discard(name)
+                removed = self.meta.get("removed", {})
+                if removed.get(name) == login_mark(login.secret):
+                    # Removed while the client still had this login: not imported again until the
+                    # client has a different one (any new sign-in, to it or another account).
+                    self.live_ids.pop(name, None)
+                    changed |= self.active.pop(name, None) is not None
+                    continue
+                removed.pop(name, None)
                 account_id = self.adopt(name, login)
                 previous, self.live_ids[name] = self.live_ids.get(name), account_id
                 if previous is not None and previous != account_id:  # app switches set live_ids directly
@@ -485,6 +494,7 @@ class LiveAccounts:
         number = next((w["number"] for w in self.windows() if w["id"] == window_id), "?")
         who = self.shown_name(account_id) if account_id else "the main account"
         self.notify("log", f"Window {number} now uses {who}" + (" (automatic)" if reason != "manual" else ""))
+        self.wake_waiting_hooks()
         self.notify("accounts", None)
 
     def swap_account(self, window_id, session, query, cwd=None, upstream=None):
@@ -723,6 +733,9 @@ class LiveAccounts:
             return held                     # never fetched: now
         if meta.get("waitingMark"):
             return last + WAITING_LOOK  # only the login file is looked at (refresh skips the API call)
+        if meta.get("unsubscribed"):
+            # Asking every few minutes gets every account's usage checks rate limited for an hour.
+            return max(held, last + FREE_EVERY)
         if meta.get("status") or not updated:
             return max(held, last + max(ACTIVE_INTERVAL * pace, 300))   # failing: retry gently, never in a loop
         if is_active:
@@ -822,7 +835,9 @@ class LiveAccounts:
                         self._set(account_id, status=f"{meta['provider'].title()}'s usage service isn't answering · retrying")
                         continue
                     message = str(error)
-                    if error.rate_limited:  # temporary: say until when
+                    if error.rate_limited and meta.get("unsubscribed"):
+                        message = "No subscription · Free plan"  # still what there is to know about it
+                    elif error.rate_limited:  # temporary: say until when
                         message = f"Rate limited by {meta['provider'].title()} · retrying at " + \
                             clock_text(time.time() + wait, self.meta.get("clock24"))
                     if error.relogin and (is_active or is_live):
@@ -837,6 +852,7 @@ class LiveAccounts:
                             pass
                         self._set(account_id, deadLogin=login_mark(secret))
                     if error.unsubscribed:  # old numbers would read as room left
+                        self._plan_changed(account_id, meta, "Free")
                         self._set(account_id, usage=[], plan="Free", unsubscribed=True)
                     self._set(account_id, status=message)
                     continue
@@ -848,6 +864,7 @@ class LiveAccounts:
                 if updated is not None:
                     self.vault.write_secret(account_id, updated)
                     secret = updated
+            self._plan_changed(account_id, meta, plan or meta.get("plan", ""), meta.get("unsubscribed"))
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", unsubscribed=False, updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
@@ -972,6 +989,17 @@ class LiveAccounts:
             dues = [self.due(i, m, i == self.active.get(m["provider"]), now) for i, m in self.meta["accounts"].items()]
         return max(20.0, min([ACTIVE_INTERVAL] + [d - now for d in dues]))
 
+    def _plan_changed(self, account_id, meta, plan, was_free=False):
+        """Into or out of the Free plan: the renewal date belonged to the old subscription (a new one
+        starts its own), so both the found and the hand-set date go, and it is looked up again."""
+        free_before = was_free or (meta.get("plan") or "").lower() == "free"
+        if free_before != ((plan or "").lower() == "free"):
+            with self.lock:
+                entry = self.meta["accounts"].get(account_id)
+                if entry is not None:
+                    entry.pop("subscriptionManual", None)
+                    entry.update(subscription=None, subscriptionCheckedAt=0)
+
     def _set(self, account_id, **fields):
         with self.lock:
             if account_id in self.meta["accounts"]:
@@ -1018,6 +1046,8 @@ class LiveAccounts:
             self.save()
         if reason == "auto":
             self.auto_moved[name] = (account_id, time.time())
+        if name == "claude":
+            self.wake_waiting_hooks()
         self.on_swap(name)
         if reason == "quiet":
             return
@@ -1503,6 +1533,14 @@ class LiveAccounts:
         self.notify("log", "Compacting the session with Jev before it goes on")
         return {"action": "wait", "seconds": 3}
 
+    def wake_waiting_hooks(self):
+        """Sessions waiting for a reset ask again now (afk_hook.wait watches this file's time):
+        after a switch the new account may have room long before the old one resets."""
+        try:
+            os.utime(Path(self.vault.root) / "afk-hook.json")
+        except OSError:
+            pass  # no hook set up (or the file is being rewritten): nothing waits on it
+
     def _claude_limit(self, session, tokens=None, window=None, current=None):
         """window: a window on an account of its own (`current`); only it moves."""
         afk, auto = bool(self.meta.get("afk")), bool(self.meta["autoSwap"])
@@ -1658,10 +1696,17 @@ class LiveAccounts:
             entry = self.meta["accounts"].get(account_id)
             if entry is None:
                 raise ValueError("Unknown account")
-            if self.active.get(entry["provider"]) == account_id:
-                raise RuntimeError("Switch to another account before removing this one")
+            name = entry["provider"]
             if account_id in self.pinned:
                 raise RuntimeError("This account has its own window; give it back first")
+            if self.active.get(name) == account_id:
+                # The account in use can go too: the client keeps its login until the next switch
+                self.active.pop(name)
+                live = self.providers[name].read_live() if self.live_ids.pop(name, None) == account_id else None
+                if live and live.identity == entry["identity"]:
+                    self.meta.setdefault("removed", {})[name] = login_mark(live.secret)  # the client still has it
+                if self.meta.get("lastLive", {}).get(name) == account_id:
+                    self.meta["lastLive"].pop(name)
             del self.meta["accounts"][account_id]
             self.vault.delete_secret(account_id)
             self.save()
@@ -1702,6 +1747,7 @@ class LiveAccounts:
                 time.sleep(1.5)
             if login:
                 with self.lock:
+                    self.meta.get("removed", {}).pop(name, None)  # signed in again on purpose: it's back
                     account_id = self.adopt(name, login, source="a sign-in in LimitSwitcher")
                     self.save()
                 self._set(account_id, backoffUntil=0.0, backoffFailures=0, pace=1.0, status="")
