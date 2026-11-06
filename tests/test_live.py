@@ -405,8 +405,9 @@ class LiveTests(unittest.TestCase):
         m.refresh()
         x = self.by_email(m, "x@example.com")
         self.assertFalse(x.eligible)
-        with self.assertRaises(RuntimeError):
-            m.remove(x.id)  # cannot remove the account in use
+        m.remove(x.id)  # the account in use can be removed
+        m.sync_live(force=True)
+        self.assertNotIn("x@example.com", [a.email for a in m.accounts()])  # and isn't imported again
 
     def test_reset_alert_is_offered_to_the_mod_once_a_used_up_provider_has_room(self):
         controller = Controller(gateway=lambda notify: LiveGateway(notify, self.vault, self.providers, background=False))

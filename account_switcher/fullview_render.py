@@ -650,8 +650,7 @@ def card_content(c, account, w, h, ui, name_mode, live, locked):
         # A Free account's login stays refused after upgrading: only a new sign-in picks up the plan
         free = account.get("unsubscribed")
         relogin = live and (free or any(s in status.lower() for s in ("sign in", "expired", "missing")))
-        # an account in use that can't be used (Free, expired, signed out) can still be removed
-        removable = live and (not active or relogin or account.get("signed_out"))
+        removable = live  # the account in use too (the client keeps its login until the next switch)
         # can open a window of its own (only offered while "Separate accounts per window" is on);
         # not while its login has expired (that needs signing in first) or its limit is reached
         own = (live and provider == "claude" and getattr(ui, "per_window", False) and not active

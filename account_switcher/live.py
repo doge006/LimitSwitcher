@@ -1673,15 +1673,10 @@ class LiveAccounts:
             if entry is None:
                 raise ValueError("Unknown account")
             name = entry["provider"]
-            if self.active.get(name) == account_id:
-                # One that can't be used (Free, login refused, signed out) can go; else switch first
-                status = entry.get("status", "").lower()
-                if not (entry.get("unsubscribed") or name in self.signed_out
-                        or any(s in status for s in ("sign in", "expired", "missing"))):
-                    raise RuntimeError("Switch to another account before removing this one")
             if account_id in self.pinned:
                 raise RuntimeError("This account has its own window; give it back first")
             if self.active.get(name) == account_id:
+                # The account in use can go too: the client keeps its login until the next switch
                 self.active.pop(name)
                 live = self.providers[name].read_live() if self.live_ids.pop(name, None) == account_id else None
                 if live and live.identity == entry["identity"]:
