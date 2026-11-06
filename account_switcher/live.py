@@ -852,6 +852,7 @@ class LiveAccounts:
                             pass
                         self._set(account_id, deadLogin=login_mark(secret))
                     if error.unsubscribed:  # old numbers would read as room left
+                        self._plan_changed(account_id, meta, "Free")
                         self._set(account_id, usage=[], plan="Free", unsubscribed=True)
                     self._set(account_id, status=message)
                     continue
@@ -863,6 +864,7 @@ class LiveAccounts:
                 if updated is not None:
                     self.vault.write_secret(account_id, updated)
                     secret = updated
+            self._plan_changed(account_id, meta, plan or meta.get("plan", ""), meta.get("unsubscribed"))
             self._set(account_id, usage=windows, plan=plan or meta.get("plan", ""), status="", unsubscribed=False, updatedAt=time.time(), apiAt=time.time(),
                       credits=getattr(provider, "last_credits", None))
             self.record_fields(meta["provider"] + "-usage", getattr(provider, "last_fields", None))
@@ -986,6 +988,17 @@ class LiveAccounts:
         with self.lock:
             dues = [self.due(i, m, i == self.active.get(m["provider"]), now) for i, m in self.meta["accounts"].items()]
         return max(20.0, min([ACTIVE_INTERVAL] + [d - now for d in dues]))
+
+    def _plan_changed(self, account_id, meta, plan, was_free=False):
+        """Into or out of the Free plan: the renewal date belonged to the old subscription (a new one
+        starts its own), so both the found and the hand-set date go, and it is looked up again."""
+        free_before = was_free or (meta.get("plan") or "").lower() == "free"
+        if free_before != ((plan or "").lower() == "free"):
+            with self.lock:
+                entry = self.meta["accounts"].get(account_id)
+                if entry is not None:
+                    entry.pop("subscriptionManual", None)
+                    entry.update(subscription=None, subscriptionCheckedAt=0)
 
     def _set(self, account_id, **fields):
         with self.lock:

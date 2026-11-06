@@ -770,6 +770,25 @@ class LiveTests(unittest.TestCase):
         m.refresh(force=True)
         self.assertTrue(self.by_email(m, "b@example.com").eligible)
 
+    def test_a_renewal_date_is_forgotten_when_the_account_goes_free_and_found_again_after_rebuying(self):
+        m = self.manager()
+        claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
+        self.api.claude_usage["at-b"] = claude_usage(0, 0)
+        m.sync_live()
+        claude_login(self.home, "uuid-a", "a@example.com", "at-a", "rt-a")
+        m.sync_live()
+        b = self.by_email(m, "b@example.com").id
+        old = time.time() + 20 * 86400
+        m.set_subscription(b, old, False)  # a date set by hand while it was paid
+        self.api.free.add("at-b")  # the subscription ended
+        m.refresh(force=True, only=b)
+        self.assertIsNone(self.by_email(m, "b@example.com").subscription)
+        new = time.time() + 30 * 86400
+        self.api.claude_profile["at-b"] = {"organization": {"subscription": {"current_period_end": new}}}
+        self.api.free.discard("at-b")  # bought again: a new period
+        m.refresh(force=True, only=b)
+        self.assertAlmostEqual(self.by_email(m, "b@example.com").subscription["at"], new, delta=1)
+
     def test_a_free_account_is_asked_hourly_and_a_429_keeps_it_free(self):
         m = self.manager()
         claude_login(self.home, "uuid-b", "b@example.com", "at-b", "rt-b")
