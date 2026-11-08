@@ -25,7 +25,7 @@ import type { Register } from 'claude-code'
 // "Resume?" question itself is Claude Code's own and can't be changed by a mod: this starts right
 // after it is answered, and only when it was asked (Claude Code asks only when the resume costs
 // enough of the limit; a mod can't read its rule, so it looks for the question itself). It follows
-// Settings → Jev compaction.
+// Settings → Auto Jev compact.
 //
 // And it shows the app's reset alerts as a toast: when every account of a provider had hit its
 // limit and one has room again, each open session hears of it on its next report.
@@ -108,21 +108,24 @@ export function rowsTokens(rows: readonly any[]): number {
   return Math.round(chars / CHARS_PER_TOKEN)
 }
 
-/** Runs Jev's compaction and measures what it saved: the conversation's rows before, less the rows
- * it hands back. Never tokensBefore - tokensAfter: Claude Code puts its own count in tokensAfter
- * (thinking included, an image as 2,000 tokens) beside Jev's tokensBefore, and the two don't
- * subtract (a 508k session read "saved ~0k"). Throws as $.session.compact does. */
+/** Runs Jev's compaction and measures what it saved: the rows it was given, less the rows it hands
+ * back. Jev rebuilds rows one for one, so the rows it was given are the last as many of the
+ * conversation's: $.session.messages() also has every row from before earlier compactions (a 186k
+ * session read "saved ~516k"). Never tokensBefore - tokensAfter: Claude Code puts its own count in
+ * tokensAfter (thinking included, an image as 2,000 tokens) beside Jev's tokensBefore, and the two
+ * don't subtract (a 508k session read "saved ~0k"). Throws as $.session.compact does. */
 async function jevCompact($: any): Promise<{ skip?: string; saved: number }> {
-  let before: number | undefined
+  let rows: readonly any[] | undefined
   try {
-    before = rowsTokens(await $.session.messages())
+    rows = await $.session.messages()
   } catch {
     // no rows to read: the compaction still runs, with nothing to say it saved
   }
   const result = await $.session.compact({ instructions: MARKER })
   if (result.skip !== undefined) return { skip: result.skip, saved: 0 }
-  const after = Array.isArray(result.messages) ? rowsTokens(result.messages) : undefined
-  return { saved: before !== undefined && after !== undefined ? Math.max(0, before - after) : 0 }
+  if (!Array.isArray(rows) || !Array.isArray(result.messages) || !result.messages.length) return { saved: 0 }
+  const saved = rowsTokens(rows.slice(-result.messages.length)) - rowsTokens(result.messages)
+  return { saved: Math.max(0, saved) }
 }
 
 let asked = false // the toast for the OK Auto resume is waiting for, shown (once per wait)
@@ -393,8 +396,11 @@ async function limitsText($: any, statePath: string): Promise<string> {
   }
 }
 
+export const JEV_OFF = 'Jev compaction is off: turn it on in LimitSwitcher → Settings → Jev compaction'
+
 /** `/jevcompact`: the same compaction by hand, once, in the session it is typed in. The app is told
  * when it starts and how it went, so its line in the status bar shows it like one before a swap.
+ * With Settings → Jev compaction off, the app says so and nothing is compacted.
  * Returns what to say, and whether the app showed it (then nothing else needs to). */
 async function compactByHand($: any, statePath: string): Promise<{ text: string; shown: boolean }> {
   const app = await appOf($, statePath)
@@ -404,7 +410,9 @@ async function compactByHand($: any, statePath: string): Promise<{ text: string;
   if (app) {
     try {
       session = String(await $.session.id())
-      shown = (await post($, app, '/api/compaction', { session, id, outcome: 'running' }))?.ok === true
+      const answer = await post($, app, '/api/compaction', { session, id, outcome: 'running' })
+      if (answer?.off === true) return { text: JEV_OFF, shown: false }
+      shown = answer?.ok === true
     } catch {
       // the app is busy: the toast says how it went
     }
@@ -566,7 +574,7 @@ export const register: Register = (on, options) => {
     })
     await $.command.register({
       name: 'jevcompact',
-      description: 'Shrink this session\'s old tool outputs with Jev (needs jev-compact and an OpenRouter key)',
+      description: 'Shrink this session\'s old tool outputs with Jev (needs LimitSwitcher → Settings → Jev compaction on, and an OpenRouter key)',
     })
     const result = await next(e)
     void poll($, statePath) // never holds the session's start

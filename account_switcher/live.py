@@ -1411,9 +1411,9 @@ class LiveAccounts:
                 self.mod_sessions.pop(next(iter(self.mod_sessions)))
 
     def jev_wanted(self, session, now):
-        """Compact this session with Jev before it goes on: the setting is on, both plugins are
-        installed, the session's own mod is running, a key is set, and it wasn't just done."""
-        if not session or not self.meta.get("jevCompact") or not self.meta.get("jevModInstalled"):
+        """Compact this session with Jev before it goes on: Jev compaction and Auto Jev compact are on,
+        both plugins are installed, the session's own mod is running, a key is set, and it wasn't just done."""
+        if not session or not self.meta.get("jevCompact") or not self.meta.get("jevAuto", True)                 or not self.meta.get("jevModInstalled"):
             return False
         if now - self.mod_sessions.get(session, 0.0) > MOD_SESSION_FRESH:
             return False  # an old session that hasn't loaded the mod: nobody would run it

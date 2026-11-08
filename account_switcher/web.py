@@ -49,7 +49,8 @@ class Controller:
         self.mod_checked = 0.0
         self.wait_near_reset = True
         self.jev_key_demo = False
-        self.jev_compact = False  # compact a session with Jev before it goes on after a swap
+        self.jev_compact = False  # Jev compaction at all: `/jevcompact`, and the automatic one below
+        self.jev_auto_on = True  # compact a swapped (or resumed) session with Jev before it goes on
         self.clock24 = None      # 24-hour clock: None follows the system
         self.reset_alerts = True  # a toast in Claude Code when a provider has room again after every account ran out
         self.room = {}    # provider -> whether any of its accounts had room, at the last change
@@ -152,10 +153,18 @@ class Controller:
         with self.condition:
             return [{"id": a["id"], "text": a["text"]} for a in self.alerts if now - a["at"] < ALERT_FOR]
 
+    def jev_on(self):
+        """Settings → Jev compaction: `/jevcompact` works, and Auto Jev compact can."""
+        return self.live and bool(self.gateway.manager.meta.get("jevCompact"))
+
+    def jev_auto(self):
+        """Settings → Auto Jev compact (under Jev compaction): before a swapped or resumed session goes on."""
+        return self.jev_on() and bool(self.gateway.manager.meta.get("jevAuto", True))
+
     def jev_on_resume(self, body):
-        """For a session's mod: whether an old session resumed is compacted first (Settings → Jev
-        compaction), so `/resume` can say so before one is picked."""
-        return body.get("source") == "mod" and self.live and bool(self.gateway.manager.meta.get("jevCompact"))
+        """For a session's mod: whether an old session resumed is compacted first (Settings → Auto
+        Jev compact), so `/resume` can say so before one is picked."""
+        return body.get("source") == "mod" and self.jev_auto()
 
     def resume_ask(self, body):
         """For a session's mod: its large session is waiting for an OK to continue on the new account
@@ -254,6 +263,7 @@ class Controller:
                 "afkSkipLarge": bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large,
                 "afkAll": not (bool(self.gateway.manager.meta.get("afkSkipLarge", True)) if self.live else self.afk_skip_large),
                 "jevCompact": bool(self.gateway.manager.meta.get("jevCompact")) if self.live else self.jev_compact,
+                "jevAuto": bool(self.gateway.manager.meta.get("jevAuto", True)) if self.live else self.jev_auto_on,
                 "jevKey": self.jev_key_source(),
                 "perWindow": bool(self.gateway.manager.meta.get("perWindow")) if self.live else False,
                 "windows": windows,
@@ -266,7 +276,7 @@ class Controller:
     def action(self, action, body):
         if self.closed:
             raise RuntimeError("The server is shutting down")
-        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "swapWindow", "highlightWindow", "perWindow", "resetAlerts"}:
+        if action not in {"resumeSession", "waitNearReset", "installMod", "checkMod", "preferences", "swap", "reset", "refresh", "add", "remove", "subscription", "compact", "taskbar", "names", "rename", "startup", "checkUpdate", "installUpdate", "clock", "afkSkipLarge", "jevCompact", "jevKey", "openWindow", "swapWindow", "highlightWindow", "perWindow", "resetAlerts", "jevAuto"}:
             raise ValueError("Unknown action")
         if action in {"names", "rename"}:  # name mode (screen sharing) and account names; instant
             self.set_names(action, body)
@@ -320,6 +330,16 @@ class Controller:
                 if on:
                     self.jev_compact_notes()
             self.jev_compact = on
+            self.notify("changed", None)
+            return
+        if action == "jevAuto":  # Auto Jev compact, under Jev compaction; instant
+            on = bool(body.get("on"))
+            if self.live:
+                manager = self.gateway.manager
+                with manager.lock:
+                    manager.meta["jevAuto"] = on
+                    manager.save()
+            self.jev_auto_on = on
             self.notify("changed", None)
             return
         if action == "jevKey":  # the OpenRouter key for the Jev compaction (the app never sends it back); instant
@@ -694,8 +714,8 @@ class Controller:
         if not self.live:
             return False
         if body.get("outcome") == "running":  # one the session started itself (/jevcompact, or on resume)
-            if body.get("resume") is True and not self.gateway.manager.meta.get("jevCompact"):
-                return False  # an old session resumed: compacted first only with Settings → Jev compaction on
+            if not self.jev_on() or (body.get("resume") is True and not self.jev_auto()):
+                return False  # off: `/jevcompact` says so; a resumed session is compacted first only with Auto Jev compact on
             started = self.gateway.manager.compaction_started(str(body.get("session") or "")[:100] or None,
                                                               str(body.get("id") or "")[:40])
             if started:
@@ -885,6 +905,8 @@ def make_server(controller, port=0):
                     body = body if isinstance(body, dict) else {}
                     # a compaction on resume: the mod goes ahead only when this says "resume" (Jev compaction on)
                     extra = {"resume": True} if body.get("resume") is True else {}
+                    if body.get("outcome") == "running" and body.get("resume") is not True and not controller.jev_on():
+                        extra["off"] = True  # Settings → Jev compaction is off: `/jevcompact` says so instead of compacting
                     self.respond(200, {"ok": controller.compaction_done(body), **extra})
                 except (ValueError, RuntimeError, OSError) as error:
                     self.respond(200, {"ok": False, "error": str(error)})

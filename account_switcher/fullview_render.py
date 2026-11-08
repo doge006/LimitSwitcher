@@ -1086,7 +1086,7 @@ SETTINGS = (("autoSwap", "Auto swap", "Move to the account whose weekly resets f
             ("nameMode", "Name mode", "Names instead of emails, for screen sharing"),
             ("clock24", "24-hour clock", "Reset times like 14:30 instead of 2:30 PM"))
 
-SUB_SETTINGS = {"afkAll"}  # Auto resume's own: drawn set in under it
+SUB_SETTINGS = {"afkAll", "jevAuto"}  # Auto resume's and Jev compaction's own: drawn set in under them
 SUB_INDENT = 20
 
 PER_WINDOW = ("perWindow", "Separate accounts per window",
@@ -1111,7 +1111,8 @@ def mod_row(state):
 
 
 KEY_ROW_H = 40
-JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a swapped session for the new account")
+JEV_ROW = ("jevCompact", "Jev compaction", "Shrink a session's old tool outputs: /jevcompact in Claude Code")
+JEV_AUTO_ROW = ("jevAuto", "Auto Jev compact", "Before a swapped or resumed session goes on")
 
 
 def jev_key_field(c, ui, state, x, y, w, hits):
@@ -1167,7 +1168,9 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
     live_mod = state.get("mode") == "live"
     wrapped = [wrap(desc, 12, w - 80 - (SUB_INDENT if key in SUB_SETTINGS else 0)) for key, _, desc in rows]
     jev_lines = wrap(JEV_ROW[2], 12, w - 80)
-    key_h = KEY_ROW_H if state.get("jevCompact") else 0  # the OpenRouter key's field, under Jev compaction
+    auto_lines = wrap(JEV_AUTO_ROW[2], 12, w - 80 - SUB_INDENT)
+    # under Jev compaction while it is on: Auto Jev compact, then the OpenRouter key's field
+    key_h = ROW_PAD + 16 * len(auto_lines) + KEY_ROW_H if state.get("jevCompact") else 0
     jev_h = ROW_PAD + 16 * len(jev_lines) + key_h if live_mod else 0  # Jev compaction sits below the mod it belongs to
     h = 16 + sum(ROW_PAD + 16 * len(lines) for lines in wrapped) + (13 if taskbar else 0) \
         + (SLOT_ROW_H * len(displays) + 24 if chooser else 0) + 8 + (mod_row(state)[2] + jev_h if live_mod else 0)
@@ -1253,6 +1256,7 @@ def settings_menu(image, scale, state, ui, x, y, prefs):
         c.line(x + 14, ry + 2, w - 28, LINE)
         ry += toggle_row(JEV_ROW[0], JEV_ROW[1], jev_lines, ry + 4) + 4
         if key_h:
+            ry += toggle_row(JEV_AUTO_ROW[0], JEV_AUTO_ROW[1], auto_lines, ry - 4)
             jev_key_field(c, ui, state, x + 66, ry - 2, w - 66 - 14, hits)
     return (x, y, w, h), hits
 
