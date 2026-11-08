@@ -147,6 +147,15 @@ class FullViewTests(unittest.TestCase):
         self.view.frame()
         self.assertFalse(any(a == "name:jevkey" for _, hits in self.view.overlay_hits for _, a, _ in hits))  # set elsewhere
 
+    def test_auto_jev_compact_shows_under_jev_compaction_while_it_is_on(self):
+        self.view.set_state(state(jevCompact=False))
+        self.click("settings")
+        self.assertFalse(any(a == "set:jevAuto" for _, hits in self.view.overlay_hits for _, a, _ in hits))
+        self.view.set_state(state(jevCompact=True, jevAuto=True, jevKey=None))
+        self.view.frame()
+        self.click("set:jevAuto")
+        self.assertIn(("jevAuto", {"on": False}), self.controller.calls)
+
     def test_card_hints_are_shortened_not_cut_off(self):
         ago = "1h 20m"
         options = [f"Numbers from {ago} ago · checking", f"{ago} ago · checking", f"{ago} old"]

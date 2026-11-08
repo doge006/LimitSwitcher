@@ -86,7 +86,8 @@ In the full view, the gear opens Settings:
 
 - **Auto swap:** move to the account whose weekly limit resets first when a limit hits.
 - **Auto resume:** after a usage limit, the session continues by itself, on another account or once the limit resets.
-- **Jev compaction** (under the Claude Code Status mod, off by default): before a swapped session goes on, shrink the tool outputs it no longer needs, so the new account loads less (see [Jev compaction](claude-code-mod.md#jev-compaction)).
+- **Jev compaction** (under the Claude Code Status mod, off by default): shrink the tool outputs a session no longer needs, so it loads less; `/jevcompact` runs it by hand (see [Jev compaction](claude-code-mod.md#jev-compaction)).
+  - **Auto Jev compact** (on by default): do it on its own before a swapped or resumed session goes on.
 - **Reset alerts** (on by default; needs the Claude Code Status mod): when every Claude (or every Codex) account has hit its limit, a toast in each open Claude Code session says which one has room again as soon as its limit resets (within about 30 seconds). Nothing shows while another account still has room, since Auto swap already uses it.
 - **Name mode:** names instead of emails everywhere (panel, taskbar, status line, notifications), for screen sharing. Click an account's name in the full view to set it.
 - **24-hour clock:** reset times like 14:30 instead of 2:30 PM.

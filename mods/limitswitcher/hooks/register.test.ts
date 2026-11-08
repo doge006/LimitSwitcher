@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'claude-code/testing'
 import type { On } from 'claude-code'
-import { askText, coldResume, COMPACTING, resumeSavedText, RESUME_TOAST, rowsTokens } from './register.ts'
+import { askText, coldResume, COMPACTING, JEV_OFF, resumeSavedText, RESUME_TOAST, rowsTokens } from './register.ts'
 
 const STATE = '/data/afk-hook.json'
 
@@ -36,7 +36,7 @@ type World = { env?: Record<string, string | undefined>; posts: { path: string; 
  * The engine beneath the mod: LimitSwitcher's state file and local API, and (standing in for the
  * jev-compact plugin) a compaction hook that answers each try with the next of `outcomes`.
  */
-function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null; context?: number } = {}): World {
+function world(on: On, options: { swap?: Record<string, unknown>; compact?: string | null; outcomes?: ({ skip: string } | { saved: number })[]; noApp?: boolean; alerts?: { id: string; text: string }[]; env?: Record<string, string>; jevOff?: boolean; oldApp?: boolean; jevResume?: boolean; gate?: Promise<void>; waiting?: { tokens: number } | null; context?: number; history?: number } = {}): World {
   const w: World = { posts: [], compactions: [], statuses: [], asking: false, filled: [] }
   const clock = mock.clock(on)
   let asked = false
@@ -74,6 +74,7 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
       answer = { line: null, compact: options.compact && !asked ? { id: options.compact } : null, alerts: options.alerts ?? [], jevResume: options.jevResume ?? false, resumeAsk: options.waiting ?? null }
       if (options.compact) asked = true
     }
+    if (path === '/api/compaction' && body.outcome === 'running' && !body.resume && options.jevOff) answer = { ok: false, off: true }
     if (path === '/api/compaction' && body.resume) answer = options.oldApp ? { ok: true } : { ok: !options.jevOff, resume: true }
     if (path === '/api/resumeok') {
       answer = { text: options.waiting ? 'Auto resume goes on with this session.' : 'Nothing is waiting for an OK in this session.' }
@@ -92,7 +93,8 @@ function world(on: On, options: { swap?: Record<string, unknown>; compact?: stri
     // tokensAfter as Claude Code fills it in: its own count, on another scale than Jev's tokensBefore
     return { messages: rowsOf(50_000 - next.saved), tokensBefore: 40_000, tokensAfter: 52_000 }
   })
-  on('session.messages', () => ({ value: rowsOf(50_000) }))
+  // the whole transcript: rows from before earlier compactions (history), then the live ones the compaction gets
+  on('session.messages', () => ({ value: [...(options.history ? rowsOf(options.history) : []), ...rowsOf(50_000)] }))
   ;(w as any).clock = clock
   return w
 }
@@ -205,6 +207,27 @@ describe('limitswitcher', () => {
     await (w as any).clock.settle()
     expect(lines[1]).toBe('No Jev compaction: no OpenRouter key (OPENROUTER_API_KEY)')
     expect(w.compactions).toEqual([MARKER, MARKER])
+  })
+
+  test('/jevcompact counts only the rows it compacted, never the history before earlier compactions', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { outcomes: [{ saved: 30_000 }], context: 300_000, history: 500_000 })
+    const lines: string[] = []
+    on('ui.log', ($, e) => { lines.push(String(e.text)); return { value: undefined } })
+    await $.command.run({ command: 'jevcompact' })
+    await (w as any).clock.settle()
+    expect(lines).toEqual(['Jev compacted: saved ~30k of 300k tokens (10%)'])  // not ~530k
+    expect(w.posts.filter((p) => p.path === '/api/compaction')[1].body.saved).toBe(30_000)
+  })
+
+  test('/jevcompact with Settings → Jev compaction off says so and compacts nothing', { options: { statePath: STATE } }, async ($, on) => {
+    const w = world(on, { jevOff: true })
+    const lines: string[] = []
+    on('ui.log', ($, e) => { lines.push(String(e.text)); return { value: undefined } })
+    await $.command.run({ command: 'jevcompact' })
+    await (w as any).clock.settle()
+    expect(lines).toEqual([JEV_OFF])
+    expect(w.compactions).toEqual([])
+    expect(w.posts.filter((p) => p.path === '/api/compaction')).toHaveLength(1)  // only the ask: nothing to report back
   })
 
   test('/jevcompact without LimitSwitcher running says how it went too', { options: { statePath: STATE } }, async ($, on) => {

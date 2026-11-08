@@ -906,6 +906,12 @@ class JevCompactionTests(unittest.TestCase):
         self.assertIn("Re-run the tool before relying on exact details", answer["message"])  # told once, after a compaction
         self.assertEqual(self.claude.read_live().email, "b@example.com")  # no second swap
 
+    def test_auto_jev_compact_off_continues_at_once(self):
+        self.ready()
+        self.manager.meta["jevAuto"] = False  # Jev compaction stays on (for /jevcompact), but not before a swap
+        self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")
+        self.assertIsNone(self.manager.compaction_request("s1"))
+
     def test_off_or_not_ready_continues_at_once(self):
         self.gateway.set_afk(True)
         self.assertEqual(self.manager.claude_limit("s1")["action"], "continue")  # the setting is off
@@ -1056,6 +1062,13 @@ class JevCompactionTests(unittest.TestCase):
             self.assertTrue(post({"session": "r1", "id": "resume-2", "outcome": "done", "saved": 300_000})["ok"])
             self.assertIn("Jev saved", self.manager.statusline(None, "r1"))
             self.assertNotIn("resume", post({"session": "r2", "id": "hand-1", "outcome": "running"}))  # /jevcompact as before
+            self.manager.meta["jevAuto"] = False  # Auto Jev compact off: no compaction on resume, /jevcompact still works
+            self.assertFalse(post(report, "/api/statusline")["jevResume"])
+            self.assertEqual(post({"session": "r3", "id": "resume-3", "outcome": "running", "resume": True}),
+                             {"ok": False, "resume": True})
+            self.assertEqual(post({"session": "r3", "id": "hand-2", "outcome": "running"}), {"ok": True})
+            self.manager.meta.update(jevCompact=False, jevAuto=True)  # Jev compaction off: /jevcompact is refused
+            self.assertEqual(post({"session": "r4", "id": "hand-3", "outcome": "running"}), {"ok": False, "off": True})
         finally:
             server.shutdown()
 
