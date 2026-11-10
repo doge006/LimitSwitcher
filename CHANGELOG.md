@@ -2,6 +2,10 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.26](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.26) (2026-11-09)
+
+- Fixed: on some Windows 10 PCs, clicking **Full view** did nothing. A 64-bit display handle made the window's sizing code fail before the window was created.
+
 ## [1.4.25](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.25) (2026-11-07)
 
 - Fixed: `/jevcompact` could report a saving larger than the whole session ("saved ~516k" on a 186k session). It counted the session's history from before earlier compactions. The wrong figure also made the status line show the session too small, and could let Auto resume skip asking before a large session.

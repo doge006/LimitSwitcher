@@ -1,22 +1,13 @@
-The app offers it in Settings → **Update to 1.4.25** (or download below).
+The app offers it in Settings → **Update to 1.4.26** (or download below).
 
-## Fixed: `/jevcompact` reported savings larger than the session
+## Fixed: the full view didn't open on some Windows 10 PCs
 
-`/jevcompact` could say it saved more tokens than the session held: "saved ~516k" on a session of about 186k. To measure the saving, the mod counted the session's whole history, including everything from before earlier compactions. It now counts only the messages the compaction was given. For that session the real saving was about 107k (186k → 79k).
-
-The same figure is subtracted from the session's size in the status line and when Auto resume decides whether a large session needs your OK. Both now get the correct number.
-
-## Changed: two Jev settings
-
-- **Jev compaction** turns Jev on or off as a whole. With it off, `/jevcompact` answers "Jev compaction is off" and compacts nothing. Before, it ran regardless.
-- **Auto Jev compact** (new, under it, on by default) compacts a session on its own after a swap or before a resume. Turn it off to compact only by hand with `/jevcompact`.
-
-Claude Code's mod API can't remove a command once added, so `/jevcompact` still shows in the command list while the setting is off.
+On some Windows 10 PCs, clicking **Full view** did nothing. Windows returned a 64-bit handle for the display, and the code that reads the display's scaling couldn't accept a handle that large. It raised an error (`OverflowError: int too long to convert` in `app.log`) before the window was created. The full view now reads the scaling the same way the tray panel does, which accepts any handle.
 
 ## Validation
 
-- **Real session:** the session that reported "saved ~516k" was measured from its transcript. Its live context held about 186k tokens; the transcript held about 1.7M across 10 compactions.
-- **Tests:** new regression tests cover a session with earlier compactions, `/jevcompact` with the setting off, Auto Jev compact off for swaps and resumes, and the new Settings row. The mod's 37 tests pass. The full suite ran 443 tests with 11 skips. The one error, in a mod process test, also occurs without these changes.
+- **Real PC:** the error and traceback came from the `app.log` of an affected Windows 10 PC running 1.4.25.
+- **Tests:** a new regression test passes in a 64-bit display handle. It fails on 1.4.25 with the same `OverflowError` and passes now. The full suite ran 445 tests with 11 skips. The one error, in a mod process test, also occurs without this change.
 
 ## Download
 
