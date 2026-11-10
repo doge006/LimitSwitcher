@@ -65,11 +65,6 @@ class MINMAXINFO(ctypes.Structure):
                 ("ptMinTrackSize", wintypes.POINT), ("ptMaxTrackSize", wintypes.POINT)]
 
 
-class MONITORINFO(ctypes.Structure):
-    _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
-                ("dwFlags", wintypes.DWORD)]
-
-
 def _sig(fn, restype, *argtypes):
     fn.restype, fn.argtypes = restype, list(argtypes)
 
@@ -98,8 +93,6 @@ _sig(user32.LoadCursorW, H, wintypes.HINSTANCE, ctypes.c_void_p)
 _sig(user32.LoadImageW, H, wintypes.HINSTANCE, wintypes.LPCWSTR, wintypes.UINT, ctypes.c_int, ctypes.c_int, wintypes.UINT)
 _sig(user32.GetKeyState, ctypes.c_short, ctypes.c_int)
 _sig(user32.GetDpiForWindow, wintypes.UINT, wintypes.HWND)
-_sig(user32.MonitorFromPoint, H, wintypes.POINT, wintypes.DWORD)
-_sig(user32.GetMonitorInfoW, wintypes.BOOL, H, ctypes.POINTER(MONITORINFO))
 _sig(user32.GetCursorPos, wintypes.BOOL, ctypes.POINTER(wintypes.POINT))
 _sig(user32.OpenClipboard, wintypes.BOOL, wintypes.HWND)
 _sig(user32.CloseClipboard, wintypes.BOOL)
@@ -195,18 +188,8 @@ class FullViewWindow:
         """Size (the app's full-view size) and centre on the display with the pointer, in device px."""
         point = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(point))
-        monitor = user32.MonitorFromPoint(point, 2)
-        info = MONITORINFO()
-        info.cbSize = ctypes.sizeof(info)
-        user32.GetMonitorInfoW(monitor, ctypes.byref(info))
-        scale = 1.0
-        try:
-            dpi_x, dpi_y = wintypes.UINT(), wintypes.UINT()
-            if ctypes.windll.shcore.GetDpiForMonitor(monitor, 0, ctypes.byref(dpi_x), ctypes.byref(dpi_y)) == 0:
-                scale = dpi_x.value / 96
-        except (AttributeError, OSError):
-            pass
-        work = info.rcWork
+        from .flyout import monitor_at  # its GetDpiForMonitor is typed: a 64-bit HMONITOR overflowed the untyped call
+        _, work, scale = monitor_at(point.x, point.y)
         area_w, area_h = work.right - work.left, work.bottom - work.top
         logical_w, logical_h = window_size(area_w / scale, area_h / scale)
         width, height = min(area_w, round(logical_w * scale)), min(area_h, round(logical_h * scale))

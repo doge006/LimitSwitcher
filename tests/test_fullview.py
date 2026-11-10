@@ -494,6 +494,15 @@ class HostTimerTests(unittest.TestCase):
         self.assertTrue(used)
         self.assertEqual(used - set(timers), set())
 
+    @unittest.skipUnless(__import__("sys").platform == "win32", "Windows")
+    def test_a_64_bit_monitor_handle_still_places_the_window(self):
+        """Windows 10 gave an HMONITOR above 2**32: an untyped GetDpiForMonitor raised and the window never opened."""
+        from account_switcher import flyout, fullview_win
+        handle = unittest.mock.Mock(return_value=0x1_0001_0001)
+        with unittest.mock.patch.object(flyout.user32, "MonitorFromPoint", handle), \
+                unittest.mock.patch.object(fullview_win.user32, "MonitorFromPoint", handle):
+            fullview_win.FullViewWindow(None).placement()  # no OverflowError
+
 
 class ClockTests(unittest.TestCase):
     def test_24_hour_setting_overrides_the_system(self):
