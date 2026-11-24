@@ -1091,7 +1091,7 @@ SUB_INDENT = 20
 
 PER_WINDOW = ("perWindow", "Separate accounts per window",
               "Each new Claude Code terminal starts on an account no other window is using, and any window can be "
-              "moved to another. Everything else stays your usual Claude Code.")
+              "moved to another. Remote Control needs it off, or start with claude --remote-control.")
 ROW_PAD = 26  # a setting's row: its name, plus 16 per line of description
 SLOT_ROW_H = 36  # a display's line in the settings: its name, then its two taskbar slots beside it
 MOD_NAME = "Claude Code Status mod"

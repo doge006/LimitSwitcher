@@ -2,6 +2,11 @@
 
 The highlights of each release, newest first. The full notes for each version are on its [release page](https://github.com/doge006/LimitSwitcher/releases).
 
+## [1.4.27](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.27) (2026-11-24)
+
+- Fixed: with **Separate accounts per window** on, Claude Code's Remote Control disappeared, because the router's `ANTHROPIC_BASE_URL` turns it off. `claude --remote-control` now starts an unrouted window.
+- Changed: a freeze of the tray thread (5 s or more), errors in click handlers and threads, and hard crashes are now written to `app.log`.
+
 ## [1.4.26](https://github.com/doge006/LimitSwitcher/releases/tag/v1.4.26) (2026-11-09)
 
 - Fixed: on some Windows 10 PCs, clicking **Full view** did nothing. A 64-bit display handle made the window's sizing code fail before the window was created.

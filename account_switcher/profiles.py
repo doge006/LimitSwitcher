@@ -276,7 +276,7 @@ def install_wrapper(vault_root, python, state_file):
                 'if defined LIMITSWITCHER_WINDOW goto plain\r\n'
                 + skip +
                 'set "LIMITSWITCHER_ENV=%TEMP%\\limitswitcher-%RANDOM%%RANDOM%.cmd"\r\n'
-                f'"{python}" -B "{script}" "{state_file}" --env "%LIMITSWITCHER_ENV%"\r\n'
+                f'"{python}" -B "{script}" "{state_file}" --env "%LIMITSWITCHER_ENV%" %*\r\n'
                 'if exist "%LIMITSWITCHER_ENV%" call "%LIMITSWITCHER_ENV%"\r\n'
                 'if exist "%LIMITSWITCHER_ENV%" del "%LIMITSWITCHER_ENV%"\r\n'
                 'set "LIMITSWITCHER_ENV="\r\n'
