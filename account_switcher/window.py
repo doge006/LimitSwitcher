@@ -40,9 +40,11 @@ def real_claude(skip):
 
 
 def interactive(args):
+    """A window to route. Remote Control turns itself off when ANTHROPIC_BASE_URL isn't Anthropic's,
+    so a window started with it stays on the main account, unrouted."""
     if args and args[0] in PASS:
         return False
-    return not any(a in ("-p", "--print") or a.startswith("--print=") for a in args)
+    return not any(a in ("-p", "--print") or a.startswith(("--print=", "--remote-control")) for a in args)
 
 
 def ask(state_file, pid):
@@ -67,10 +69,10 @@ def ask(state_file, pid):
     return {"ANTHROPIC_BASE_URL": base, "LIMITSWITCHER_WINDOW": window}
 
 
-def write_env(state_file, path):
+def write_env(state_file, path, args=()):
     """Windows: the window's variables as `set` lines claude.cmd calls before it runs the real
     `claude` (this process is gone by then; the window's process is the .cmd's)."""
-    if os.environ.get("LIMITSWITCHER_WINDOW"):
+    if os.environ.get("LIMITSWITCHER_WINDOW") or not interactive(list(args)):
         return 0
     env = ask(state_file, os.getppid())
     if env:
@@ -83,8 +85,8 @@ def main(argv):
     if len(argv) < 2:
         return 2
     state_file, args = argv[1], argv[2:]
-    if args[:1] == ["--env"] and len(args) == 2:
-        return write_env(state_file, args[1])
+    if args[:1] == ["--env"] and len(args) >= 2:  # then claude's own arguments (older wrappers: none)
+        return write_env(state_file, args[1], args[2:])
     claude = real_claude(os.environ.get("LIMITSWITCHER_WRAPPER_DIR") or "")  # set by the wrapper: the folder to skip
     if claude is None:
         sys.stderr.write("LimitSwitcher: Claude Code (claude) isn't installed, or isn't on PATH\n")

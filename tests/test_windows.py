@@ -480,8 +480,34 @@ class WrapperTests(unittest.TestCase):
     def test_interactive_windows_only(self):
         self.assertTrue(wrapper.interactive([]))
         self.assertTrue(wrapper.interactive(["--continue"]))
-        for args in (["auth", "login"], ["-p", "hi"], ["--print=x"], ["--version"], ["mcp", "list"]):
+        for args in (["auth", "login"], ["-p", "hi"], ["--print=x"], ["--version"], ["mcp", "list"],
+                     ["--continue", "--remote-control"], ["--remote-control", "desk"], ["--remote-control=desk"]):
             self.assertFalse(wrapper.interactive(args), args)
+
+    @unittest.skipUnless(sys.platform == "win32", "claude.cmd")
+    def test_windows_wrapper_leaves_remote_control_unrouted(self):
+        """Remote Control is off whenever ANTHROPIC_BASE_URL isn't Anthropic's: such a window isn't routed."""
+        app = App(self.ANSWER)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                tmp = Path(tmp)
+                real = tmp / "real"
+                real.mkdir()
+                (real / "claude.cmd").write_text("@echo url=%ANTHROPIC_BASE_URL% args=%*\r\n")
+                folder = profiles.install_wrapper(tmp, sys.executable, app.state(tmp))
+                env = {k: v for k, v in os.environ.items() if k not in ("ANTHROPIC_BASE_URL", "LIMITSWITCHER_WINDOW")}
+                env["PATH"] = f"{folder};{real};{env['PATH']}"
+
+                def run(*args):
+                    done = subprocess.run(["cmd", "/c", str(folder / "claude.cmd"), *args], env=env,
+                                          capture_output=True, text=True, timeout=30)
+                    return done.stdout.strip()
+
+                self.assertEqual(run("--continue"), f"url={self.ANSWER['baseUrl']} args=--continue")
+                self.assertEqual(run("--continue", "--remote-control"), "url= args=--continue --remote-control")
+                self.assertEqual(len(app.asked), 1)  # the Remote Control window never asked for a route
+        finally:
+            app.close()
 
     @unittest.skipIf(sys.platform == "win32", "the POSIX wrapper")
     def test_a_new_window_starts_as_usual_with_the_routers_address(self):

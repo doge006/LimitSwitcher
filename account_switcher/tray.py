@@ -172,6 +172,46 @@ def log_handler():
     return RotatingFileHandler(str(_log_path()), maxBytes=LOG_LIMIT, backupCount=1, encoding="utf-8", delay=True)
 
 
+HANG_SECONDS = 5  # the tray thread not answering this long ("Not responding") writes every thread's stack
+
+
+def watch_for_hangs(icon, handle, stopped):
+    """Background thread: the windowless app has no stderr, so a stuck or crashing tray thread left
+    nothing behind. Ping the tray's window; a hang dumps where every thread is into app.log once."""
+    import ctypes
+    import faulthandler
+    from ctypes import wintypes
+    send = ctypes.windll.user32.SendMessageTimeoutW
+    send.argtypes = (wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM, wintypes.UINT,
+                     wintypes.UINT, ctypes.POINTER(ctypes.c_size_t))
+    result, hung = ctypes.c_size_t(), False
+    while not stopped.wait(2):
+        hwnd = getattr(icon, "_hwnd", None)
+        if not hwnd:
+            continue
+        answered = send(hwnd, 0, 0, 0, 0x0002, HANG_SECONDS * 1000, ctypes.byref(result))  # WM_NULL, SMTO_ABORTIFHUNG
+        if not answered and not hung:
+            logging.getLogger("account_switcher").warning("tray thread not responding for %d s; stacks:", HANG_SECONDS)
+            for h in logging.getLogger().handlers:
+                h.flush()
+            faulthandler.dump_traceback(file=handle, all_threads=True)
+            handle.flush()
+        elif answered and hung:
+            logging.getLogger("account_switcher").warning("tray thread responding again")
+        hung = not answered
+
+
+def log_lost_errors(handle):
+    """Errors in window callbacks and threads went to the missing stderr; send them to app.log."""
+    import faulthandler
+    log = logging.getLogger("account_switcher")
+    faulthandler.enable(file=handle, all_threads=True)  # a hard crash still leaves its stacks
+    sys.unraisablehook = lambda u: log.error("%s %r", u.err_msg or "unraisable exception", u.object,
+                                             exc_info=(u.exc_type, u.exc_value, u.exc_traceback))
+    threading.excepthook = lambda a: log.error("thread %s failed", a.thread.name if a.thread else "?",
+                                               exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+
+
 # ---------- tray host ----------
 class Tray:
     def __init__(self, controller, server, icon_factory=None, flyout=None):
@@ -462,6 +502,7 @@ def main(argv=None):
         except Exception:
             logging.getLogger("account_switcher").exception("integrations failed to start")
     done = []
+    stopped = threading.Event()  # ends the hang watch
 
     def shutdown():
         """Undo what the app set up. Runs once, from the host's quit or on the way out."""
@@ -481,8 +522,16 @@ def main(argv=None):
     try:
         tray = Tray(controller, server)
         tray.on_end_session = shutdown
+        if sys.platform == "win32":
+            from .live import _trace_file
+            handle = _trace_file()  # the one app.log handle kept open for stack dumps
+            if handle is not None:
+                log_lost_errors(handle)
+                threading.Thread(target=watch_for_hangs, args=(tray.icon, handle, stopped),
+                                 name="hang-watch", daemon=True).start()
         tray.run(open_now=args.show or not args.quiet)
     finally:
+        stopped.set()
         shutdown()
 
 
